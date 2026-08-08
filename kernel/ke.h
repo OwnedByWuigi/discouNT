@@ -1,3 +1,4 @@
+// kernel/ke.h
 #ifndef KE_H
 #define KE_H
 #include <stdint.h>
@@ -16,15 +17,15 @@ typedef struct _THREAD {
     uint32_t priority;
     void *stack;
     uint32_t stack_size;
-    uint32_t entry_point;    // Initial EIP
-    uint32_t context_esp;    // Saved ESP
+    uint32_t entry_point;
+    uint32_t context_esp;
     uint32_t wait_handle;
     struct _THREAD *next;
 } THREAD;
 
 typedef struct _PROCESS {
     char name[MAX_NAME_LEN];
-    HANDLE handle_table[32]; // Process-specific handle table
+    HANDLE handle_table[32];
     uint32_t handle_count;
     THREAD *main_thread;
     THREAD *thread_list;
@@ -40,7 +41,6 @@ typedef struct _EVENT {
     uint32_t manual_reset;
 } EVENT;
 
-// Public API
 void KeInit(void);
 HANDLE KeCreateThread(void (*entry)(void), uint32_t stack_size);
 HANDLE KeCreateProcess(const char *name);

@@ -1,20 +1,33 @@
-; boot/boot.asm - Multiboot compliant bootloader
+; boot/boot.asm - Request linear framebuffer from GRUB
 section .multiboot
 align 4
-    dd 0x1BADB002           ; Magic
-    dd 0x00000003           ; Flags (align modules + memory info)
-    dd -(0x1BADB002 + 0x00000003)  ; Checksum
+    ; Multiboot header
+    dd 0x1BADB002              ; Magic
+    dd 0x00000007              ; Flags: align + meminfo + video
+    dd -(0x1BADB002 + 0x00000007) ; Checksum
+    
+    ; Framebuffer requests
+    dd 0    ; header_addr
+    dd 0    ; load_addr
+    dd 0    ; load_end_addr
+    dd 0    ; bss_end_addr
+    dd 0    ; entry_addr
+    dd 1    ; mode_type (1 = graphics mode)
+    dd 640  ; width
+    dd 480  ; height
+    dd 16   ; depth (16 bpp = 5:6:5 RGB)
 
 section .text
 global start
 extern kmain
 
 start:
-    mov esp, 0x90000        ; Set up stack
-    push ebx                ; Push multiboot info pointer
-    push eax                ; Push multiboot magic
+    mov esp, 0x90000
+    push ebx        ; Multiboot info pointer
+    push eax        ; Multiboot magic
     call kmain
     
     cli
+.hang:
     hlt
-    jmp $
+    jmp .hang

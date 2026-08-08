@@ -11,27 +11,12 @@ static PROCESS *process_list = 0;
 static uint32_t thread_count = 0;
 static uint32_t scheduler_ticks = 0;
 
-// Simple memory management for kernel objects
-#define KERNEL_HEAP_SIZE 0x100000  // 1MB kernel heap
-static uint8_t kernel_heap[KERNEL_HEAP_SIZE];
-static uint32_t heap_offset = 0;
-
-void *kmalloc(uint32_t size) {
-    if (heap_offset + size > KERNEL_HEAP_SIZE) return 0;
-    void *ptr = &kernel_heap[heap_offset];
-    heap_offset += (size + 3) & ~3; // Align to 4 bytes
-    return ptr;
-}
-
-void kfree(void *ptr) {
-    // Simple bump allocator - no real free
-    (void)ptr;
-}
+// Note: kmalloc and kfree are now in mm.c - include mm.h instead
 
 void KeInit(void) {
     thread_count = 0;
     scheduler_ticks = 0;
-    HalPutString("[Ke] Kernel Executive initialized\n", 0x0A);
+    // Don't print anything here - HAL may not be initialized
 }
 
 HANDLE KeCreateProcess(const char *name) {
@@ -73,9 +58,17 @@ HANDLE KeCreateThread(void (*entry)(void), uint32_t stack_size) {
     ready_queue = thread;
     
     char name[32];
-    itoa(thread_count++, name, 10);
+    // Simple number to string
+    char *p = name + 30;
+    *p = 0;
+    uint32_t n = thread_count++;
+    do {
+        *--p = '0' + (n % 10);
+        n /= 10;
+    } while (n > 0);
+    
     char thread_name[64] = "Thread";
-    strcat(thread_name, name);
+    strcat(thread_name, p);
     
     HANDLE handle = ObCreateObject(OBJ_TYPE_THREAD, thread_name, thread, sizeof(THREAD));
     thread->handle = handle;
@@ -101,10 +94,9 @@ void KeYield(void) {
     while (next && (next == current_thread || next->state != THREAD_READY)) {
         next = next->next;
     }
-    if (!next) next = ready_queue; // Wrap around
+    if (!next) next = ready_queue;
     
     if (next && next->state == THREAD_READY) {
-        THREAD *prev = current_thread;
         current_thread = next;
         current_thread->state = THREAD_RUNNING;
         
@@ -123,8 +115,6 @@ void KeStartScheduler(void) {
     
     current_thread = ready_queue;
     current_thread->state = THREAD_RUNNING;
-    
-    HalPutString("[Ke] Starting scheduler...\n", 0x0A);
     
     // Jump to first thread
     __asm__ volatile(
