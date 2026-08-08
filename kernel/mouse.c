@@ -1,0 +1,212 @@
+#include <stdint.h>
+#include "mouse.h"
+#include "vga.h"
+#include "portio.h"
+#include "serial.h"
+
+static MOUSE_STATE mouse = {320, 240, 0, 0, 0, 0};
+static uint8_t mouse_cycle = 0;
+static int8_t mouse_byte[3];
+static int mouse_old_x = 320, mouse_old_y = 240;
+
+// Arrow cursor (11x18 pixels)
+// 1 = white pixel, 2 = black pixel (outline), 0 = transparent
+static const uint8_t cursor[18][11] = {
+    {1,0,0,0,0,0,0,0,0,0,0},
+    {1,1,0,0,0,0,0,0,0,0,0},
+    {1,2,1,0,0,0,0,0,0,0,0},
+    {1,2,2,1,0,0,0,0,0,0,0},
+    {1,2,2,2,1,0,0,0,0,0,0},
+    {1,2,2,2,2,1,0,0,0,0,0},
+    {1,2,2,2,2,2,1,0,0,0,0},
+    {1,2,2,2,2,2,2,1,0,0,0},
+    {1,2,2,2,2,2,2,2,1,0,0},
+    {1,2,2,2,2,2,2,2,2,1,0},
+    {1,2,2,2,2,2,2,2,2,2,1},
+    {1,2,2,2,2,2,1,1,1,1,1},
+    {1,2,2,1,2,2,1,0,0,0,0},
+    {1,2,1,0,1,2,2,1,0,0,0},
+    {1,1,0,0,1,2,2,1,0,0,0},
+    {1,0,0,0,0,1,2,2,1,0,0},
+    {0,0,0,0,0,1,2,2,1,0,0},
+    {0,0,0,0,0,0,1,1,0,0,0},
+};
+
+// Save background pixels under cursor
+static uint8_t cursor_bg[18][11];
+static int cursor_saved = 0;
+
+static void mouse_wait(uint8_t type) {
+    uint32_t timeout = 100000;
+    if (type == 0) {
+        while (timeout--) { if ((inb(0x64) & 1) == 1) return; }
+    } else {
+        while (timeout--) { if ((inb(0x64) & 2) == 0) return; }
+    }
+}
+
+static void mouse_write(uint8_t data) {
+    mouse_wait(1);
+    outb(0x64, 0xD4);
+    mouse_wait(1);
+    outb(0x60, data);
+}
+
+static uint8_t mouse_read(void) {
+    mouse_wait(0);
+    return inb(0x60);
+}
+
+void MouseInit(void) {
+    uint8_t status;
+    
+    SerialPutString("[Mouse] Init PS/2...\r\n");
+    
+    // Enable auxiliary device
+    mouse_wait(1);
+    outb(0x64, 0xA8);
+    
+    // Enable interrupts
+    mouse_wait(1);
+    outb(0x64, 0x20);
+    mouse_wait(0);
+    status = inb(0x60) | 2;
+    mouse_wait(1);
+    outb(0x64, 0x60);
+    mouse_wait(1);
+    outb(0x60, status);
+    
+    // Set defaults
+    mouse_write(0xF6);
+    mouse_read();
+    
+    // Set sample rate to 200
+    mouse_write(0xF3);
+    mouse_read();
+    mouse_write(200);
+    mouse_read();
+    
+    // Enable data reporting
+    mouse_write(0xF4);
+    mouse_read();
+    
+    mouse.x = 320;
+    mouse.y = 240;
+    mouse_old_x = 320;
+    mouse_old_y = 240;
+    cursor_saved = 0;
+    
+    SerialPutString("[Mouse] Ready\r\n");
+}
+
+void MouseGetState(MOUSE_STATE *state) {
+    state->x = mouse.x;
+    state->y = mouse.y;
+    state->buttons = mouse.buttons;
+    state->left_down = mouse.left_down;
+    state->right_down = mouse.right_down;
+    state->middle_down = mouse.middle_down;
+}
+
+void MouseHandleInterrupt(void) {
+    uint8_t status = inb(0x64);
+    
+    if (!(status & 0x20)) return;
+    if (!(status & 1)) return;
+    
+    uint8_t data = inb(0x60);
+    
+    switch (mouse_cycle) {
+        case 0:
+            if (!(data & 0x08)) break;
+            mouse_byte[0] = data;
+            mouse_cycle++;
+            break;
+        case 1:
+            mouse_byte[1] = data;
+            mouse_cycle++;
+            break;
+        case 2:
+            mouse_byte[2] = data;
+            mouse.buttons = mouse_byte[0] & 0x07;
+            mouse.left_down = mouse.buttons & 1;
+            mouse.right_down = mouse.buttons & 2;
+            mouse.middle_down = mouse.buttons & 4;
+            
+            int8_t x_move = mouse_byte[1];
+            int8_t y_move = -mouse_byte[2];
+            
+            // Apply movement with acceleration
+            if (x_move > 0) x_move = x_move * 2;
+            else if (x_move < 0) x_move = x_move * 2;
+            if (y_move > 0) y_move = y_move * 2;
+            else if (y_move < 0) y_move = y_move * 2;
+            
+            mouse.x += x_move;
+            mouse.y += y_move;
+            
+            if (mouse.x < 0) mouse.x = 0;
+            if (mouse.x >= 628) mouse.x = 628;  // Leave room for cursor
+            if (mouse.y < 0) mouse.y = 0;
+            if (mouse.y >= 462) mouse.y = 462;
+            
+            mouse_cycle = 0;
+            break;
+    }
+}
+
+void MouseEraseCursor(void) {
+    if (!cursor_saved) return;
+    
+    int x = mouse_old_x;
+    int y = mouse_old_y;
+    
+    for (int row = 0; row < 18; row++) {
+        for (int col = 0; col < 11; col++) {
+            if (cursor[row][col] != 0) {
+                int px = x + col;
+                int py = y + row;
+                if (px >= 0 && px < 640 && py >= 0 && py < 480) {
+                    back_buffer[py * 640 + px] = cursor_bg[row][col];
+                }
+            }
+        }
+    }
+}
+
+void MouseDrawCursor(void) {
+    int x = mouse.x;
+    int y = mouse.y;
+    
+    // Save background
+    for (int row = 0; row < 18; row++) {
+        for (int col = 0; col < 11; col++) {
+            if (cursor[row][col] != 0) {
+                int px = x + col;
+                int py = y + row;
+                if (px >= 0 && px < 640 && py >= 0 && py < 480) {
+                    cursor_bg[row][col] = back_buffer[py * 640 + px];
+                }
+            }
+        }
+    }
+    cursor_saved = 1;
+    
+    // Draw cursor
+    for (int row = 0; row < 18; row++) {
+        for (int col = 0; col < 11; col++) {
+            int px = x + col;
+            int py = y + row;
+            if (px >= 0 && px < 640 && py >= 0 && py < 480) {
+                if (cursor[row][col] == 1) {
+                    back_buffer[py * 640 + px] = COLOR_WHITE;
+                } else if (cursor[row][col] == 2) {
+                    back_buffer[py * 640 + px] = COLOR_BLACK;
+                }
+            }
+        }
+    }
+    
+    mouse_old_x = mouse.x;
+    mouse_old_y = mouse.y;
+}

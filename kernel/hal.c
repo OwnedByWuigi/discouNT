@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "hal.h"
+#include "serial.h"
 
 #define VGA_WIDTH  80
 #define VGA_HEIGHT 25
@@ -7,14 +8,21 @@
 
 static int cursor_x = 0;
 static int cursor_y = 0;
-static uint8_t current_attr = 0x1F; // White on blue
+static uint8_t current_attr = 0x1F;
 
 void HalInitialize(void) {
-    HalClearScreen(0x1F);
+    // Initialize serial first for debugging
+    SerialInit();
+    
+    cursor_x = 0;
+    cursor_y = 0;
+    current_attr = 0x1F;
+    
+    SerialPutString("[HAL] Text mode initialized\r\n");
 }
 
 void HalClearScreen(uint8_t color) {
-    uint16_t blank = 0x20 | (color << 8);
+    uint16_t blank = 0x20 | ((uint16_t)color << 8);
     for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
         VGA_MEMORY[i] = blank;
     }
@@ -24,16 +32,18 @@ void HalClearScreen(uint8_t color) {
 }
 
 void HalPutChar(char c, uint8_t color) {
+    // Output to serial
+    SerialPutChar(c);
+    
+    // Output to VGA text mode
     if (c == '\n') {
         cursor_x = 0;
         cursor_y++;
     } else if (c == '\r') {
         cursor_x = 0;
-    } else if (c == '\t') {
-        cursor_x = (cursor_x + 4) & ~3;
     } else {
         int index = cursor_y * VGA_WIDTH + cursor_x;
-        VGA_MEMORY[index] = (uint16_t)c | ((uint16_t)color << 8);
+        VGA_MEMORY[index] = ((uint16_t)c) | ((uint16_t)color << 8);
         cursor_x++;
     }
     
@@ -43,16 +53,15 @@ void HalPutChar(char c, uint8_t color) {
     }
     
     if (cursor_y >= VGA_HEIGHT) {
-        // Scroll up
+        // Scroll
         for (int y = 1; y < VGA_HEIGHT; y++) {
             for (int x = 0; x < VGA_WIDTH; x++) {
-                VGA_MEMORY[(y-1) * VGA_WIDTH + x] = VGA_MEMORY[y * VGA_WIDTH + x];
+                VGA_MEMORY[(y-1)*VGA_WIDTH + x] = VGA_MEMORY[y*VGA_WIDTH + x];
             }
         }
-        // Clear bottom line
         uint16_t blank = 0x20 | ((uint16_t)color << 8);
         for (int x = 0; x < VGA_WIDTH; x++) {
-            VGA_MEMORY[(VGA_HEIGHT-1) * VGA_WIDTH + x] = blank;
+            VGA_MEMORY[(VGA_HEIGHT-1)*VGA_WIDTH + x] = blank;
         }
         cursor_y = VGA_HEIGHT - 1;
     }

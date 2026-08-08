@@ -1,7 +1,5 @@
-// kernel/portio.h
 #ifndef PORTIO_H
 #define PORTIO_H
-
 #include <stdint.h>
 
 static inline void outb(uint16_t port, uint8_t val) {
