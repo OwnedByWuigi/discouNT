@@ -1,28 +1,27 @@
-/* kernel/linker.ld */
-ENTRY(kmain)
+ENTRY(start)
 
 SECTIONS
 {
-    . = 0x100000;
+    . = 1M;
     
-    .text : {
-        *(.text*)
-        *(.rodata*)
+    .multiboot ALIGN(4) : {
+        *(.multiboot)
     }
     
-    .data : {
-        *(.data*)
+    .text ALIGN(4) : {
+        *(.text)
     }
     
-    .bss : {
+    .rodata ALIGN(4) : {
+        *(.rodata)
+    }
+    
+    .data ALIGN(4) : {
+        *(.data)
+    }
+    
+    .bss ALIGN(4) : {
+        *(.bss)
         *(COMMON)
-        *(.bss*)
-    }
-    
-    /* Discard unnecessary sections */
-    /DISCARD/ : {
-        *(.comment)
-        *(.eh_frame)
-        *(.note*)
     }
 }

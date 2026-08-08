@@ -1,22 +1,21 @@
-// kernel/util.c
 #include <stdint.h>
-#include <stddef.h>
+#include "util.h"
 
-void *memset(void *s, int c, size_t n) {
+void *memset(void *s, int c, uint32_t n) {
     uint8_t *p = s;
     while (n--) *p++ = c;
     return s;
 }
 
-void *memcpy(void *d, const void *s, size_t n) {
+void *memcpy(void *d, const void *s, uint32_t n) {
     uint8_t *dst = d;
     const uint8_t *src = s;
     while (n--) *dst++ = *src++;
     return d;
 }
 
-size_t strlen(const char *s) {
-    size_t n = 0;
+uint32_t strlen(const char *s) {
+    uint32_t n = 0;
     while (*s++) n++;
     return n;
 }
@@ -24,6 +23,15 @@ size_t strlen(const char *s) {
 int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }
     return *a - *b;
+}
+
+void strcpy(char *d, const char *s) {
+    while ((*d++ = *s++));
+}
+
+void strcat(char *d, const char *s) {
+    while (*d) d++;
+    while ((*d++ = *s++));
 }
 
 void itoa(int val, char *buf, int base) {

@@ -1,45 +1,42 @@
-// kernel/object.h
 #ifndef OBJECT_H
 #define OBJECT_H
 #include <stdint.h>
 
-#define OBJ_TYPE_PROCESS  1
-#define OBJ_TYPE_THREAD   2
-#define OBJ_TYPE_DIRECTORY 3
+#define MAX_OBJECTS 64
+#define MAX_NAME_LEN 32
 
-typedef struct _OBJECT_HEADER {
-    uint8_t  Type;
-    char     Name[32];
-    uint32_t RefCount;
-} OBJECT_HEADER;
+typedef enum {
+    OBJ_TYPE_NONE = 0,
+    OBJ_TYPE_PROCESS,
+    OBJ_TYPE_THREAD,
+    OBJ_TYPE_EVENT,
+    OBJ_TYPE_MUTEX,
+    OBJ_TYPE_WINDOW,    // Win32 window
+    OBJ_TYPE_PEN,       // GDI pen
+    OBJ_TYPE_BRUSH,     // GDI brush
+    OBJ_TYPE_DC,        // Device context
+} OBJECT_TYPE;
 
-typedef struct _OBJECT_DIRECTORY_ENTRY {
-    char             Name[32];
-    struct _OBJECT_HEADER *Object;
-} OBJECT_DIRECTORY_ENTRY;
+typedef struct _OBJECT {
+    char     name[MAX_NAME_LEN];
+    OBJECT_TYPE type;
+    uint32_t ref_count;
+    void     *body;       // Pointer to actual object data
+    uint32_t body_size;
+} OBJECT;
 
-typedef struct _OBJECT_DIRECTORY {
-    OBJECT_HEADER Header;
-    uint32_t      Count;
-    OBJECT_DIRECTORY_ENTRY Entries[64];
-} OBJECT_DIRECTORY;
+typedef struct _HANDLE_TABLE {
+    OBJECT *objects[MAX_OBJECTS];
+    uint32_t count;
+} HANDLE_TABLE;
 
-typedef struct _PROCESS {
-    OBJECT_HEADER Header;
-    void          *HandleTable[32];
-} PROCESS;
-
-typedef struct _THREAD {
-    OBJECT_HEADER Header;
-    void          *Process;
-    uint32_t      KernelStack;   // saved esp
-    uint32_t      State;         // 0=ready, 1=running
-} THREAD;
-
-// Global root directory
-extern OBJECT_DIRECTORY *ObpRootDirectory;
+// Global handles
+#define INVALID_HANDLE 0xFFFFFFFF
+typedef uint32_t HANDLE;
 
 void ObInit(void);
-void *ObCreateObject(uint8_t type, const char *name);
-void *ObOpenObjectByName(const char *name);
+HANDLE ObCreateObject(OBJECT_TYPE type, const char *name, void *body, uint32_t body_size);
+void *ObReferenceObject(HANDLE handle);
+void ObDereferenceObject(HANDLE handle);
+HANDLE ObFindObject(const char *name, OBJECT_TYPE type);
 #endif

@@ -1,68 +1,107 @@
 #!/bin/bash
 set -e
 
-echo "==> Building NT-like OS ISO"
+echo "==> Building NT-like OS with Win32 Subsystem (Step 3)"
 
-BOOT_DIR=boot
-KERN_DIR=kernel
-BUILD_DIR=build
-rm -rf $BUILD_DIR
-mkdir -p $BUILD_DIR
+# Clean build directory
+rm -rf build
+mkdir -p build
 
-# Assemble bootloader
-echo "--- Assembling bootloader ---"
-nasm -f bin $BOOT_DIR/boot.asm -o $BUILD_DIR/boot.bin
+# Build bootloader
+echo "--- Building bootloader ---"
+nasm -f elf32 boot/boot.asm -o build/boot.o
 
-# Compile kernel - add -fno-pic to disable position-independent code
-echo "--- Compiling kernel ---"
-CFLAGS="-ffreestanding -Wall -Wextra -nostdlib -fno-builtin -fno-exceptions \
-        -fno-stack-protector -nostartfiles -m32 -fno-pic -O0 -I$KERN_DIR"
+# Set up compiler flags
+CFLAGS="-ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+        -nostartfiles -m32 -fno-pic -O0 -Ikernel"
 
-gcc $CFLAGS -c $KERN_DIR/entry.c -o $BUILD_DIR/entry.o
-gcc $CFLAGS -c $KERN_DIR/hal.c -o $BUILD_DIR/hal.o
-gcc $CFLAGS -c $KERN_DIR/idt.c -o $BUILD_DIR/idt.o
-gcc $CFLAGS -c $KERN_DIR/object.c -o $BUILD_DIR/object.o
-gcc $CFLAGS -c $KERN_DIR/scheduler.c -o $BUILD_DIR/scheduler.o
-gcc $CFLAGS -c $KERN_DIR/util.c -o $BUILD_DIR/util.o
+echo "--- Compiling kernel core ---"
+gcc $CFLAGS -c kernel/util.c -o build/util.o
+gcc $CFLAGS -c kernel/mm.c -o build/mm.o
+gcc $CFLAGS -c kernel/hal.c -o build/hal.o
 
-# Assemble ISR stubs with elf32 format
-echo "--- Assembling ISR stubs ---"
-nasm -f elf32 $KERN_DIR/isr.asm -o $BUILD_DIR/isr.o
+echo "--- Compiling Object Manager ---"
+gcc $CFLAGS -c kernel/object.c -o build/object.o
 
-# Link kernel - force i386 emulation
+echo "--- Compiling Win32k Window Manager ---"
+gcc $CFLAGS -c kernel/win32k.c -o build/win32k.o
+
+echo "--- Compiling kernel entry ---"
+gcc $CFLAGS -c kernel/entry.c -o build/entry.o
+
 echo "--- Linking kernel ---"
-ld -m elf_i386 -T $KERN_DIR/linker.ld -o $BUILD_DIR/kernel.elf \
-    $BUILD_DIR/entry.o $BUILD_DIR/hal.o $BUILD_DIR/idt.o \
-    $BUILD_DIR/object.o $BUILD_DIR/scheduler.o $BUILD_DIR/util.o \
-    $BUILD_DIR/isr.o \
-    -nostdlib -no-pie --allow-multiple-definition
+ld -m elf_i386 -T kernel/linker.ld -nostdlib -no-pie \
+    build/boot.o \
+    build/entry.o \
+    build/hal.o \
+    build/util.o \
+    build/mm.o \
+    build/object.o \
+    build/win32k.o \
+    -o build/kernel.elf
 
-# Convert to flat binary
-echo "--- Creating flat binary ---"
-objcopy -O binary $BUILD_DIR/kernel.elf $BUILD_DIR/kernel.bin
-
-# Pad kernel to 64 sectors (32 KiB)
-SIZE=$(stat -c%s $BUILD_DIR/kernel.bin)
-TARGET=$((64 * 512))
-if [ $SIZE -gt $TARGET ]; then
-    echo "Error: kernel too large ($SIZE > $TARGET bytes)"
+# Check if kernel linked successfully
+if [ ! -f build/kernel.elf ]; then
+    echo "ERROR: Kernel linking failed!"
     exit 1
 fi
-dd if=/dev/zero bs=1 count=$((TARGET - SIZE)) >> $BUILD_DIR/kernel.bin 2>/dev/null
 
-# Create floppy image (1.44 MB)
-echo "--- Creating floppy image ---"
-dd if=/dev/zero of=$BUILD_DIR/floppy.img bs=512 count=2880 2>/dev/null
-dd if=$BUILD_DIR/boot.bin of=$BUILD_DIR/floppy.img conv=notrunc 2>/dev/null
-dd if=$BUILD_DIR/kernel.bin of=$BUILD_DIR/floppy.img bs=512 seek=1 conv=notrunc 2>/dev/null
+echo "--- Verifying multiboot ---"
+if command -v grub-file &> /dev/null; then
+    if grub-file --is-x86-multiboot build/kernel.elf; then
+        echo "Multiboot verification: OK"
+    else
+        echo "WARNING: Kernel may not be multiboot compliant!"
+    fi
+fi
 
-# Generate ISO with El Torito floppy emulation
+echo "--- Creating ISO directory structure ---"
+mkdir -p build/iso/boot/grub
+cp build/kernel.elf build/iso/boot/kernel.elf
+
+# Create GRUB configuration
+cat > build/iso/boot/grub/grub.cfg << 'EOF'
+set timeout=0
+set default=0
+
+menuentry "NT-like OS (Win32 Test)" {
+    multiboot /boot/kernel.elf
+    boot
+}
+
+menuentry "NT-like OS (Debug Mode)" {
+    multiboot /boot/kernel.elf debug
+    boot
+}
+EOF
+
 echo "--- Generating ISO ---"
-ISO_DIR=$BUILD_DIR/iso_root
-mkdir -p $ISO_DIR
-cp $BUILD_DIR/floppy.img $ISO_DIR/ntos.img
-xorriso -as mkisofs -R -b ntos.img -no-emul-boot -boot-load-size 4 \
-    -boot-info-table -o ntos.iso $ISO_DIR 2>/dev/null
+if command -v grub-mkrescue &> /dev/null; then
+    grub-mkrescue -o ntos.iso build/iso 2>/dev/null
+elif command -v grub2-mkrescue &> /dev/null; then
+    grub2-mkrescue -o ntos.iso build/iso 2>/dev/null
+else
+    echo "ERROR: grub-mkrescue not found!"
+    echo "Install: sudo apt-get install grub-pc-bin xorriso"
+    exit 1
+fi
 
-echo "==> Done! ISO image: ntos.iso"
-echo "    Run with: qemu-system-i386 -cdrom ntos.iso"
+# Check ISO size
+ISO_SIZE=$(stat -c%s ntos.iso 2>/dev/null || echo 0)
+echo "ISO size: $ISO_SIZE bytes"
+
+if [ "$ISO_SIZE" -lt 1000000 ]; then
+    echo "WARNING: ISO seems too small, might not boot"
+fi
+
+echo ""
+echo "=================================="
+echo "Build complete!"
+echo "=================================="
+echo ""
+echo "To run:"
+echo "  qemu-system-i386 -cdrom ntos.iso -m 64"
+echo ""
+echo "For debugging:"
+echo "  qemu-system-i386 -cdrom ntos.iso -m 64 -d cpu_reset -no-reboot"
+echo ""
