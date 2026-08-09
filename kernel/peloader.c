@@ -485,47 +485,103 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
     ELF32_HEADER *elf = (ELF32_HEADER*)elf_base;
     
-    // Get section headers
+    SerialPutString("[ELF] Looking for: ");
+    SerialPutString(func_name);
+    SerialPutString("\r\n");
+    
+    // Section headers are at file offset shoff
+    // We need to find .dynsym and .dynstr using their file offsets
     ELF32_SHDR *sh = (ELF32_SHDR*)((uint8_t*)elf_base + elf->shoff);
-    uint8_t *shstr = (uint8_t*)elf_base + sh[elf->shstrndx].offset;
+    
+    uint32_t shstr_offset = sh[elf->shstrndx].offset;
+    uint8_t *shstr = (uint8_t*)elf_base + shstr_offset;
     
     ELF32_SYM *dynsym = 0;
     uint32_t dynsym_count = 0;
     const char *dynstr = 0;
+    uint32_t dynsym_addr = 0;
+    uint32_t dynstr_addr = 0;
     
-    // Find .dynsym and .dynstr
     for (int i = 0; i < elf->shnum; i++) {
         const char *name = (const char*)(shstr + sh[i].name);
-        if (strcmp(name, ".dynsym") == 0 && sh[i].addr != 0) {
-            dynsym = (ELF32_SYM*)((uint8_t*)elf_base + sh[i].addr);
+        
+        if (strcmp(name, ".dynsym") == 0) {
+            // Try addr first, then offset
+            dynsym_addr = sh[i].addr;
+            if (dynsym_addr == 0) dynsym_addr = sh[i].offset;
+            dynsym = (ELF32_SYM*)((uint8_t*)elf_base + dynsym_addr);
             dynsym_count = sh[i].size / sizeof(ELF32_SYM);
+            SerialPutString("[ELF] .dynsym at 0x");
+            SerialPrintHex(dynsym_addr);
+            SerialPutString(" count=");
+            SerialPrintDec(dynsym_count);
+            SerialPutString("\r\n");
         }
-        if (strcmp(name, ".dynstr") == 0 && sh[i].addr != 0) {
-            dynstr = (const char*)((uint8_t*)elf_base + sh[i].addr);
+        if (strcmp(name, ".dynstr") == 0) {
+            dynstr_addr = sh[i].addr;
+            if (dynstr_addr == 0) dynstr_addr = sh[i].offset;
+            dynstr = (const char*)((uint8_t*)elf_base + dynstr_addr);
+            SerialPutString("[ELF] .dynstr at 0x");
+            SerialPrintHex(dynstr_addr);
+            SerialPutString("\r\n");
         }
     }
     
     if (!dynsym || !dynstr) {
-        SerialPutString("[ELF] No dynamic symbols found\r\n");
+        SerialPutString("[ELF] Dynamic symbols not found\r\n");
+        
+        // Dump sections
+        SerialPutString("[ELF] Sections: shnum=");
+        SerialPrintDec(elf->shnum);
+        SerialPutString("\r\n");
+        for (int i = 0; i < elf->shnum && i < 20; i++) {
+            SerialPutString("  [");
+            SerialPrintDec(i);
+            SerialPutString("] ");
+            SerialPutString((const char*)(shstr + sh[i].name));
+            SerialPutString(" addr=0x");
+            SerialPrintHex(sh[i].addr);
+            SerialPutString(" offset=0x");
+            SerialPrintHex(sh[i].offset);
+            SerialPutString(" size=0x");
+            SerialPrintHex(sh[i].size);
+            SerialPutString("\r\n");
+        }
         return 0;
     }
     
     // Search for the symbol
     for (uint32_t i = 0; i < dynsym_count; i++) {
+        if (dynsym[i].name == 0) continue;
         const char *name = dynstr + dynsym[i].name;
-        if (strcmp(name, func_name) == 0 && dynsym[i].value != 0) {
+        if (strcmp(name, func_name) == 0) {
+            uint32_t sym_value = dynsym[i].value;
             SerialPutString("[ELF] Found ");
             SerialPutString(func_name);
-            SerialPutString(" at 0x");
-            SerialPrintHex(dynsym[i].value);
+            SerialPutString(" value=0x");
+            SerialPrintHex(sym_value);
             SerialPutString("\r\n");
-            return (uint8_t*)elf_base + dynsym[i].value;
+            
+            if (sym_value != 0) {
+                return (uint8_t*)elf_base + sym_value;
+            }
+            // If value is 0, maybe it's an import that needs resolving
+            return 0;
         }
     }
     
-    SerialPutString("[ELF] Symbol not found: ");
-    SerialPutString(func_name);
-    SerialPutString("\r\n");
+    // Print first 5 symbols for debugging
+    SerialPutString("[ELF] First symbols:\r\n");
+    for (uint32_t i = 0; i < 5 && i < dynsym_count; i++) {
+        if (dynsym[i].name != 0) {
+            SerialPutString("  ");
+            SerialPutString(dynstr + dynsym[i].name);
+            SerialPutString(" value=0x");
+            SerialPrintHex(dynsym[i].value);
+            SerialPutString("\r\n");
+        }
+    }
+    
     return 0;
 }
 

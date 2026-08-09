@@ -104,6 +104,7 @@ static void cmd_help(void) {
     HalPutString("  cd /    - Go to root\n", 0x0F);
     HalPutString("  exec <file> - Load/run a file\n", 0x0F);
     HalPutString("  pwd     - Print working directory\n", 0x0F);
+    HalPutString("  gui     - Switch to GUI mode\n", 0x0F);
     HalPutString("  reboot  - Reboot\n", 0x0F);
 }
 
@@ -188,6 +189,145 @@ static void cmd_ls(void) {
     HalPutString(" entries\n", 0x0F);
     
     kfree(dir);
+}
+
+static void cmd_gui(void) {
+    HalPutString("\nSwitching to GUI mode...\n", 0x0E);
+    
+    // Switch to VGA graphics
+    VgaInit();
+    VgaClearScreen(COLOR_BLUE);
+    
+    // Draw test screen
+    VgaFillRect(0, 0, 640, 22, COLOR_DARK_GRAY);
+    VgaDrawString(8, 3, "GUI Mode - Press ESC to return", COLOR_WHITE, COLOR_DARK_GRAY);
+    VgaDrawString(10, 40, "Keyboard test - type something:", COLOR_WHITE, COLOR_BLUE);
+    
+    // Status bar
+    VgaFillRect(0, 462, 640, 18, COLOR_DARK_GRAY);
+    VgaDrawString(8, 464, "Press keys - ESC to exit", COLOR_WHITE, COLOR_DARK_GRAY);
+    
+    VgaSwapBuffers();
+    
+    // Text input buffer
+    char input_text[80];
+    int input_pos = 0;
+    for (int i = 0; i < 80; i++) input_text[i] = 0;
+    
+    int running = 1;
+    
+    while (running) {
+        // Check for ANY PS/2 data
+        uint8_t status = inb(0x64);
+        
+        if (status & 1) {
+            uint8_t data = inb(0x60);
+            
+            // Bit 5 = mouse, else keyboard
+            if (status & 0x20) {
+                // Mouse - just consume and ignore for now
+                // Mouse packets are 3 bytes, but we can't track cycles easily
+                // Just consume the byte
+            } else {
+                // Keyboard!
+                if (!(data & 0x80)) {
+                    // Key pressed
+                    if (data == 0x01) {
+                        // ESC - exit
+                        running = 0;
+                    } else if (data == 0x0E && input_pos > 0) {
+                        // Backspace
+                        input_pos--;
+                        input_text[input_pos] = 0;
+                    } else if (data < 58 && input_pos < 78) {
+                        // Regular key
+                        char c = scancode_ascii[data];
+                        if (c >= 'a' && c <= 'z') c -= 32; // Uppercase
+                        if (c != 0) {
+                            input_text[input_pos++] = c;
+                            input_text[input_pos] = 0;
+                        }
+                    }
+                    
+                    // Update display
+                    VgaFillRect(10, 60, 620, 20, COLOR_BLUE);
+                    VgaDrawString(10, 60, input_text, COLOR_YELLOW, COLOR_BLUE);
+                    
+                    // Show scancode
+                    char sc[16];
+                    sc[0] = 'S'; sc[1] = 'c'; sc[2] = ':'; sc[3] = ' ';
+                    sc[4] = '0' + (data / 16 > 9 ? data/16-10+'A' : data/16+'0');
+                    sc[5] = '0' + (data%16 > 9 ? data%16-10+'A' : data%16+'0');
+                    sc[6] = 0;
+                    VgaFillRect(10, 90, 100, 16, COLOR_BLUE);
+                    VgaDrawString(10, 90, sc, COLOR_LIGHT_GRAY, COLOR_BLUE);
+                    
+                    VgaSwapBuffers();
+                }
+            }
+        }
+        
+        for (volatile int i = 0; i < 1000; i++);
+    }
+    
+    // Return to text mode 3 (80x25 color)
+    // Proper VGA mode 3 register sequence
+    outb(0x3C2, 0x67);  // Misc output
+    
+    // Sequencer registers
+    outb(0x3C4, 0x00); outb(0x3C5, 0x03);
+    outb(0x3C4, 0x01); outb(0x3C5, 0x00);
+    outb(0x3C4, 0x02); outb(0x3C5, 0x03);
+    outb(0x3C4, 0x03); outb(0x3C5, 0x00);
+    outb(0x3C4, 0x04); outb(0x3C5, 0x02);
+    
+    // Unlock CRTC
+    outb(0x3D4, 0x11);
+    outb(0x3D5, inb(0x3D5) & 0x7F);
+    
+    // CRTC registers for mode 3
+    uint8_t crtc[] = {
+        0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,
+        0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x50,
+        0x9C, 0x0E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3, 0xFF
+    };
+    for (int i = 0; i < 25; i++) {
+        outb(0x3D4, i);
+        outb(0x3D5, crtc[i]);
+    }
+    
+    // Graphics controller registers
+    uint8_t gc[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x0F, 0xFF};
+    for (int i = 0; i < 9; i++) {
+        outb(0x3CE, i);
+        outb(0x3CF, gc[i]);
+    }
+    
+    // Attribute controller registers
+    uint8_t ac[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
+        0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+        0x0C, 0x00, 0x0F, 0x08, 0x00
+    };
+    inb(0x3DA);  // Reset flip-flop
+    for (int i = 0; i < 21; i++) {
+        outb(0x3C0, i);
+        outb(0x3C0, ac[i]);
+    }
+    outb(0x3C0, 0x20);  // Enable video
+    
+    // Clear the screen
+    uint16_t *textbuf = (uint16_t*)0xB8000;
+    for (int i = 0; i < 80*25; i++) {
+        textbuf[i] = 0x0F20;  // Black background, white text, space
+    }
+    
+    // Reset HAL state
+    HalInitialize();
+    HalClearScreen(0x1F);
+    HalPutString("NT-like OS v0.9\n", 0x1F);
+    HalPutString("===============\n", 0x1F);
+    HalPutString("Returned from GUI.\n\n", 0x0A);
 }
 
 static void cmd_cd(char *args) {
@@ -504,6 +644,7 @@ static void process_command(void) {
     else if (strcmp(cmd, "pwd") == 0) cmd_pwd();
     else if (strcmp(cmd, "exec") == 0) cmd_exec(args);
     else if (strcmp(cmd, "reboot") == 0) cmd_reboot();
+    else if (strcmp(cmd, "gui") == 0) cmd_gui();
     else if (*cmd) {
         HalPutString("Unknown: ", 0x0C);
         HalPutString(cmd, 0x0C);
