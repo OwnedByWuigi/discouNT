@@ -1,13 +1,12 @@
-// kernel/mm.c
 #include <stdint.h>
 #include "mm.h"
 
-#define KERNEL_HEAP_SIZE 0x100000  // 1MB kernel heap
+// Increase heap to 8MB to handle larger EXEs
+#define KERNEL_HEAP_SIZE 0x800000  // 8MB kernel heap
 static uint8_t kernel_heap[KERNEL_HEAP_SIZE];
 static uint32_t heap_offset = 0;
 
 void *kmalloc(uint32_t size) {
-    // Align to 4 bytes
     size = (size + 3) & ~3;
     
     if (heap_offset + size > KERNEL_HEAP_SIZE) {
@@ -20,6 +19,6 @@ void *kmalloc(uint32_t size) {
 }
 
 void kfree(void *ptr) {
-    // Simple bump allocator - no free in this implementation
     (void)ptr;
+    // Simple bump allocator
 }
