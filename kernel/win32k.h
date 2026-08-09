@@ -32,21 +32,16 @@ typedef struct _RECT {
     int left, top, right, bottom;
 } RECT;
 
-// Window management
-void Win32kInit(void);
+void Win32kInit(void *mb_info);
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t));
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
 void Win32kShowWindow(HANDLE hwnd);
 void Win32kUpdateWindow(HANDLE hwnd);
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect);
 void Win32kDestroyWindow(HANDLE hwnd);
-
-// Mouse input handling
 void Win32kHandleMouseDown(int x, int y, int button);
 void Win32kHandleMouseUp(int x, int y, int button);
 void Win32kHandleMouseMove(int x, int y);
-
-// Redraw all windows
 void Win32kRedrawAll(void);
 
 #endif

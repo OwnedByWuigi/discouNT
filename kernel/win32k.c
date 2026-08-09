@@ -1,8 +1,9 @@
 #include <stdint.h>
 #include "win32k.h"
-#include "vga.h"
+#include "fb.h"
 #include "mm.h"
 #include "util.h"
+#include "mouse.h"
 #include "serial.h"
 
 // Window list
@@ -16,12 +17,18 @@ static HANDLE drag_window = INVALID_HANDLE;
 static int drag_offset_x = 0;
 static int drag_offset_y = 0;
 
-void Win32kInit(void) {
-    VgaInit();
-    VgaClearScreen(COLOR_BLUE);
+void Win32kInit(void *mb_info) {
+    FbInit(mb_info);
+    FbClearScreen(COLOR_BLUE);
     window_count = 0;
     dragging = 0;
     drag_window = INVALID_HANDLE;
+    
+    if (FbIsFramebuffer()) {
+        SerialPutString("[Win32k] Using linear framebuffer\r\n");
+    } else {
+        SerialPutString("[Win32k] Using VGA fallback\r\n");
+    }
 }
 
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t)) {
@@ -56,7 +63,6 @@ HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y
     
     HANDLE hwnd = ObCreateObject(OBJ_TYPE_WINDOW, title, win, sizeof(WINDOW));
     
-    // Add to window list
     if (window_count < MAX_WINDOWS) {
         window_list[window_count++] = hwnd;
     }
@@ -70,7 +76,6 @@ void Win32kDestroyWindow(HANDLE hwnd) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
     
-    // Remove from window list
     for (int i = 0; i < window_count; i++) {
         if (window_list[i] == hwnd) {
             window_list[i] = window_list[window_count - 1];
@@ -81,7 +86,7 @@ void Win32kDestroyWindow(HANDLE hwnd) {
     
     if (win->wndProc) win->wndProc(hwnd, WM_DESTROY, 0, 0);
     ObDereferenceObject(hwnd);
-    ObDereferenceObject(hwnd); // Second deref to destroy
+    ObDereferenceObject(hwnd);
 }
 
 void Win32kShowWindow(HANDLE hwnd) {
@@ -91,21 +96,17 @@ void Win32kShowWindow(HANDLE hwnd) {
     
     int x = win->x, y = win->y, w = win->width, h = win->height;
     
-    // Window background
-    VgaFillRect(x, y, w, h, COLOR_LIGHT_GRAY);
+    FbFillRect(x, y, w, h, COLOR_LIGHT_GRAY);
     
-    // Title bar
     if (win->style & WS_CAPTION) {
-        VgaFillRect(x, y, w, 18, COLOR_DARK_GRAY);
-        VgaDrawString(x + 4, y + 2, win->title, COLOR_WHITE, COLOR_DARK_GRAY);
+        FbFillRect(x, y, w, 18, COLOR_DARK_GRAY);
+        FbDrawString(x + 4, y + 2, win->title, COLOR_WHITE, COLOR_DARK_GRAY);
         
-        // Close button (X)
-        VgaFillRect(x + w - 18, y + 2, 14, 14, COLOR_RED);
-        VgaDrawChar(x + w - 15, y + 3, 'X', COLOR_WHITE, COLOR_RED);
+        FbFillRect(x + w - 18, y + 2, 14, 14, COLOR_RED);
+        FbDrawChar(x + w - 15, y + 3, 'X', COLOR_WHITE, COLOR_RED);
     }
     
-    // Border
-    VgaDrawRect(x, y, w, h, COLOR_BLACK);
+    FbDrawRect(x, y, w, h, COLOR_BLACK);
     
     ObDereferenceObject(hwnd);
 }
@@ -129,7 +130,6 @@ void Win32kGetClientRect(HANDLE hwnd, RECT *rect) {
     if (win) ObDereferenceObject(hwnd);
 }
 
-// Check if point is in a window's close button
 static int is_close_button(WINDOW *win, int x, int y) {
     if (!(win->style & WS_CAPTION)) return 0;
     int bx = win->x + win->width - 18;
@@ -137,27 +137,18 @@ static int is_close_button(WINDOW *win, int x, int y) {
     return (x >= bx && x < bx + 14 && y >= by && y < by + 14);
 }
 
-// Check if point is in a window's title bar
 static int is_title_bar(WINDOW *win, int x, int y) {
     if (!(win->style & WS_CAPTION)) return 0;
-    int tx = win->x;
-    int ty = win->y;
-    int tw = win->width;
-    int th = 18;
-    // Exclude close button area
-    if (x >= tx + tw - 20 && y >= ty && y < ty + th) return 0;
-    return (x >= tx && x < tx + tw && y >= ty && y < ty + th);
+    if (x >= win->x + win->width - 20 && y >= win->y && y < win->y + 18) return 0;
+    return (x >= win->x && x < win->x + win->width && y >= win->y && y < win->y + 18);
 }
 
-// Check if point is in a window
 static int is_in_window(WINDOW *win, int x, int y) {
     return (x >= win->x && x < win->x + win->width &&
             y >= win->y && y < win->y + win->height);
 }
 
-// Find topmost window at position
 static HANDLE find_window_at(int x, int y) {
-    // Search backwards (topmost first)
     for (int i = window_count - 1; i >= 0; i--) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
         if (win && win->visible) {
@@ -170,7 +161,7 @@ static HANDLE find_window_at(int x, int y) {
 }
 
 void Win32kHandleMouseDown(int x, int y, int button) {
-    if (button != 1) return; // Left button only
+    if (button != 1) return;
     
     HANDLE hwnd = find_window_at(x, y);
     if (hwnd == INVALID_HANDLE) return;
@@ -178,18 +169,16 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
     
-    // Check close button first
     if (is_close_button(win, x, y)) {
-        SerialPutString("[Win32k] Close button clicked\r\n");
+        SerialPutString("[Win32k] Close window\r\n");
         ObDereferenceObject(hwnd);
         Win32kDestroyWindow(hwnd);
         Win32kRedrawAll();
         return;
     }
     
-    // Check title bar for dragging
     if (is_title_bar(win, x, y)) {
-        SerialPutString("[Win32k] Start drag\r\n");
+        SerialPutString("[Win32k] Drag start\r\n");
         dragging = 1;
         drag_window = hwnd;
         drag_offset_x = x - win->x;
@@ -204,7 +193,7 @@ void Win32kHandleMouseUp(int x, int y, int button) {
     if (button != 1) return;
     
     if (dragging) {
-        SerialPutString("[Win32k] End drag\r\n");
+        SerialPutString("[Win32k] Drag end\r\n");
         dragging = 0;
         drag_window = INVALID_HANDLE;
     }
@@ -214,15 +203,11 @@ void Win32kHandleMouseMove(int x, int y) {
     if (!dragging || drag_window == INVALID_HANDLE) return;
     
     WINDOW *win = (WINDOW*)ObReferenceObject(drag_window);
-    if (!win) {
-        dragging = 0;
-        return;
-    }
+    if (!win) { dragging = 0; return; }
     
     int new_x = x - drag_offset_x;
     int new_y = y - drag_offset_y;
     
-    // Clamp to screen
     if (new_x < 0) new_x = 0;
     if (new_y < 0) new_y = 0;
     if (new_x + win->width > 640) new_x = 640 - win->width;
@@ -238,8 +223,14 @@ void Win32kHandleMouseMove(int x, int y) {
 }
 
 void Win32kRedrawAll(void) {
-    VgaClearScreen(COLOR_BLUE);
+    // Don't clear the whole screen - just redraw windows
+    // First erase cursor
+    MouseEraseCursor();
     
+    // Clear screen
+    FbClearScreen(COLOR_BLUE);
+    
+    // Redraw all windows
     for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
         if (win && win->visible) {

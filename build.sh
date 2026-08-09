@@ -6,7 +6,7 @@ echo "==> Building NT-like OS"
 rm -rf build
 mkdir -p build
 
-# Assemble bootloader only
+# Assemble bootloader
 echo "--- Bootloader ---"
 nasm -f elf32 boot/boot.asm -o build/boot.o
 
@@ -17,7 +17,7 @@ CFLAGS="-ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
 echo "--- Compiling ---"
 FILES=(kernel/util.c kernel/mm.c kernel/hal.c kernel/serial.c
        kernel/object.c kernel/ke.c kernel/vga.c kernel/win32k.c
-       kernel/mouse.c kernel/entry.c)
+       kernel/mouse.c kernel/fb.c kernel/entry.c)
 
 for src in "${FILES[@]}"; do
     if [ -f "$src" ]; then
@@ -27,7 +27,7 @@ for src in "${FILES[@]}"; do
     fi
 done
 
-# Link - NO isr_stubs.o
+# Link
 echo "--- Linking ---"
 ld -m elf_i386 -T kernel/linker.ld -nostdlib -no-pie \
     build/boot.o \
@@ -39,6 +39,7 @@ ld -m elf_i386 -T kernel/linker.ld -nostdlib -no-pie \
     build/object.o \
     build/ke.o \
     build/vga.o \
+    build/fb.o \
     build/win32k.o \
     build/mouse.o \
     -o build/kernel.elf
@@ -57,7 +58,11 @@ cp build/kernel.elf build/iso/boot/
 cat > build/iso/boot/grub/grub.cfg << 'EOF'
 set timeout=0
 set default=0
-menuentry "NT-like OS" {
+
+insmod vbe
+
+menuentry "CoreOS" {
+    set gfxpayload=800x600x16
     multiboot /boot/kernel.elf
 }
 EOF
@@ -68,4 +73,5 @@ echo ""
 echo "=================================="
 echo "  Build Complete!"
 echo "=================================="
-echo "  Run: qemu-system-i386 -cdrom ntos.iso -m 64 -serial stdio"
+echo "  Run: qemu-system-i386 -cdrom ntos.iso -m 64 -vga std -serial stdio"
+echo ""
