@@ -26,9 +26,13 @@ typedef struct _WINDOW {
     char      title[64];
     int       x, y;
     int       width, height;
+    int       restore_x, restore_y;
+    int       restore_width, restore_height;
     uint32_t  style;
     uint8_t   visible;
     uint8_t   active;
+    uint8_t   minimized;
+    uint8_t   maximized;
     WNDCLASS  *wndClass;
     void      (*wndProc)(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam);
 } WINDOW;
