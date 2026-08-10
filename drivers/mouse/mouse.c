@@ -9,6 +9,7 @@ static MOUSE_STATE mouse = {320, 240, 0, 0, 0, 0};
 static uint8_t mouse_cycle = 0;
 static int8_t mouse_byte[3];
 static int mouse_old_x = 320, mouse_old_y = 240;
+static MOUSE_CURSOR_TYPE mouse_cursor_type = MOUSE_CURSOR_ARROW;
 
 // Arrow cursor (11x18 pixels)
 // 1 = white pixel, 2 = black pixel (outline), 0 = transparent
@@ -33,9 +34,86 @@ static const uint8_t cursor[18][11] = {
     {0,0,0,0,0,0,1,1,0,0,0},
 };
 
+static const uint8_t cursor_sizewe[11][11] = {
+    {0,0,0,0,0,2,0,0,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0},
+    {0,0,2,1,1,1,1,1,2,0,0},
+    {2,1,1,1,1,1,1,1,1,1,2},
+    {2,1,1,1,1,1,1,1,1,1,2},
+    {2,1,1,1,1,1,1,1,1,1,2},
+    {0,0,2,1,1,1,1,1,2,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0},
+    {0,0,0,0,0,2,0,0,0,0,0},
+};
+
+static const uint8_t cursor_sizens[11][11] = {
+    {0,0,0,0,2,2,2,0,0,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0},
+    {0,0,2,1,1,1,1,1,2,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,0,0,0,1,0,0,0,0,0},
+    {0,0,2,1,1,1,1,1,2,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0},
+    {0,0,0,0,2,2,2,0,0,0,0},
+};
+
+static const uint8_t cursor_sizenwse[11][11] = {
+    {2,1,0,0,0,0,0,0,0,0,0},
+    {1,2,1,0,0,0,0,0,0,0,0},
+    {0,1,2,1,0,0,0,0,0,0,0},
+    {0,0,1,2,1,0,0,0,0,0,0},
+    {0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0},
+    {0,0,0,0,0,1,2,1,0,0,0},
+    {0,0,0,0,0,0,1,2,1,0,0},
+    {0,0,0,0,0,0,0,1,2,1,0},
+    {0,0,0,0,0,0,0,0,1,2,1},
+    {0,0,0,0,0,0,0,0,0,1,2},
+};
+
+static const uint8_t cursor_sizenesw[11][11] = {
+    {0,0,0,0,0,0,0,0,0,1,2},
+    {0,0,0,0,0,0,0,0,1,2,1},
+    {0,0,0,0,0,0,0,1,2,1,0},
+    {0,0,0,0,0,0,1,2,1,0,0},
+    {0,0,0,0,0,1,2,1,0,0,0},
+    {0,0,0,0,1,2,1,0,0,0,0},
+    {0,0,0,1,2,1,0,0,0,0,0},
+    {0,0,1,2,1,0,0,0,0,0,0},
+    {0,1,2,1,0,0,0,0,0,0,0},
+    {1,2,1,0,0,0,0,0,0,0,0},
+    {2,1,0,0,0,0,0,0,0,0,0},
+};
+
 // Save background pixels under cursor
 static uint8_t cursor_bg[18][11];
 static int cursor_saved = 0;
+
+static const uint8_t *mouse_cursor_at(int row, int col) {
+    if (mouse_cursor_type == MOUSE_CURSOR_ARROW) return &cursor[row][col];
+    if (row >= 11 || col >= 11) return &cursor[0][0];
+
+    switch (mouse_cursor_type) {
+        case MOUSE_CURSOR_SIZEWE:   return &cursor_sizewe[row][col];
+        case MOUSE_CURSOR_SIZENS:   return &cursor_sizens[row][col];
+        case MOUSE_CURSOR_SIZENWSE: return &cursor_sizenwse[row][col];
+        case MOUSE_CURSOR_SIZENESW: return &cursor_sizenesw[row][col];
+        default:                    return &cursor[row][col];
+    }
+}
+
+static int mouse_cursor_width(void) {
+    return (mouse_cursor_type == MOUSE_CURSOR_ARROW) ? 11 : 11;
+}
+
+static int mouse_cursor_height(void) {
+    return (mouse_cursor_type == MOUSE_CURSOR_ARROW) ? 18 : 11;
+}
 
 static void mouse_wait(uint8_t type) {
     uint32_t timeout = 100000;
@@ -170,10 +248,12 @@ void MouseEraseCursor(void) {
     
     int x = mouse_old_x;
     int y = mouse_old_y;
+    int width = mouse_cursor_width();
+    int height = mouse_cursor_height();
     
-    for (int row = 0; row < 18; row++) {
-        for (int col = 0; col < 11; col++) {
-            if (cursor[row][col] != 0) {
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            if (*mouse_cursor_at(row, col) != 0) {
                 int px = x + col;
                 int py = y + row;
                 if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
@@ -187,11 +267,13 @@ void MouseEraseCursor(void) {
 void MouseDrawCursor(void) {
     int x = mouse.x;
     int y = mouse.y;
+    int width = mouse_cursor_width();
+    int height = mouse_cursor_height();
     
     // Save background
-    for (int row = 0; row < 18; row++) {
-        for (int col = 0; col < 11; col++) {
-            if (cursor[row][col] != 0) {
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            if (*mouse_cursor_at(row, col) != 0) {
                 int px = x + col;
                 int py = y + row;
                 if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
@@ -203,14 +285,14 @@ void MouseDrawCursor(void) {
     cursor_saved = 1;
     
     // Draw cursor
-    for (int row = 0; row < 18; row++) {
-        for (int col = 0; col < 11; col++) {
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
             int px = x + col;
             int py = y + row;
             if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
-                if (cursor[row][col] == 1) {
+                if (*mouse_cursor_at(row, col) == 1) {
                     FbPutPixel(px, py, COLOR_WHITE);
-                } else if (cursor[row][col] == 2) {
+                } else if (*mouse_cursor_at(row, col) == 2) {
                     FbPutPixel(px, py, COLOR_BLACK);
                 }
             }
@@ -219,4 +301,11 @@ void MouseDrawCursor(void) {
     
     mouse_old_x = mouse.x;
     mouse_old_y = mouse.y;
+}
+
+void MouseSetCursorType(MOUSE_CURSOR_TYPE type) {
+    if (mouse_cursor_type == type) return;
+    MouseEraseCursor();
+    mouse_cursor_type = type;
+    cursor_saved = 0;
 }

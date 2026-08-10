@@ -33,6 +33,15 @@ static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
 static int drag_offset_x = 0;
 static int drag_offset_y = 0;
+static int resizing = 0;
+static HANDLE resize_window = INVALID_HANDLE;
+static int resize_edge = 0;
+static int resize_start_mouse_x = 0;
+static int resize_start_mouse_y = 0;
+static int resize_start_x = 0;
+static int resize_start_y = 0;
+static int resize_start_width = 0;
+static int resize_start_height = 0;
 static uint8_t *drag_background = 0;
 static int drag_bg_width = 0;
 static int drag_bg_height = 0;
@@ -44,12 +53,23 @@ typedef enum _CAPTION_BUTTON_HIT {
     CAPBTN_CLOSE
 } CAPTION_BUTTON_HIT;
 
+enum {
+    RESIZE_NONE  = 0,
+    RESIZE_LEFT  = 1 << 0,
+    RESIZE_RIGHT = 1 << 1,
+    RESIZE_TOP   = 1 << 2,
+    RESIZE_BOTTOM= 1 << 3
+};
+
 static void restore_window_if_needed(HANDLE hwnd, WINDOW *win);
 static HANDLE find_topmost_visible_window(void);
 static void minimize_window(HANDLE hwnd, WINDOW *win);
 static void maximize_window(WINDOW *win);
 static void restore_window(WINDOW *win);
 static void layout_minimized_window(HANDLE hwnd, WINDOW *win);
+static int hit_resize_edge(WINDOW *win, int x, int y);
+static void update_cursor_for_point(int x, int y);
+static HANDLE find_window_at(int x, int y);
 
 static int minimized_window_height(void) {
     return FRAME_THICKNESS + TITLEBAR_HEIGHT + FRAME_THICKNESS;
@@ -276,6 +296,52 @@ static int is_title_bar(WINDOW *win, int x, int y) {
     return 1;
 }
 
+static int hit_resize_edge(WINDOW *win, int x, int y) {
+    int edge = RESIZE_NONE;
+    int border = 4;
+
+    if (!win || win->minimized || win->maximized) return RESIZE_NONE;
+    if (!(win->style & WS_THICKFRAME)) return RESIZE_NONE;
+    if (!is_in_window(win, x, y)) return RESIZE_NONE;
+
+    if (x < win->x + border) edge |= RESIZE_LEFT;
+    else if (x >= win->x + win->width - border) edge |= RESIZE_RIGHT;
+
+    if (y < win->y + border) edge |= RESIZE_TOP;
+    else if (y >= win->y + win->height - border) edge |= RESIZE_BOTTOM;
+
+    return edge;
+}
+
+static void update_cursor_for_point(int x, int y) {
+    int edge = RESIZE_NONE;
+    MOUSE_CURSOR_TYPE type = MOUSE_CURSOR_ARROW;
+    HANDLE hwnd;
+    WINDOW *win;
+
+    if (resizing) {
+        edge = resize_edge;
+    } else {
+        hwnd = find_window_at(x, y);
+        if (hwnd != INVALID_HANDLE) {
+            win = (WINDOW*)ObReferenceObject(hwnd);
+            if (win) {
+                edge = hit_resize_edge(win, x, y);
+                ObDereferenceObject(hwnd);
+            }
+        }
+    }
+
+    if ((edge & RESIZE_LEFT) && (edge & RESIZE_TOP)) type = MOUSE_CURSOR_SIZENWSE;
+    else if ((edge & RESIZE_RIGHT) && (edge & RESIZE_BOTTOM)) type = MOUSE_CURSOR_SIZENWSE;
+    else if ((edge & RESIZE_RIGHT) && (edge & RESIZE_TOP)) type = MOUSE_CURSOR_SIZENESW;
+    else if ((edge & RESIZE_LEFT) && (edge & RESIZE_BOTTOM)) type = MOUSE_CURSOR_SIZENESW;
+    else if (edge & (RESIZE_LEFT | RESIZE_RIGHT)) type = MOUSE_CURSOR_SIZEWE;
+    else if (edge & (RESIZE_TOP | RESIZE_BOTTOM)) type = MOUSE_CURSOR_SIZENS;
+
+    MouseSetCursorType(type);
+}
+
 static HANDLE find_topmost_visible_window(void) {
     for (int i = window_count - 1; i >= 0; i--) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
@@ -487,6 +553,8 @@ void Win32kInit(void *mb_info) {
     active_window = INVALID_HANDLE;
     dragging = 0;
     drag_window = INVALID_HANDLE;
+    resizing = 0;
+    resize_window = INVALID_HANDLE;
     
     if (FbIsFramebuffer()) {
         SerialPutString("[Win32k] Using linear framebuffer\r\n");
@@ -661,6 +729,24 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     default:
         break;
     }
+
+    {
+        int resize_hit = hit_resize_edge(win, x, y);
+        if (resize_hit != RESIZE_NONE) {
+            resizing = 1;
+            resize_window = hwnd;
+            resize_edge = resize_hit;
+            resize_start_mouse_x = x;
+            resize_start_mouse_y = y;
+            resize_start_x = win->x;
+            resize_start_y = win->y;
+            resize_start_width = win->width;
+            resize_start_height = win->height;
+            ObDereferenceObject(hwnd);
+            Win32kRedrawAll();
+            return;
+        }
+    }
     
     if (is_title_bar(win, x, y)) {
         SerialPutString("[Win32k] Drag start\r\n");
@@ -676,7 +762,6 @@ void Win32kHandleMouseDown(int x, int y, int button) {
 }
 
 void Win32kHandleMouseUp(int x, int y, int button) {
-    (void)x; (void)y;
     if (button != 1) return;
     
     if (dragging) {
@@ -685,9 +770,101 @@ void Win32kHandleMouseUp(int x, int y, int button) {
         drag_window = INVALID_HANDLE;
         Win32kRedrawAll();
     }
+    if (resizing) {
+        resizing = 0;
+        resize_window = INVALID_HANDLE;
+        resize_edge = RESIZE_NONE;
+        Win32kRedrawAll();
+    }
+    update_cursor_for_point(x, y);
 }
 
 void Win32kHandleMouseMove(int x, int y) {
+    if (resizing && resize_window != INVALID_HANDLE) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(resize_window);
+        if (!win) {
+            resizing = 0;
+            resize_window = INVALID_HANDLE;
+            resize_edge = RESIZE_NONE;
+            return;
+        }
+
+        {
+            int dx = x - resize_start_mouse_x;
+            int dy = y - resize_start_mouse_y;
+            int new_x = resize_start_x;
+            int new_y = resize_start_y;
+            int new_w = resize_start_width;
+            int new_h = resize_start_height;
+            int min_w = 96;
+            int min_h = 64;
+            int screen_w = FbGetWidth();
+            int screen_h = FbGetHeight();
+
+            if (screen_w <= 0) screen_w = 640;
+            if (screen_h <= 0) screen_h = 480;
+
+            if (resize_edge & RESIZE_RIGHT) new_w = resize_start_width + dx;
+            if (resize_edge & RESIZE_BOTTOM) new_h = resize_start_height + dy;
+            if (resize_edge & RESIZE_LEFT) {
+                new_x = resize_start_x + dx;
+                new_w = resize_start_width - dx;
+            }
+            if (resize_edge & RESIZE_TOP) {
+                new_y = resize_start_y + dy;
+                new_h = resize_start_height - dy;
+            }
+
+            if (new_w < min_w) {
+                if (resize_edge & RESIZE_LEFT) new_x -= (min_w - new_w);
+                new_w = min_w;
+            }
+            if (new_h < min_h) {
+                if (resize_edge & RESIZE_TOP) new_y -= (min_h - new_h);
+                new_h = min_h;
+            }
+
+            if (new_x < 0) {
+                if (resize_edge & RESIZE_LEFT) new_w += new_x;
+                new_x = 0;
+            }
+            if (new_y < 0) {
+                if (resize_edge & RESIZE_TOP) new_h += new_y;
+                new_y = 0;
+            }
+            if (new_x + new_w > screen_w) {
+                if (resize_edge & RESIZE_RIGHT) new_w = screen_w - new_x;
+                else new_x = screen_w - new_w;
+            }
+            if (new_y + new_h > screen_h) {
+                if (resize_edge & RESIZE_BOTTOM) new_h = screen_h - new_y;
+                else new_y = screen_h - new_h;
+            }
+
+            if (new_w < min_w) new_w = min_w;
+            if (new_h < min_h) new_h = min_h;
+            if (new_x < 0) new_x = 0;
+            if (new_y < 0) new_y = 0;
+
+            win->x = new_x;
+            win->y = new_y;
+            win->width = new_w;
+            win->height = new_h;
+            if (!win->maximized && !win->minimized) {
+                win->restore_x = new_x;
+                win->restore_y = new_y;
+                win->restore_width = new_w;
+                win->restore_height = new_h;
+            }
+        }
+
+        ObDereferenceObject(resize_window);
+        update_cursor_for_point(x, y);
+        Win32kRedrawAll();
+        return;
+    }
+
+    update_cursor_for_point(x, y);
     if (!dragging || drag_window == INVALID_HANDLE) return;
     
     WINDOW *win = (WINDOW*)ObReferenceObject(drag_window);

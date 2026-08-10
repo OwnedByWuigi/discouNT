@@ -2,6 +2,7 @@ BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 SYSTEM32_DIR := $(ISO_DIR)/SYSTEM32
 GRUB_DIR := $(ISO_DIR)/boot/grub
+KERNEL_ISO_PATH := $(SYSTEM32_DIR)/NTOSKRNL.EXE
 
 ISO_NAME := ntos.iso
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
@@ -150,9 +151,10 @@ $(SMSS_APP): win32/smss/smss_app.c
 		-o $@ \
 		$< kernel/util.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
 	@rm -rf $(ISO_DIR)/APPS
+	@cp "$(KERNEL_ELF)" "$(KERNEL_ISO_PATH)"
 	@for dll in $(DLL_OUTPUTS); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
@@ -170,9 +172,8 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL
 	fi
 	@touch $@
 
-$(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(KERNEL_ELF) | $(SYSTEM32_DIR)/.stamp
+$(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg | $(SYSTEM32_DIR)/.stamp
 	@mkdir -p $(GRUB_DIR) $(ISO_DIR)/boot
-	cp $(KERNEL_ELF) $(ISO_DIR)/boot/
 	cp $< $@
 
 iso: $(ISO_NAME)

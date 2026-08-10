@@ -11,6 +11,8 @@
 #define COLOR_WHITE       15
 
 #define MAX_MODES 16
+#define DESK_WINDOW_W 520
+#define DESK_WINDOW_H 340
 
 typedef struct _RES_MODE {
     int width;
@@ -151,8 +153,8 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
         g_api->DrawString(x0 + 168, y0 + 78, res_text, COLOR_BLACK, COLOR_LIGHT_GRAY);
 
         g_api->DrawString(x0 + 16, y0 + 132, "Available resolutions", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->FillRect(x0 + 16, y0 + 146, 220, 84, COLOR_WHITE);
-        g_api->DrawRect(x0 + 16, y0 + 146, 220, 84, COLOR_DARK_GRAY);
+        g_api->FillRect(x0 + 16, y0 + 146, 240, 126, COLOR_WHITE);
+        g_api->DrawRect(x0 + 16, y0 + 146, 240, 126, COLOR_DARK_GRAY);
 
         for (int i = 0; i < g_mode_count; i++) {
             int iy = y0 + 150 + (i * 14);
@@ -161,16 +163,16 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
             char line[48];
             line[0] = 0;
             mode_to_text(i, line);
-            g_api->FillRect(x0 + 18, iy, 216, 12, bg);
+            g_api->FillRect(x0 + 18, iy, 236, 12, bg);
             g_api->DrawString(x0 + 22, iy + 2, line, fg, bg);
         }
 
-        g_api->DrawString(x0 + 252, y0 + 150, "Monitor:", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(x0 + 252, y0 + 164, "Generic QEMU Display", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(x0 + 252, y0 + 188, "Current mode:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 280, y0 + 150, "Monitor:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 280, y0 + 164, "Generic QEMU Display", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 280, y0 + 188, "Current mode:", COLOR_BLACK, COLOR_LIGHT_GRAY);
         res_text[0] = 0;
         mode_to_text(applied_mode, res_text);
-        g_api->DrawString(x0 + 252, y0 + 202, res_text, COLOR_BLUE, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 280, y0 + 202, res_text, COLOR_BLUE, COLOR_LIGHT_GRAY);
 
         draw_button(x0 + cw - 220, y0 + ch - 34, 60, 24, "Apply", selected_mode != applied_mode);
         draw_button(x0 + cw - 152, y0 + ch - 34, 60, 24, "OK", 0);
@@ -203,7 +205,7 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
         desk_class = g_api->RegisterClass("DeskCplClass", 0, desk_wndproc);
     }
     desk_window = g_api->CreateWindowByClass(desk_class, "Display Properties",
-                                             120, 84, 430, 280, GUI_WS_OVERLAPPEDWINDOW);
+                                             108, 72, DESK_WINDOW_W, DESK_WINDOW_H, GUI_WS_OVERLAPPEDWINDOW);
     return desk_window;
 }
 
@@ -239,10 +241,10 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
     int slider_w = 176;
     int list_x = 16;
     int list_y = 146;
-    int list_w = 220;
-    int list_h = 84;
-    int client_w = 430 - 6;
-    int client_h = 280 - 24;
+    int list_w = 240;
+    int list_h = 126;
+    int client_w = DESK_WINDOW_W - 6;
+    int client_h = DESK_WINDOW_H - 24;
     int apply_x = client_w - 220;
     int ok_x = client_w - 152;
     int cancel_x = client_w - 84;
