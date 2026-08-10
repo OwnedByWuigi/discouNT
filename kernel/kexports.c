@@ -1,0 +1,116 @@
+#include <stdint.h>
+#include "kexports.h"
+#include "driver.h"
+#include "mm.h"
+#include "util.h"
+#include "object.h"
+#include "serial.h"
+#include "cdfs.h"
+#include "keyboard.h"
+#include "mouse.h"
+#include "net.h"
+#include "fb.h"
+#include "vga.h"
+#include "w32k.h"
+
+typedef struct _KERNEL_EXPORT {
+    const char *name;
+    void *addr;
+} KERNEL_EXPORT;
+
+uint8_t back_buffer[640 * 480];
+
+static KERNEL_EXPORT kernel_exports[] = {
+    {"kmalloc", kmalloc},
+    {"kfree", kfree},
+    {"memset", memset},
+    {"memcpy", memcpy},
+    {"strlen", strlen},
+    {"strcmp", strcmp},
+    {"strcpy", strcpy},
+    {"strcat", strcat},
+    {"itoa", itoa},
+    {"ObCreateObject", ObCreateObject},
+    {"ObReferenceObject", ObReferenceObject},
+    {"ObDereferenceObject", ObDereferenceObject},
+    {"ObFindObject", ObFindObject},
+    {"SerialInit", SerialInit},
+    {"SerialPutChar", SerialPutChar},
+    {"SerialPutString", SerialPutString},
+    {"SerialPrintHex", SerialPrintHex},
+    {"SerialPrintDec", SerialPrintDec},
+    {"CdfsInit", CdfsInit},
+    {"CdfsReadSector", CdfsReadSector},
+    {"CdfsFindFile", CdfsFindFile},
+    {"CdfsReadFile", CdfsReadFile},
+    {"KeyboardInit", KeyboardInit},
+    {"KeyboardHandleData", KeyboardHandleData},
+    {"KeyboardHandleControllerEvent", KeyboardHandleControllerEvent},
+    {"KeyboardPollEvent", KeyboardPollEvent},
+    {"MouseInit", MouseInit},
+    {"MouseGetState", MouseGetState},
+    {"MouseDrawCursor", MouseDrawCursor},
+    {"MouseEraseCursor", MouseEraseCursor},
+    {"MouseSetCursorType", MouseSetCursorType},
+    {"MouseHandleByte", MouseHandleByte},
+    {"MouseHandleInterrupt", MouseHandleInterrupt},
+    {"NetInit", NetInit},
+    {"NetPoll", NetPoll},
+    {"NetIsReady", NetIsReady},
+    {"NetPing", NetPing},
+    {"VgaInit", VgaInit},
+    {"VgaClearScreen", VgaClearScreen},
+    {"VgaPutPixel", VgaPutPixel},
+    {"VgaFillRect", VgaFillRect},
+    {"VgaDrawRect", VgaDrawRect},
+    {"VgaDrawChar", VgaDrawChar},
+    {"VgaDrawString", VgaDrawString},
+    {"VgaSwapBuffers", VgaSwapBuffers},
+    {"back_buffer", back_buffer},
+    {"FbInit", FbInit},
+    {"FbClearScreen", FbClearScreen},
+    {"FbPutPixel", FbPutPixel},
+    {"FbFillRect", FbFillRect},
+    {"FbDrawRect", FbDrawRect},
+    {"FbDrawChar", FbDrawChar},
+    {"FbDrawString", FbDrawString},
+    {"FbSwapBuffers", FbSwapBuffers},
+    {"FbIsFramebuffer", FbIsFramebuffer},
+    {"FbGetWidth", FbGetWidth},
+    {"FbGetHeight", FbGetHeight},
+    {"FbGetModeCount", FbGetModeCount},
+    {"FbGetModeInfo", FbGetModeInfo},
+    {"FbSetResolution", FbSetResolution},
+    {"FbGetPixel", FbGetPixel},
+    {"FbCapture", FbCapture},
+    {"FbBlitIndexed", FbBlitIndexed},
+    {"Win32kInit", Win32kInit},
+    {"Win32kRegisterClass", Win32kRegisterClass},
+    {"Win32kCreateWindow", Win32kCreateWindow},
+    {"Win32kCreateWindowByClass", Win32kCreateWindowByClass},
+    {"Win32kShowWindow", Win32kShowWindow},
+    {"Win32kUpdateWindow", Win32kUpdateWindow},
+    {"Win32kGetClientRect", Win32kGetClientRect},
+    {"Win32kGetWindowRect", Win32kGetWindowRect},
+    {"Win32kDestroyWindow", Win32kDestroyWindow},
+    {"Win32kHandleMouseDown", Win32kHandleMouseDown},
+    {"Win32kHandleMouseUp", Win32kHandleMouseUp},
+    {"Win32kHandleMouseMove", Win32kHandleMouseMove},
+    {"Win32kRedrawAll", Win32kRedrawAll},
+    {"Win32kRefreshCursor", Win32kRefreshCursor},
+    {"Win32kIsDragging", Win32kIsDragging},
+    {"Win32kGetActiveWindow", Win32kGetActiveWindow},
+    {"Win32kActivateWindow", Win32kActivateWindow},
+};
+
+void *KernelResolveSymbol(const char *name) {
+    if (!name || !*name) return 0;
+
+    for (uint32_t i = 0; i < (sizeof(kernel_exports) / sizeof(kernel_exports[0])); i++) {
+        if (strcmp(kernel_exports[i].name, name) == 0) {
+            return kernel_exports[i].addr;
+        }
+    }
+
+    return DriverResolveSymbol(name);
+}

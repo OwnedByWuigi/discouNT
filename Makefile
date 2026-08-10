@@ -24,7 +24,7 @@ CPPFLAGS := \
 	-Idrivers/net \
 	-Idrivers/serial \
 	-Idrivers/vga \
-	-Idrivers/win32k \
+	-Iwin32/w32k \
 	-Iwin32/smss \
 	-Iwin32/csrss
 
@@ -47,28 +47,25 @@ KERNEL_CORE_SRCS := \
 	kernel/object.c \
 	kernel/ke.c \
 	kernel/peloader.c \
+	kernel/kexports.c \
+	kernel/driver.c \
+	kernel/driver_stubs.c \
 	kernel/subsystem.c \
 	kernel/nativecmd.c \
 	win32/csrss/csrss.c \
 	win32/smss/smss.c \
 	kernel/entry.c
 
-DRIVER_SRCS := \
-	drivers/serial/serial.c \
-	drivers/cdfs/cdfs.c \
-	drivers/vga/vga.c \
-	drivers/fb/fb.c \
-	drivers/keyboard/keyboard.c \
-	drivers/net/net.c \
-	drivers/win32k/win32k.c \
-	drivers/mouse/mouse.c
-
-KERNEL_SRCS := $(KERNEL_CORE_SRCS) $(DRIVER_SRCS)
+KERNEL_SRCS := $(KERNEL_CORE_SRCS)
 KERNEL_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(KERNEL_SRCS))
+BOOT_SERIAL_OBJ := $(BUILD_DIR)/bootdrivers/serial_boot.o
+BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
+KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ)
 
 DLL_SRCS := $(wildcard dlls/*/*.c)
 DLL_NAMES := $(sort $(notdir $(basename $(DLL_SRCS))))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
+W32K_DLL := $(BUILD_DIR)/win32/w32k/w32k.dll
 
 APP_SRC_FILES := $(wildcard apps/*.c) $(wildcard apps/*/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
@@ -76,6 +73,15 @@ SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
 CSRSS_APP := $(BUILD_DIR)/win32/csrss/csrss.exe
 CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
 DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
+DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
+SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
+VGA_SYS := $(BUILD_DIR)/drivers/vga/vga.sys
+CDFS_SYS := $(BUILD_DIR)/drivers/cdfs/cdfs.sys
+KEYBOARD_SYS := $(BUILD_DIR)/drivers/keyboard/keyboard.sys
+MOUSE_SYS := $(BUILD_DIR)/drivers/mouse/mouse.sys
+NET_SYS := $(BUILD_DIR)/drivers/net/net.sys
+FB_SYS := $(BUILD_DIR)/drivers/fb/fb.sys
+DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS)
 
 .PHONY: all clean iso kernel dlls apps run run-bridge
 
@@ -83,15 +89,15 @@ all: $(ISO_NAME)
 
 kernel: $(KERNEL_ELF)
 
-dlls: $(DLL_OUTPUTS)
+dlls: $(DLL_OUTPUTS) $(W32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL)
+apps: $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(DRIVER_SYS_FILES) $(W32K_DLL)
 
 $(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
 
-$(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS)
-	$(LD) $(LDFLAGS) $(BOOT_OBJ) $(KERNEL_OBJS) -o $@
+$(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS)
+	$(LD) $(LDFLAGS) $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS) -o $@
 
 $(BOOT_OBJ): boot/boot.asm
 	@mkdir -p $(@D)
@@ -100,6 +106,14 @@ $(BOOT_OBJ): boot/boot.asm
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BOOT_SERIAL_OBJ): drivers/serial/serial.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
+
+$(BOOT_CDFS_OBJ): drivers/cdfs/cdfs.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCdfsInit=BootCdfsInit -DCdfsReadSector=BootCdfsReadSector -DCdfsFindFile=BootCdfsFindFile -DCdfsReadFile=BootCdfsReadFile -c $< -o $@
 
 $(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
 	@mkdir -p $(@D)
@@ -120,6 +134,10 @@ $(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
 			-o $@ \
 			dlls/$*/$*.c; \
 	fi
+
+$(W32K_DLL): win32/w32k/w32k.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -o $@ $<
 
 $(BUILD_DIR)/apps/%.exe: apps/%.c
 	@mkdir -p $(@D)
@@ -163,13 +181,46 @@ $(CSRSS_APP): win32/csrss/csrss_app.c
 		-o $@ \
 		$< kernel/util.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(KERNEL_ELF)
+$(SERIAL_SYS): drivers/serial/serial.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(VGA_SYS): drivers/vga/vga.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(CDFS_SYS): drivers/cdfs/cdfs.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(KEYBOARD_SYS): drivers/keyboard/keyboard.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(MOUSE_SYS): drivers/mouse/mouse.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(NET_SYS): drivers/net/net.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(FB_SYS): drivers/fb/fb.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
+	@mkdir -p $(DRIVERS_DIR)
 	@rm -rf $(ISO_DIR)/APPS
+	@rm -f "$(DRIVERS_DIR)/WIN32K.SYS"
 	@cp "$(KERNEL_ELF)" "$(KERNEL_ISO_PATH)"
 	@for dll in $(DLL_OUTPUTS); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
+	@if [ -f "$(W32K_DLL)" ]; then \
+		cp "$(W32K_DLL)" "$(SYSTEM32_DIR)/WIN32K.DLL"; \
+	fi
 	@if [ -f "$(SMSS_APP)" ]; then \
 		cp "$(SMSS_APP)" "$(SYSTEM32_DIR)/SMSS.EXE"; \
 	fi
@@ -185,6 +236,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_AP
 	@if [ -f "$(DESK_CPL)" ]; then \
 		cp "$(DESK_CPL)" "$(SYSTEM32_DIR)/DESK.CPL"; \
 	fi
+	@for sys in $(DRIVER_SYS_FILES); do \
+		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \
+	done
 	@touch $@
 
 $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg | $(SYSTEM32_DIR)/.stamp

@@ -8,7 +8,7 @@
 #include "mm.h"
 #include "peloader.h"
 #include "fb.h"
-#include "win32k.h"
+#include "w32k.h"
 #include "mouse.h"
 #include "keyboard.h"
 #include "guiapp.h"

@@ -9,6 +9,7 @@
 #include "subsystem.h"
 #include "keyboard.h"
 #include "net.h"
+#include "driver.h"
 
 void kmain(uint32_t magic, void *mb_info_ptr) {
     (void)magic;
@@ -27,6 +28,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     ObInit();
     KeInit();
     CdfsInit();
+    DriverLoadAll(mb_info_ptr);
     KeyboardInit();
     NetInit();
     SubsystemInit(mb_info_ptr);

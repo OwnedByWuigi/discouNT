@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "win32k.h"
+#include "w32k.h"
 #include "fb.h"
 #include "mm.h"
 #include "util.h"

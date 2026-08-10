@@ -4,10 +4,7 @@
 
 static uint8_t *vga_mem = (uint8_t*)0xA0000;
 
-// Back buffer - each byte holds 4 pixels (2 bits each = 4 colors per byte)
-// But for 16 colors we need 4 planes. The back buffer stores the actual 4-bit color index.
-// We'll use a full byte per pixel in the back buffer for simplicity.
-uint8_t back_buffer[640 * 480]; // 1 byte per pixel
+extern uint8_t back_buffer[640 * 480];
 
 // Font data (same as before)
 static const uint8_t font[96][8] = {

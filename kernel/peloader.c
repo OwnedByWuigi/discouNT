@@ -4,6 +4,7 @@
 #include "util.h"
 #include "serial.h"
 #include "cdfs.h"
+#include "kexports.h"
 
 // DLL list
 static LOADED_DLL *dll_list = 0;
@@ -277,9 +278,14 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
 
                     if (sym->value == 0 && strtab && sym->name != 0) {
                         const char *sym_name = strtab + sym->name;
-                        SerialPutString("[ELF] Unresolved external symbol: ");
-                        SerialPutString(sym_name);
-                        SerialPutString("\r\n");
+                        void *resolved = KernelResolveSymbol(sym_name);
+                        if (resolved) {
+                            sym_value = (uint32_t)resolved;
+                        } else {
+                            SerialPutString("[ELF] Unresolved external symbol: ");
+                            SerialPutString(sym_name);
+                            SerialPutString("\r\n");
+                        }
                     }
                 }
 
