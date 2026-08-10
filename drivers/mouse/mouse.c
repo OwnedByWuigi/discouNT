@@ -109,14 +109,7 @@ void MouseGetState(MOUSE_STATE *state) {
     state->middle_down = mouse.middle_down;
 }
 
-void MouseHandleInterrupt(void) {
-    uint8_t status = inb(0x64);
-    
-    if (!(status & 0x20)) return;
-    if (!(status & 1)) return;
-    
-    uint8_t data = inb(0x60);
-    
+void MouseHandleByte(uint8_t data) {
     switch (mouse_cycle) {
         case 0:
             if (!(data & 0x08)) break;
@@ -134,17 +127,18 @@ void MouseHandleInterrupt(void) {
             mouse.right_down = mouse.buttons & 2;
             mouse.middle_down = mouse.buttons & 4;
             
-            int8_t x_move = mouse_byte[1];
-            int8_t y_move = -mouse_byte[2];
-            
-            // Apply movement with acceleration
-            if (x_move > 0) x_move = x_move * 2;
-            else if (x_move < 0) x_move = x_move * 2;
-            if (y_move > 0) y_move = y_move * 2;
-            else if (y_move < 0) y_move = y_move * 2;
-            
-            mouse.x += x_move;
-    mouse.y += y_move;
+            {
+                int8_t x_move = mouse_byte[1];
+                int8_t y_move = -mouse_byte[2];
+                
+                if (x_move > 0) x_move = x_move * 2;
+                else if (x_move < 0) x_move = x_move * 2;
+                if (y_move > 0) y_move = y_move * 2;
+                else if (y_move < 0) y_move = y_move * 2;
+                
+                mouse.x += x_move;
+                mouse.y += y_move;
+            }
             
             {
                 int max_x = FbGetWidth() - 12;
@@ -160,6 +154,15 @@ void MouseHandleInterrupt(void) {
             mouse_cycle = 0;
             break;
     }
+}
+
+void MouseHandleInterrupt(void) {
+    uint8_t status = inb(0x64);
+    
+    if (!(status & 0x20)) return;
+    if (!(status & 1)) return;
+    
+    MouseHandleByte(inb(0x60));
 }
 
 void MouseEraseCursor(void) {

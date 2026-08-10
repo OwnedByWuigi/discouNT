@@ -117,6 +117,7 @@ int PeResolveImports(void *image_base);
 void PePrintInfo(void *image_base);
 void PePrintImports(void *image_base);
 void PePerformRelocations(void *image_base);
+void PeFreeImage(void *image_base);
 
 // DLL management
 typedef struct _LOADED_DLL {
@@ -134,4 +135,5 @@ void *PeGetEntryPoint(void *image_base);
 int PeResolveImports(void *image_base);
 void PePerformRelocations(void *image_base);
 void PePrintInfo(void *image_base);
+void PeFreeImage(void *image_base);
 #endif

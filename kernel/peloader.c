@@ -10,6 +10,19 @@ static LOADED_DLL *dll_list = 0;
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
 
+#define PE_RUNTIME_MAGIC 0x544E4C44U
+
+typedef struct {
+    uint32_t magic;
+    uint32_t flags;
+    uint32_t image_size;
+    uint32_t elf_base_vaddr;
+    void *source_image;
+    uint32_t source_size;
+} PE_RUNTIME_HEADER;
+
+#define PE_RUNTIME_FLAG_ELF 0x00000001U
+
 // ELF structures
 #define ELF_MAGIC 0x464C457F
 
@@ -63,6 +76,27 @@ typedef struct {
     uint16_t shndx;
 } __attribute__((packed)) ELF32_SYM;
 
+typedef struct {
+    uint32_t offset;
+    uint32_t info;
+} __attribute__((packed)) ELF32_REL;
+
+#define ELF32_R_SYM(info)  ((info) >> 8)
+#define ELF32_R_TYPE(info) ((uint8_t)((info) & 0xFF))
+
+#define R_386_32       1
+#define R_386_GLOB_DAT 6
+#define R_386_JMP_SLOT 7
+#define R_386_RELATIVE 8
+
+static PE_RUNTIME_HEADER *PeGetRuntimeHeader(void *image_base) {
+    PE_RUNTIME_HEADER *hdr;
+    if (!image_base) return 0;
+    hdr = (PE_RUNTIME_HEADER*)((uint8_t*)image_base - sizeof(PE_RUNTIME_HEADER));
+    if (hdr->magic != PE_RUNTIME_MAGIC) return 0;
+    return hdr;
+}
+
 static uint32_t PeGetELFLoadBase(ELF32_HEADER *elf) {
     ELF32_PHDR *ph = (ELF32_PHDR*)((uint8_t*)elf + elf->phoff);
     uint32_t base = 0xFFFFFFFF;
@@ -79,6 +113,10 @@ static uint32_t PeGetELFLoadBase(ELF32_HEADER *elf) {
 // ELF loader
 static void *PeLoadELF(void *image_data, uint32_t size) {
     ELF32_HEADER *elf = (ELF32_HEADER*)image_data;
+    PE_RUNTIME_HEADER *runtime;
+    uint8_t *alloc_base;
+    uint8_t *image_base;
+    uint8_t *source_copy;
     
     SerialPutString("[ELF] Type=");
     SerialPrintDec(elf->type);
@@ -140,12 +178,31 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
         return 0;
     }
     
-    uint8_t *image_base = (uint8_t*)kmalloc(image_size);
-    if (!image_base) {
+    alloc_base = (uint8_t*)kmalloc(sizeof(PE_RUNTIME_HEADER) + image_size);
+    if (!alloc_base) {
         SerialPutString("[ELF] FAIL: OOM\r\n");
         return 0;
     }
-    
+
+    runtime = (PE_RUNTIME_HEADER*)alloc_base;
+    image_base = alloc_base + sizeof(PE_RUNTIME_HEADER);
+
+    source_copy = (uint8_t*)kmalloc(size);
+    if (!source_copy) {
+        kfree(alloc_base);
+        SerialPutString("[ELF] FAIL: OOM source copy\r\n");
+        return 0;
+    }
+
+    memcpy(source_copy, image_data, size);
+
+    runtime->magic = PE_RUNTIME_MAGIC;
+    runtime->flags = PE_RUNTIME_FLAG_ELF;
+    runtime->image_size = image_size;
+    runtime->elf_base_vaddr = base;
+    runtime->source_image = source_copy;
+    runtime->source_size = size;
+
     memset(image_base, 0, image_size);
     
     // Load program headers
@@ -161,32 +218,84 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
         }
     }
     
-    // Apply relocations from REL sections
+    // Apply relocations from REL sections in the source image
     ELF32_SHDR *sh = (ELF32_SHDR*)((uint8_t*)image_data + elf->shoff);
     uint8_t *shstrtab = (uint8_t*)image_data + sh[elf->shstrndx].offset;
     
     for (int i = 0; i < elf->shnum; i++) {
         const char *name = (const char*)(shstrtab + sh[i].name);
         
-        if (sh[i].type == 9 && strcmp(name, ".rel.dyn") == 0) {
-            // Found relocation section
-            uint32_t *rel_data = (uint32_t*)((uint8_t*)image_data + sh[i].offset);
-            int count = sh[i].size / 8;
+        if (sh[i].type == 9) {
+            ELF32_REL *rel_data = (ELF32_REL*)((uint8_t*)image_data + sh[i].offset);
+            ELF32_SYM *symtab = 0;
+            const char *strtab = 0;
+            int count = sh[i].size / sizeof(ELF32_REL);
             
             SerialPutString("[ELF] Applying ");
             SerialPrintDec(count);
-            SerialPutString(" relocations...\r\n");
+            SerialPutString(" relocations from ");
+            SerialPutString(name);
+            SerialPutString("...\r\n");
+
+            if (sh[i].link < elf->shnum) {
+                ELF32_SHDR *symsec = &sh[sh[i].link];
+                if (symsec->entsize == sizeof(ELF32_SYM) && symsec->offset < size) {
+                    symtab = (ELF32_SYM*)((uint8_t*)image_data + symsec->offset);
+                    if (symsec->link < elf->shnum) {
+                        ELF32_SHDR *strsec = &sh[symsec->link];
+                        if (strsec->offset < size) {
+                            strtab = (const char*)((uint8_t*)image_data + strsec->offset);
+                        }
+                    }
+                }
+            }
             
             for (int j = 0; j < count; j++) {
-                uint32_t r_offset = rel_data[j * 2];
-                uint32_t r_info = rel_data[j * 2 + 1];
-                uint8_t r_type = r_info & 0xFF;
+                uint32_t r_offset = rel_data[j].offset;
+                uint32_t r_info = rel_data[j].info;
+                uint32_t r_sym = ELF32_R_SYM(r_info);
+                uint8_t r_type = ELF32_R_TYPE(r_info);
+                uint32_t patch_off;
+                uint32_t *patch;
+                uint32_t addend;
+                uint32_t sym_value = 0;
                 
-                if (r_type == 7) { // R_386_JMP_SLOT or R_386_RELATIVE
-                    if (r_offset >= base && (r_offset - base + 4) <= image_size) {
-                        uint32_t *patch = (uint32_t*)(image_base + (r_offset - base));
-                        *patch += ((uint32_t)image_base - base);
+                if (r_offset < base) continue;
+                patch_off = r_offset - base;
+                if (patch_off + 4 > image_size) continue;
+
+                patch = (uint32_t*)(image_base + patch_off);
+                addend = *patch;
+
+                if (symtab && r_sym != 0) {
+                    ELF32_SYM *sym = &symtab[r_sym];
+                    if (sym->value >= base) {
+                        sym_value = (uint32_t)image_base + (sym->value - base);
+                    } else if (sym->value != 0) {
+                        sym_value = (uint32_t)image_base + sym->value;
                     }
+
+                    if (sym->value == 0 && strtab && sym->name != 0) {
+                        const char *sym_name = strtab + sym->name;
+                        SerialPutString("[ELF] Unresolved external symbol: ");
+                        SerialPutString(sym_name);
+                        SerialPutString("\r\n");
+                    }
+                }
+
+                switch (r_type) {
+                    case R_386_RELATIVE:
+                        *patch = (uint32_t)image_base + addend;
+                        break;
+                    case R_386_GLOB_DAT:
+                    case R_386_JMP_SLOT:
+                        if (sym_value != 0) *patch = sym_value;
+                        break;
+                    case R_386_32:
+                        if (sym_value != 0) *patch = sym_value + addend;
+                        break;
+                    default:
+                        break;
                 }
             }
         }
@@ -283,12 +392,24 @@ void *PeLoadImage(void *image_data, uint32_t size) {
         return 0;
     }
     
-    uint8_t *image_base = (uint8_t*)kmalloc(image_size);
-    if (!image_base) {
+    PE_RUNTIME_HEADER *runtime;
+    uint8_t *alloc_base = (uint8_t*)kmalloc(sizeof(PE_RUNTIME_HEADER) + image_size);
+    uint8_t *image_base;
+
+    if (!alloc_base) {
         SerialPutString("[PELoad] FAIL: OOM\r\n");
         return 0;
     }
-    
+
+    runtime = (PE_RUNTIME_HEADER*)alloc_base;
+    runtime->magic = PE_RUNTIME_MAGIC;
+    runtime->flags = 0;
+    runtime->image_size = image_size;
+    runtime->elf_base_vaddr = 0;
+    runtime->source_image = 0;
+    runtime->source_size = 0;
+
+    image_base = alloc_base + sizeof(PE_RUNTIME_HEADER);
     memset(image_base, 0, image_size);
     
     uint32_t headers_size = opt->SizeOfHeaders;
@@ -342,16 +463,23 @@ void *PeLoadImage(void *image_data, uint32_t size) {
 }
 
 void *PeGetEntryPoint(void *image_base) {
+    PE_RUNTIME_HEADER *runtime = PeGetRuntimeHeader(image_base);
+
     if (!image_base) return 0;
     
     // Check for ELF
     if (*(uint32_t*)image_base == 0x464C457F) {
         ELF32_HEADER *elf = (ELF32_HEADER*)image_base;
-        uint32_t base = PeGetELFLoadBase(elf);
+        uint32_t base = runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)
+            ? runtime->elf_base_vaddr
+            : PeGetELFLoadBase(elf);
         if (elf->entry != 0) {
-            return (base != 0 && elf->entry >= base)
-                ? (uint8_t*)image_base + (elf->entry - base)
-                : 0;
+            if (base != 0 && elf->entry >= base) {
+                return (uint8_t*)image_base + (elf->entry - base);
+            }
+            if (runtime && elf->entry < runtime->image_size) {
+                return (uint8_t*)image_base + elf->entry;
+            }
         }
         return 0;
     }
@@ -365,7 +493,29 @@ void *PeGetEntryPoint(void *image_base) {
     return (uint8_t*)image_base + opt->AddressOfEntryPoint;
 }
 
+void PeFreeImage(void *image_base) {
+    PE_RUNTIME_HEADER *runtime;
+
+    if (!image_base) return;
+
+    runtime = PeGetRuntimeHeader(image_base);
+    if (!runtime) {
+        kfree(image_base);
+        return;
+    }
+
+    if (runtime->source_image) {
+        kfree(runtime->source_image);
+        runtime->source_image = 0;
+    }
+
+    kfree(runtime);
+}
+
 void PePerformRelocations(void *image_base) {
+    if (!image_base) return;
+    if (*(uint32_t*)image_base == 0x464C457F) return;
+
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)image_base;
     IMAGE_FILE_HEADER *file = (IMAGE_FILE_HEADER*)((uint8_t*)image_base + dos->e_lfanew);
     IMAGE_OPTIONAL_HEADER32 *opt = (IMAGE_OPTIONAL_HEADER32*)((uint8_t*)file + sizeof(IMAGE_FILE_HEADER));
@@ -403,6 +553,9 @@ void PePerformRelocations(void *image_base) {
 }
 
 int PeResolveImports(void *image_base) {
+    if (!image_base) return 0;
+    if (*(uint32_t*)image_base == 0x464C457F) return 1;
+
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)image_base;
     IMAGE_FILE_HEADER *file = (IMAGE_FILE_HEADER*)((uint8_t*)image_base + dos->e_lfanew);
     IMAGE_OPTIONAL_HEADER32 *opt = (IMAGE_OPTIONAL_HEADER32*)((uint8_t*)file + sizeof(IMAGE_FILE_HEADER));
@@ -513,35 +666,47 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
 
 // Find a function in an ELF DLL
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
-    ELF32_HEADER *elf = (ELF32_HEADER*)elf_base;
-    uint32_t base = PeGetELFLoadBase(elf);
+    PE_RUNTIME_HEADER *runtime = PeGetRuntimeHeader(elf_base);
+    ELF32_HEADER *elf;
+    uint8_t *elf_file_base;
+    uint32_t base;
     
     SerialPutString("[ELF] Looking for: ");
     SerialPutString(func_name);
     SerialPutString("\r\n");
+
+    if (runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF) && runtime->source_image) {
+        elf_file_base = (uint8_t*)runtime->source_image;
+        elf = (ELF32_HEADER*)elf_file_base;
+        base = runtime->elf_base_vaddr;
+    } else {
+        elf_file_base = (uint8_t*)elf_base;
+        elf = (ELF32_HEADER*)elf_base;
+        base = PeGetELFLoadBase(elf);
+    }
     
     // Section headers are at file offset shoff
     // We need to find .dynsym and .dynstr using their file offsets
-    ELF32_SHDR *sh = (ELF32_SHDR*)((uint8_t*)elf_base + elf->shoff);
+    ELF32_SHDR *sh = (ELF32_SHDR*)(elf_file_base + elf->shoff);
     
     uint32_t shstr_offset = sh[elf->shstrndx].offset;
-    uint8_t *shstr = (uint8_t*)elf_base + shstr_offset;
+    uint8_t *shstr = elf_file_base + shstr_offset;
     
     ELF32_SYM *dynsym = 0;
     uint32_t dynsym_count = 0;
     const char *dynstr = 0;
     uint32_t dynsym_addr = 0;
     uint32_t dynstr_addr = 0;
+    ELF32_SYM *symtab = 0;
+    uint32_t symtab_count = 0;
+    const char *strtab = 0;
     
     for (int i = 0; i < elf->shnum; i++) {
         const char *name = (const char*)(shstr + sh[i].name);
         
         if (strcmp(name, ".dynsym") == 0) {
-            // Try addr first, then offset
-            dynsym_addr = sh[i].addr;
-            if (dynsym_addr != 0 && dynsym_addr >= base) dynsym_addr -= base;
-            else dynsym_addr = sh[i].offset;
-            dynsym = (ELF32_SYM*)((uint8_t*)elf_base + dynsym_addr);
+            dynsym_addr = sh[i].offset;
+            dynsym = (ELF32_SYM*)(elf_file_base + dynsym_addr);
             dynsym_count = sh[i].size / sizeof(ELF32_SYM);
             SerialPutString("[ELF] .dynsym at 0x");
             SerialPrintHex(dynsym_addr);
@@ -550,18 +715,32 @@ static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
             SerialPutString("\r\n");
         }
         if (strcmp(name, ".dynstr") == 0) {
-            dynstr_addr = sh[i].addr;
-            if (dynstr_addr != 0 && dynstr_addr >= base) dynstr_addr -= base;
-            else dynstr_addr = sh[i].offset;
-            dynstr = (const char*)((uint8_t*)elf_base + dynstr_addr);
+            dynstr_addr = sh[i].offset;
+            dynstr = (const char*)(elf_file_base + dynstr_addr);
             SerialPutString("[ELF] .dynstr at 0x");
             SerialPrintHex(dynstr_addr);
             SerialPutString("\r\n");
         }
+        if (strcmp(name, ".symtab") == 0) {
+            symtab = (ELF32_SYM*)(elf_file_base + sh[i].offset);
+            symtab_count = sh[i].size / sizeof(ELF32_SYM);
+        }
+        if (strcmp(name, ".strtab") == 0) {
+            strtab = (const char*)(elf_file_base + sh[i].offset);
+        }
     }
     
     if (!dynsym || !dynstr) {
-        SerialPutString("[ELF] Dynamic symbols not found\r\n");
+        if (symtab && strtab) {
+            dynsym = symtab;
+            dynsym_count = symtab_count;
+            dynstr = strtab;
+            SerialPutString("[ELF] Using .symtab/.strtab fallback\r\n");
+        }
+    }
+
+    if (!dynsym || !dynstr) {
+        SerialPutString("[ELF] Dynamic/static symbols not found\r\n");
         
         // Dump sections
         SerialPutString("[ELF] Sections: shnum=");

@@ -408,6 +408,17 @@ void Win32kGetClientRect(HANDLE hwnd, RECT *rect) {
     if (win) ObDereferenceObject(hwnd);
 }
 
+void Win32kGetWindowRect(HANDLE hwnd, RECT *rect) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (win && rect) {
+        rect->left = win->x;
+        rect->top = win->y;
+        rect->right = win->x + win->width;
+        rect->bottom = win->y + win->height;
+    }
+    if (win) ObDereferenceObject(hwnd);
+}
+
 void Win32kHandleMouseDown(int x, int y, int button) {
     if (button != 1) return;
     

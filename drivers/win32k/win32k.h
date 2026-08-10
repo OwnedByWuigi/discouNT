@@ -43,6 +43,7 @@ HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y
 void Win32kShowWindow(HANDLE hwnd);
 void Win32kUpdateWindow(HANDLE hwnd);
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect);
+void Win32kGetWindowRect(HANDLE hwnd, RECT *rect);
 void Win32kDestroyWindow(HANDLE hwnd);
 void Win32kHandleMouseDown(int x, int y, int button);
 void Win32kHandleMouseUp(int x, int y, int button);

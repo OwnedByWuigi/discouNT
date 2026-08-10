@@ -9,32 +9,23 @@
 #include "peloader.h"
 #include "subsystem.h"
 
-static const char scancode_ascii[] = {
-    0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
-    '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
-    0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
-    0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
-    '*', 0, ' ', 0
-};
-
-static const char scancode_shift[] = {
-    0, 0, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
-    '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n',
-    0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~',
-    0, '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0,
-    '*', 0, ' ', 0
-};
-
 static char cmd_buffer[256];
 static int cmd_pos = 0;
-static int shift_pressed = 0;
-static int capslock = 0;
 
 static uint32_t current_dir_lba = 0;
 static uint32_t current_dir_size = 0;
 static char current_path[256] = "/";
+static char exec_path[256] = "/SYSTEM32";
 
 #define SMSS_RETURN_MAGIC 0x534D5353
+
+static void system_shutdown(void) {
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+    outw(0x4004, 0x3400);
+    __asm__ volatile("cli");
+    for (;;) __asm__ volatile("hlt");
+}
 
 static void show_prompt(void) {
     HalPutString("\n", 0x0F);
@@ -62,6 +53,26 @@ static void uppercase_copy(char *dst, const char *src, int max_len) {
         i++;
     }
     dst[i] = 0;
+}
+
+static void trim_spaces(char *s) {
+    int start = 0;
+    int end;
+    int i;
+
+    if (!s) return;
+
+    while (s[start] == ' ') start++;
+    if (start > 0) {
+        for (i = 0; s[start + i]; i++) s[i] = s[start + i];
+        s[i] = 0;
+    }
+
+    end = (int)strlen(s);
+    while (end > 0 && s[end - 1] == ' ') {
+        s[end - 1] = 0;
+        end--;
+    }
 }
 
 static int find_in_dir(uint32_t dir_lba, uint32_t dir_size, const char *name,
@@ -109,41 +120,218 @@ static int find_in_dir(uint32_t dir_lba, uint32_t dir_size, const char *name,
     }
 }
 
-static void build_exec_path(char *out_path, const char *name, int system32) {
+static void path_join(char *out_path, const char *base, const char *name) {
+    if (!out_path || !base || !name) return;
+
     if (name[0] == '/') {
         strcpy(out_path, name);
         return;
     }
 
-    if (system32) {
-        strcpy(out_path, "/SYSTEM32/");
-        strcat(out_path, name);
-        return;
-    }
-
-    strcpy(out_path, current_path);
+    strcpy(out_path, base);
+    if (out_path[0] == 0) strcpy(out_path, "/");
     if (out_path[strlen(out_path) - 1] != '/') strcat(out_path, "/");
     strcat(out_path, name);
 }
 
-static int load_exec_buffer(const char *name, uint8_t **out_buf, uint32_t *out_size, char *resolved_path) {
-    char path[256];
+static int has_extension(const char *name) {
+    int last_dot = -1;
+    int last_slash = -1;
+    int i;
 
-    build_exec_path(path, name, 0);
+    for (i = 0; name[i]; i++) {
+        if (name[i] == '/') last_slash = i;
+        else if (name[i] == '.') last_dot = i;
+    }
+
+    return (last_dot > last_slash);
+}
+
+static void ensure_exe_name(char *dst, const char *src, int max_len) {
+    uppercase_copy(dst, src, max_len);
+    if (!has_extension(dst) && ((int)strlen(dst) + 4) < max_len) {
+        strcat(dst, ".EXE");
+    }
+}
+
+static int try_load_exec_path(const char *path, uint8_t **out_buf, uint32_t *out_size, char *resolved_path) {
     if (CdfsReadFile(path, out_buf, out_size)) {
-        strcpy(resolved_path, path);
+        if (resolved_path) strcpy(resolved_path, path);
+        return 1;
+    }
+    return 0;
+}
+
+static int load_exec_buffer(const char *name, uint8_t **out_buf, uint32_t *out_size, char *resolved_path) {
+    char normalized_name[256];
+    char candidate[256];
+    char path_list[256];
+    char *entry;
+
+    ensure_exe_name(normalized_name, name, sizeof(normalized_name));
+
+    if (normalized_name[0] == '/') {
+        return try_load_exec_path(normalized_name, out_buf, out_size, resolved_path);
+    }
+
+    path_join(candidate, current_path, normalized_name);
+    if (try_load_exec_path(candidate, out_buf, out_size, resolved_path)) {
         return 1;
     }
 
-    if (name[0] != '/') {
-        build_exec_path(path, name, 1);
-        if (CdfsReadFile(path, out_buf, out_size)) {
-            strcpy(resolved_path, path);
-            return 1;
+    uppercase_copy(path_list, exec_path, sizeof(path_list));
+    entry = path_list;
+
+    while (entry && *entry) {
+        char *next = 0;
+        trim_spaces(entry);
+
+        for (int i = 0; entry[i]; i++) {
+            if (entry[i] == ';') {
+                entry[i] = 0;
+                next = entry + i + 1;
+                break;
+            }
         }
+
+        trim_spaces(entry);
+        if (*entry) {
+            path_join(candidate, entry, normalized_name);
+            if (try_load_exec_path(candidate, out_buf, out_size, resolved_path)) {
+                return 1;
+            }
+        }
+
+        entry = next;
     }
 
     return 0;
+}
+
+static int resolve_directory_path(const char *input, uint32_t *out_lba, uint32_t *out_size, char *out_path) {
+    uint8_t sector[2048];
+    uint32_t dir_lba;
+    uint32_t dir_size;
+    char working[256];
+    char canonical[256];
+    char *part;
+    uint32_t next_lba;
+    uint32_t next_size;
+    int is_dir;
+
+    if (!input || !*input || !out_lba || !out_size || !out_path) return 0;
+    if (!CdfsReadSector(16, sector)) return 0;
+
+    dir_lba = *(uint32_t*)(sector + 156 + 2);
+    dir_size = *(uint32_t*)(sector + 156 + 10);
+
+    if (input[0] == '/') {
+        uppercase_copy(working, input + 1, sizeof(working));
+        strcpy(canonical, "/");
+    } else {
+        uppercase_copy(working, input, sizeof(working));
+        strcpy(canonical, current_path);
+    }
+
+    if (working[0] == 0) {
+        *out_lba = dir_lba;
+        *out_size = dir_size;
+        strcpy(out_path, canonical);
+        return 1;
+    }
+
+    if (input[0] != '/' && current_path[1] != 0) {
+        char current_copy[256];
+        strcpy(current_copy, current_path + 1);
+        part = current_copy;
+        while (part && *part) {
+            char *next = 0;
+            for (int i = 0; part[i]; i++) {
+                if (part[i] == '/') {
+                    part[i] = 0;
+                    next = part + i + 1;
+                    break;
+                }
+            }
+            if (*part) {
+                if (!find_in_dir(dir_lba, dir_size, part, &next_lba, &next_size, &is_dir) || !is_dir) {
+                    return 0;
+                }
+                dir_lba = next_lba;
+                dir_size = next_size;
+            }
+            part = next;
+        }
+    }
+
+    part = working;
+    while (part && *part) {
+        char *next = 0;
+        for (int i = 0; part[i]; i++) {
+            if (part[i] == '/') {
+                part[i] = 0;
+                next = part + i + 1;
+                break;
+            }
+        }
+
+        if (strcmp(part, ".") == 0 || part[0] == 0) {
+        } else if (strcmp(part, "..") == 0) {
+            if (canonical[1] != 0) {
+                int last_slash = 0;
+                for (int i = 0; canonical[i]; i++) {
+                    if (canonical[i] == '/' && i > 0) last_slash = i;
+                }
+                canonical[last_slash] = 0;
+                if (canonical[0] == 0) {
+                    canonical[0] = '/';
+                    canonical[1] = 0;
+                }
+            }
+
+            dir_lba = *(uint32_t*)(sector + 156 + 2);
+            dir_size = *(uint32_t*)(sector + 156 + 10);
+            if (canonical[1] != 0) {
+                char replay[256];
+                char *seg;
+                strcpy(replay, canonical + 1);
+                seg = replay;
+                while (seg && *seg) {
+                    char *seg_next = 0;
+                    for (int i = 0; seg[i]; i++) {
+                        if (seg[i] == '/') {
+                            seg[i] = 0;
+                            seg_next = seg + i + 1;
+                            break;
+                        }
+                    }
+                    if (*seg) {
+                        if (!find_in_dir(dir_lba, dir_size, seg, &next_lba, &next_size, &is_dir) || !is_dir) {
+                            return 0;
+                        }
+                        dir_lba = next_lba;
+                        dir_size = next_size;
+                    }
+                    seg = seg_next;
+                }
+            }
+        } else {
+            if (!find_in_dir(dir_lba, dir_size, part, &next_lba, &next_size, &is_dir) || !is_dir) {
+                return 0;
+            }
+            dir_lba = next_lba;
+            dir_size = next_size;
+            if (canonical[strlen(canonical) - 1] != '/') strcat(canonical, "/");
+            strcat(canonical, part);
+        }
+
+        part = next;
+    }
+
+    *out_lba = dir_lba;
+    *out_size = dir_size;
+    strcpy(out_path, canonical);
+    return 1;
 }
 
 static int is_pe_image(const uint8_t *file_buf, uint32_t file_size) {
@@ -168,9 +356,11 @@ static void cmd_help(void) {
     HalPutString("  cd <dir>  - Change directory\n", 0x0F);
     HalPutString("  pwd       - Print working directory\n", 0x0F);
     HalPutString("  exec <f>  - Execute native/Win32 image\n", 0x0F);
+    HalPutString("  path      - Show executable search path\n", 0x0F);
     HalPutString("  reboot    - Reboot system\n", 0x0F);
+    HalPutString("  shutdown  - Power off system\n", 0x0F);
     HalPutString("\nWin32 session:\n", 0x0E);
-    HalPutString("  exec smss.exe\n", 0x0F);
+    HalPutString("  smss\n", 0x0F);
 }
 
 static void cmd_clear(void) {
@@ -188,6 +378,12 @@ static void cmd_info(void) {
 static void cmd_pwd(void) {
     HalPutString("\n", 0x0F);
     HalPutString(current_path, 0x0F);
+    HalPutString("\n", 0x0F);
+}
+
+static void cmd_path(void) {
+    HalPutString("\nPATH=", 0x0F);
+    HalPutString(exec_path, 0x0F);
     HalPutString("\n", 0x0F);
 }
 
@@ -257,7 +453,7 @@ static void cmd_ls(void) {
 static void cmd_cd(char *args) {
     char dirname[256];
     uint32_t new_lba, new_size;
-    int is_dir;
+    char new_path[256];
 
     if (!args || !*args) {
         cmd_pwd();
@@ -265,83 +461,12 @@ static void cmd_cd(char *args) {
     }
 
     uppercase_copy(dirname, args, sizeof(dirname));
+    trim_spaces(dirname);
 
-    if (strcmp(dirname, "/") == 0) {
-        init_current_dir();
-        HalPutString("\nChanged to root\n", 0x0A);
-        return;
-    }
-
-    if (strcmp(dirname, "..") == 0) {
-        if (current_path[1] == 0) {
-            HalPutString("\nAlready at root\n", 0x0C);
-            return;
-        }
-
-        {
-            int last_slash = 0;
-            uint8_t sector[2048];
-            uint8_t *root;
-
-            if (!CdfsReadSector(16, sector)) return;
-            root = sector + 156;
-
-            for (int i = 0; current_path[i]; i++) {
-                if (current_path[i] == '/' && i > 0) last_slash = i;
-            }
-
-            current_path[last_slash] = 0;
-            if (current_path[0] == 0) {
-                current_path[0] = '/';
-                current_path[1] = 0;
-            }
-
-            current_dir_lba = *(uint32_t*)(root + 2);
-            current_dir_size = *(uint32_t*)(root + 10);
-
-            if (current_path[1] != 0) {
-                char work[256];
-                strcpy(work, current_path + 1);
-                {
-                    char *part = work;
-                    while (part && *part) {
-                        char *next = 0;
-                        for (int i = 0; part[i]; i++) {
-                            if (part[i] == '/') {
-                                part[i] = 0;
-                                next = part + i + 1;
-                                break;
-                            }
-                        }
-                        if (find_in_dir(current_dir_lba, current_dir_size, part, &new_lba, &new_size, &is_dir) && is_dir) {
-                            current_dir_lba = new_lba;
-                            current_dir_size = new_size;
-                        }
-                        part = next;
-                    }
-                }
-            }
-        }
-
-        HalPutString("\n", 0x0A);
-        HalPutString(current_path, 0x0F);
-        HalPutString("\n", 0x0A);
-        return;
-    }
-
-    if (find_in_dir(current_dir_lba, current_dir_size, dirname, &new_lba, &new_size, &is_dir)) {
-        if (!is_dir) {
-            HalPutString("\nNot a directory: ", 0x0C);
-            HalPutString(dirname, 0x0C);
-            HalPutString("\n", 0x0C);
-            return;
-        }
-
+    if (resolve_directory_path(dirname, &new_lba, &new_size, new_path)) {
         current_dir_lba = new_lba;
         current_dir_size = new_size;
-        if (current_path[strlen(current_path) - 1] != '/') strcat(current_path, "/");
-        strcat(current_path, dirname);
-
+        strcpy(current_path, new_path);
         HalPutString("\nChanged to ", 0x0A);
         HalPutString(current_path, 0x0F);
         HalPutString("\n", 0x0A);
@@ -426,13 +551,14 @@ static void cmd_exec(char *args) {
     }
 
     uppercase_copy(filename, args, sizeof(filename));
+    trim_spaces(filename);
 
     HalPutString("\nLoading: ", 0x0F);
     HalPutString(filename, 0x0F);
     HalPutString("...\n", 0x0F);
 
     if (!load_exec_buffer(filename, &file_buf, &file_size, resolved_path)) {
-        HalPutString("File not found in current directory or SYSTEM32\n", 0x0C);
+        HalPutString("File not found in current directory or PATH\n", 0x0C);
         return;
     }
 
@@ -458,18 +584,22 @@ static void cmd_exec(char *args) {
         PePerformRelocations(image);
     }
 
-    is_smss = (strcmp(filename, "SMSS.EXE") == 0);
+    {
+        char compare_name[256];
+        ensure_exe_name(compare_name, filename, sizeof(compare_name));
+        is_smss = (strcmp(compare_name, "SMSS.EXE") == 0);
+    }
     ret = run_loaded_image(image, filename);
 
     if (is_smss && (ret == SMSS_RETURN_MAGIC || ret == 0)) {
         HalPutString("\nStarting Win32 subsystem via SMSS.EXE...\n", 0x0E);
-        kfree(image);
+        PeFreeImage(image);
         kfree(file_buf);
         SubsystemLaunchSmss();
         return;
     }
 
-    kfree(image);
+    PeFreeImage(image);
     kfree(file_buf);
 }
 
@@ -481,6 +611,11 @@ static void cmd_reboot(void) {
         outb(0x64, 0xFE);
         __asm__ volatile("int $0");
     }
+}
+
+static void cmd_shutdown(void) {
+    HalPutString("\nShutting down...\n", 0x0C);
+    system_shutdown();
 }
 
 static void process_command(void) {
@@ -511,12 +646,12 @@ static void process_command(void) {
     else if (strcmp(cmd, "ls") == 0 || strcmp(cmd, "dir") == 0) cmd_ls();
     else if (strcmp(cmd, "cd") == 0) cmd_cd(args);
     else if (strcmp(cmd, "pwd") == 0) cmd_pwd();
+    else if (strcmp(cmd, "path") == 0) cmd_path();
     else if (strcmp(cmd, "exec") == 0) cmd_exec(args);
     else if (strcmp(cmd, "reboot") == 0) cmd_reboot();
+    else if (strcmp(cmd, "shutdown") == 0) cmd_shutdown();
     else if (*cmd) {
-        HalPutString("Unknown: ", 0x0C);
-        HalPutString(cmd, 0x0C);
-        HalPutString("\nType 'help' for commands\n", 0x0C);
+        cmd_exec(cmd);
     }
 
     cmd_pos = 0;
@@ -527,27 +662,17 @@ static void process_command(void) {
 void NativeCmdInit(void) {
     cmd_pos = 0;
     cmd_buffer[0] = 0;
-    shift_pressed = 0;
-    capslock = 0;
     init_current_dir();
+    strcpy(exec_path, "/SYSTEM32");
     show_prompt();
 }
 
-void NativeCmdHandleScancode(uint8_t scancode) {
-    if (scancode & 0x80) {
-        scancode &= 0x7F;
-        if (scancode == 0x2A || scancode == 0x36) shift_pressed = 0;
-        return;
-    }
+void NativeCmdHandleKeyEvent(const KEYBOARD_EVENT *event) {
+    char c;
 
-    switch (scancode) {
-        case 0x2A:
-        case 0x36:
-            shift_pressed = 1;
-            return;
-        case 0x3A:
-            capslock = !capslock;
-            return;
+    if (!event || !event->pressed) return;
+
+    switch (event->scancode) {
         case 0x0E:
             if (cmd_pos > 0) {
                 cmd_pos--;
@@ -566,16 +691,9 @@ void NativeCmdHandleScancode(uint8_t scancode) {
             return;
     }
 
-    if (scancode >= sizeof(scancode_ascii)) return;
-
-    {
-        char c = shift_pressed ? scancode_shift[scancode] : scancode_ascii[scancode];
-        if (capslock && c >= 'a' && c <= 'z') c -= 32;
-        if (capslock && shift_pressed && c >= 'A' && c <= 'Z') c += 32;
-
-        if (c && cmd_pos < 255) {
-            cmd_buffer[cmd_pos++] = c;
-            HalPutChar(c, 0x0F);
-        }
+    c = event->ascii;
+    if (c && cmd_pos < 255) {
+        cmd_buffer[cmd_pos++] = c;
+        HalPutChar(c, 0x0F);
     }
 }

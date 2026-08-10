@@ -1,7 +1,6 @@
 BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 SYSTEM32_DIR := $(ISO_DIR)/SYSTEM32
-APPS_DIR := $(ISO_DIR)/APPS
 GRUB_DIR := $(ISO_DIR)/boot/grub
 
 ISO_NAME := ntos.iso
@@ -16,12 +15,15 @@ MINGW_CC := i686-w64-mingw32-gcc
 
 CPPFLAGS := \
 	-Ikernel \
+	-Iwin32 \
 	-Idrivers/cdfs \
 	-Idrivers/fb \
+	-Idrivers/keyboard \
 	-Idrivers/mouse \
 	-Idrivers/serial \
 	-Idrivers/vga \
-	-Idrivers/win32k
+	-Idrivers/win32k \
+	-Iwin32/smss
 
 CFLAGS := \
 	-ffreestanding \
@@ -44,6 +46,7 @@ KERNEL_CORE_SRCS := \
 	kernel/peloader.c \
 	kernel/subsystem.c \
 	kernel/nativecmd.c \
+	win32/smss/smss.c \
 	kernel/entry.c
 
 DRIVER_SRCS := \
@@ -51,6 +54,7 @@ DRIVER_SRCS := \
 	drivers/cdfs/cdfs.c \
 	drivers/vga/vga.c \
 	drivers/fb/fb.c \
+	drivers/keyboard/keyboard.c \
 	drivers/win32k/win32k.c \
 	drivers/mouse/mouse.c
 
@@ -61,11 +65,8 @@ DLL_SRCS := $(wildcard dlls/*/*.c)
 DLL_NAMES := $(sort $(notdir $(basename $(DLL_SRCS))))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 
-APP_SRC_FILES := $(wildcard apps/*.c)
+APP_SRC_FILES := $(wildcard apps/*.c) $(wildcard apps/*/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
-APP_BIN_FILES := $(wildcard apps/*.exe)
-APP_FILES := $(APP_BIN_FILES) $(BUILT_APP_FILES)
-ISO_APP_FILES := $(foreach app,$(APP_FILES),$(APPS_DIR)/$(shell basename "$(app)" | tr '[:lower:]' '[:upper:]'))
 
 .PHONY: all clean iso kernel dlls apps run
 
@@ -75,9 +76,9 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS)
 
-apps: $(ISO_APP_FILES)
+apps: $(BUILT_APP_FILES)
 
-$(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg $(APPS_DIR)/.stamp
+$(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
 
 $(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS)
@@ -113,18 +114,29 @@ $(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
 
 $(BUILD_DIR)/apps/%.exe: apps/%.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$<
+		$< kernel/util.c
+
+$(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c
+	@mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+		-Wl,-e,main \
+		-o $@ \
+		$< kernel/util.c
 
 $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES)
 	@mkdir -p $(SYSTEM32_DIR)
+	@rm -rf $(ISO_DIR)/APPS
 	@for dll in $(DLL_OUTPUTS); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@if [ -f "$(BUILD_DIR)/apps/smss.exe" ]; then \
 		cp "$(BUILD_DIR)/apps/smss.exe" "$(SYSTEM32_DIR)/SMSS.EXE"; \
+	fi
+	@if [ -f "$(BUILD_DIR)/apps/cmd/cmd.exe" ]; then \
+		cp "$(BUILD_DIR)/apps/cmd/cmd.exe" "$(SYSTEM32_DIR)/CMD.EXE"; \
 	fi
 	@touch $@
 
@@ -132,19 +144,6 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(KERNEL_ELF) | $(SYSTEM32_DIR)/.stamp
 	@mkdir -p $(GRUB_DIR) $(ISO_DIR)/boot
 	cp $(KERNEL_ELF) $(ISO_DIR)/boot/
 	cp $< $@
-
-$(APPS_DIR)/.stamp: $(APP_FILES)
-	@mkdir -p $(APPS_DIR)
-	@if [ -n "$(APP_FILES)" ]; then \
-		for exe in $(APP_FILES); do \
-			cp "$$exe" "$(APPS_DIR)/$$(basename "$$exe" | tr '[:lower:]' '[:upper:]')"; \
-		done; \
-	else \
-		printf '%s\n' 'This is a test file' > "$(APPS_DIR)/README.TXT"; \
-	fi
-	@touch $@
-
-$(ISO_APP_FILES): | $(APPS_DIR)/.stamp
 
 iso: $(ISO_NAME)
 

@@ -18,5 +18,6 @@ void MouseInit(void);
 void MouseGetState(MOUSE_STATE *state);
 void MouseDrawCursor(void);
 void MouseEraseCursor(void);
+void MouseHandleByte(uint8_t data);
 void MouseHandleInterrupt(void);
 #endif

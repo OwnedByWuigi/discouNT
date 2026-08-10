@@ -2,8 +2,9 @@
 #define NATIVECMD_H
 
 #include <stdint.h>
+#include "keyboard.h"
 
 void NativeCmdInit(void);
-void NativeCmdHandleScancode(uint8_t scancode);
+void NativeCmdHandleKeyEvent(const KEYBOARD_EVENT *event);
 
 #endif
