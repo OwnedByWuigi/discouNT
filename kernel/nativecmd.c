@@ -8,6 +8,7 @@
 #include "cdfs.h"
 #include "peloader.h"
 #include "subsystem.h"
+#include "version.h"
 
 static char cmd_buffer[256];
 static int cmd_pos = 0;
@@ -368,7 +369,7 @@ static void cmd_clear(void) {
 }
 
 static void cmd_info(void) {
-    HalPutString("\ndiscouNT\n", 0x1F);
+    HalPutString("\n" DISCOUNT_NAME "\n", 0x1F);
     HalPutString("===============\n", 0x1F);
     HalPutString("Kernel: NT-like\n", 0x0F);
     HalPutString("Filesystem: CDFS (ISO 9660)\n", 0x0F);

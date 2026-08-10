@@ -13,6 +13,7 @@
 #include "keyboard.h"
 #include "guiapp.h"
 #include "net.h"
+#include "version.h"
 
 typedef int (*GuiAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*GuiAppCreateMainWindowFn)(void);
@@ -547,7 +548,7 @@ void CsrssSessionRun(void *mb_info) {
     restore_text_mode();
     HalInitialize();
     HalClearScreen(0x1F);
-    HalPutString("discouNT\n", 0x1F);
+    HalPutString(DISCOUNT_NAME "\n", 0x1F);
     HalPutString("===============\n", 0x1F);
     HalPutString("Returned from CSRSS session.\n\n", 0x0A);
 }
