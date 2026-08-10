@@ -12,6 +12,7 @@
 #include "mouse.h"
 #include "keyboard.h"
 #include "guiapp.h"
+#include "net.h"
 
 typedef int (*CmdAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*CmdAppCreateMainWindowFn)(void);
@@ -72,6 +73,9 @@ static int smss_get_screen_height(void) { return FbGetHeight(); }
 static int smss_get_screen_mode_count(void) { return FbGetModeCount(); }
 static int smss_get_screen_mode_info(int index, int *width, int *height, int *bpp) {
     return FbGetModeInfo(index, width, height, bpp);
+}
+static int smss_ping(const char *ip_text, char *out_text, int out_text_len) {
+    return NetPing(ip_text, out_text, out_text_len);
 }
 
 static int smss_set_screen_resolution(int width, int height) {
@@ -254,6 +258,7 @@ static const GUI_APP_API gui_api = {
     smss_get_screen_mode_count,
     smss_get_screen_mode_info,
     smss_set_screen_resolution,
+    smss_ping,
     smss_reboot,
     smss_shutdown
 };

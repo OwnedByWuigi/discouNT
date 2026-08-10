@@ -292,6 +292,11 @@ static void cmd_clear_lines(void) {
     line_count = 0;
 }
 
+static const char *skip_spaces(const char *s) {
+    while (s && *s == ' ') s++;
+    return s;
+}
+
 static void cmd_process_input(void) {
     char raw[CMD_COLS + 1];
     char cmd[CMD_COLS + 1];
@@ -321,7 +326,7 @@ static void cmd_process_input(void) {
 
     if (strcmp(cmd, "HELP") == 0) {
         cmd_append_line("Commands: HELP CLS INFO DIR LS CD PWD");
-        cmd_append_line("          PATH EXEC REBOOT SHUTDOWN EXIT");
+        cmd_append_line("          PATH EXEC PING REBOOT SHUTDOWN EXIT");
     } else if (strcmp(cmd, "VER") == 0 || strcmp(cmd, "INFO") == 0) {
         cmd_append_line("discouNT Win32 Command Prompt");
         cmd_append_line("Filesystem: CDFS (ISO 9660)");
@@ -409,6 +414,17 @@ static void cmd_process_input(void) {
     } else if (strcmp(cmd, "EXIT") == 0) {
         cmd_append_line("Closing session...");
         cmd_exit_requested = 1;
+    } else if (strcmp(cmd, "PING") == 0) {
+        char ping_out[CMD_COLS + 1];
+        if (!args || !*skip_spaces(args)) {
+            cmd_append_line("Usage: PING a.b.c.d");
+        } else if (!g_api->Ping) {
+            cmd_append_line("Ping unavailable");
+        } else {
+            ping_out[0] = 0;
+            g_api->Ping(skip_spaces(args), ping_out, sizeof(ping_out));
+            cmd_append_line(ping_out[0] ? ping_out : "Ping failed");
+        }
     } else if (strcmp(cmd, "EXEC") == 0 && args && *args) {
         if (resolve_exec_path(args, pathbuf)) {
             int ret = g_api->ExecuteImage(pathbuf);

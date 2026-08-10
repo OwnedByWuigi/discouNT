@@ -21,6 +21,7 @@ CPPFLAGS := \
 	-Idrivers/fb \
 	-Idrivers/keyboard \
 	-Idrivers/mouse \
+	-Idrivers/net \
 	-Idrivers/serial \
 	-Idrivers/vga \
 	-Idrivers/win32k \
@@ -56,6 +57,7 @@ DRIVER_SRCS := \
 	drivers/vga/vga.c \
 	drivers/fb/fb.c \
 	drivers/keyboard/keyboard.c \
+	drivers/net/net.c \
 	drivers/win32k/win32k.c \
 	drivers/mouse/mouse.c
 
@@ -72,7 +74,7 @@ SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
 CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
 DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
 
-.PHONY: all clean iso kernel dlls apps run
+.PHONY: all clean iso kernel dlls apps run run-bridge
 
 all: $(ISO_NAME)
 
@@ -179,7 +181,10 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg | $(SYSTEM32_DIR)/.stamp
 iso: $(ISO_NAME)
 
 run: $(ISO_NAME)
-	qemu-system-i386 -cdrom $(ISO_NAME) -m 64 -vga std -serial stdio
+	qemu-system-i386 -cdrom $(ISO_NAME) -m 64 -vga std -serial stdio -nic user,model=rtl8139
+
+run-bridge: $(ISO_NAME)
+	qemu-system-i386 -cdrom $(ISO_NAME) -m 64 -vga std -serial stdio -nic tap,model=rtl8139,ifname=tap0,script=no,downscript=no
 
 clean:
 	rm -rf $(BUILD_DIR) $(ISO_NAME)

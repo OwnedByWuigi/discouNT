@@ -8,6 +8,7 @@
 #include "nativecmd.h"
 #include "subsystem.h"
 #include "keyboard.h"
+#include "net.h"
 
 void kmain(uint32_t magic, void *mb_info_ptr) {
     (void)magic;
@@ -27,6 +28,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     KeInit();
     CdfsInit();
     KeyboardInit();
+    NetInit();
     SubsystemInit(mb_info_ptr);
     NativeCmdInit();
     

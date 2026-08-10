@@ -43,6 +43,7 @@ typedef struct _GUI_APP_API {
     int (*GetScreenModeCount)(void);
     int (*GetScreenModeInfo)(int index, int *width, int *height, int *bpp);
     int (*SetScreenResolution)(int width, int height);
+    int (*Ping)(const char *ip_text, char *out_text, int out_text_len);
     void (*Reboot)(void);
     void (*Shutdown)(void);
 } GUI_APP_API;
