@@ -25,7 +25,8 @@ CPPFLAGS := \
 	-Idrivers/serial \
 	-Idrivers/vga \
 	-Idrivers/win32k \
-	-Iwin32/smss
+	-Iwin32/smss \
+	-Iwin32/csrss
 
 CFLAGS := \
 	-ffreestanding \
@@ -48,6 +49,7 @@ KERNEL_CORE_SRCS := \
 	kernel/peloader.c \
 	kernel/subsystem.c \
 	kernel/nativecmd.c \
+	win32/csrss/csrss.c \
 	win32/smss/smss.c \
 	kernel/entry.c
 
@@ -71,6 +73,7 @@ DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 APP_SRC_FILES := $(wildcard apps/*.c) $(wildcard apps/*/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
 SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
+CSRSS_APP := $(BUILD_DIR)/win32/csrss/csrss.exe
 CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
 DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
 
@@ -82,7 +85,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS)
 
-apps: $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL)
+apps: $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL)
 
 $(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
@@ -153,7 +156,14 @@ $(SMSS_APP): win32/smss/smss_app.c
 		-o $@ \
 		$< kernel/util.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL) $(KERNEL_ELF)
+$(CSRSS_APP): win32/csrss/csrss_app.c
+	@mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
+		-Wl,-e,main \
+		-o $@ \
+		$< kernel/util.c
+
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
 	@rm -rf $(ISO_DIR)/APPS
 	@cp "$(KERNEL_ELF)" "$(KERNEL_ISO_PATH)"
@@ -162,6 +172,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL
 	done
 	@if [ -f "$(SMSS_APP)" ]; then \
 		cp "$(SMSS_APP)" "$(SYSTEM32_DIR)/SMSS.EXE"; \
+	fi
+	@if [ -f "$(CSRSS_APP)" ]; then \
+		cp "$(CSRSS_APP)" "$(SYSTEM32_DIR)/CSRSS.EXE"; \
 	fi
 	@if [ -f "$(BUILD_DIR)/apps/cmd/cmd.exe" ]; then \
 		cp "$(BUILD_DIR)/apps/cmd/cmd.exe" "$(SYSTEM32_DIR)/CMD.EXE"; \
