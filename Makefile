@@ -42,6 +42,8 @@ KERNEL_CORE_SRCS := \
 	kernel/object.c \
 	kernel/ke.c \
 	kernel/peloader.c \
+	kernel/subsystem.c \
+	kernel/nativecmd.c \
 	kernel/entry.c
 
 DRIVER_SRCS := \
@@ -59,7 +61,10 @@ DLL_SRCS := $(wildcard dlls/*/*.c)
 DLL_NAMES := $(sort $(notdir $(basename $(DLL_SRCS))))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 
-APP_FILES := $(wildcard apps/*.exe)
+APP_SRC_FILES := $(wildcard apps/*.c)
+BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
+APP_BIN_FILES := $(wildcard apps/*.exe)
+APP_FILES := $(APP_BIN_FILES) $(BUILT_APP_FILES)
 ISO_APP_FILES := $(foreach app,$(APP_FILES),$(APPS_DIR)/$(shell basename "$(app)" | tr '[:lower:]' '[:upper:]'))
 
 .PHONY: all clean iso kernel dlls apps run
@@ -106,11 +111,21 @@ $(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
 			dlls/$*/$*.c; \
 	fi
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS)
+$(BUILD_DIR)/apps/%.exe: apps/%.c
+	@mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
+		-Wl,-e,main \
+		-o $@ \
+		$<
+
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES)
 	@mkdir -p $(SYSTEM32_DIR)
 	@for dll in $(DLL_OUTPUTS); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
+	@if [ -f "$(BUILD_DIR)/apps/smss.exe" ]; then \
+		cp "$(BUILD_DIR)/apps/smss.exe" "$(SYSTEM32_DIR)/SMSS.EXE"; \
+	fi
 	@touch $@
 
 $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(KERNEL_ELF) | $(SYSTEM32_DIR)/.stamp
@@ -120,8 +135,8 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(KERNEL_ELF) | $(SYSTEM32_DIR)/.stamp
 
 $(APPS_DIR)/.stamp: $(APP_FILES)
 	@mkdir -p $(APPS_DIR)
-	@if ls apps/*.exe >/dev/null 2>&1; then \
-		for exe in apps/*.exe; do \
+	@if [ -n "$(APP_FILES)" ]; then \
+		for exe in $(APP_FILES); do \
 			cp "$$exe" "$(APPS_DIR)/$$(basename "$$exe" | tr '[:lower:]' '[:upper:]')"; \
 		done; \
 	else \

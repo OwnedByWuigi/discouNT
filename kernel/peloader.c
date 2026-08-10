@@ -63,6 +63,19 @@ typedef struct {
     uint16_t shndx;
 } __attribute__((packed)) ELF32_SYM;
 
+static uint32_t PeGetELFLoadBase(ELF32_HEADER *elf) {
+    ELF32_PHDR *ph = (ELF32_PHDR*)((uint8_t*)elf + elf->phoff);
+    uint32_t base = 0xFFFFFFFF;
+
+    for (int i = 0; i < elf->phnum; i++) {
+        if (ph[i].type == 1 && ph[i].memsz > 0) {
+            if (ph[i].vaddr < base) base = ph[i].vaddr;
+        }
+    }
+
+    return (base == 0xFFFFFFFF) ? 0 : base;
+}
+
 // ELF loader
 static void *PeLoadELF(void *image_data, uint32_t size) {
     ELF32_HEADER *elf = (ELF32_HEADER*)image_data;
@@ -90,9 +103,10 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
         return 0;
     }
     
-    // Calculate total memory needed
+    // Calculate loaded span
     uint32_t mem_end = 0;
     uint32_t base = 0xFFFFFFFF;
+    uint32_t image_size;
     
     ELF32_PHDR *ph = (ELF32_PHDR*)((uint8_t*)image_data + elf->phoff);
     
@@ -110,27 +124,38 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
     SerialPrintHex(mem_end);
     SerialPutString("\r\n");
     
-    if (mem_end == 0 || mem_end > 0x1000000) {
+    if (base == 0xFFFFFFFF || mem_end <= base) {
+        SerialPutString("[ELF] FAIL: bad load range\r\n");
+        return 0;
+    }
+
+    image_size = mem_end - base;
+
+    SerialPutString("[ELF] Span=0x");
+    SerialPrintHex(image_size);
+    SerialPutString("\r\n");
+
+    if (image_size == 0 || image_size > 0x1000000) {
         SerialPutString("[ELF] FAIL: bad size\r\n");
         return 0;
     }
     
-    uint8_t *image_base = (uint8_t*)kmalloc(mem_end);
+    uint8_t *image_base = (uint8_t*)kmalloc(image_size);
     if (!image_base) {
         SerialPutString("[ELF] FAIL: OOM\r\n");
         return 0;
     }
     
-    memset(image_base, 0, mem_end);
+    memset(image_base, 0, image_size);
     
     // Load program headers
     for (int i = 0; i < elf->phnum; i++) {
         if (ph[i].type == 1 && ph[i].filesz > 0) {
-            uint32_t dest = ph[i].vaddr;
+            uint32_t dest = ph[i].vaddr - base;
             uint32_t src = ph[i].offset;
             uint32_t len = ph[i].filesz;
             
-            if (src + len <= size && dest + len <= mem_end) {
+            if (src + len <= size && dest + len <= image_size) {
                 memcpy(image_base + dest, (uint8_t*)image_data + src, len);
             }
         }
@@ -158,8 +183,10 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
                 uint8_t r_type = r_info & 0xFF;
                 
                 if (r_type == 7) { // R_386_JMP_SLOT or R_386_RELATIVE
-                    uint32_t *patch = (uint32_t*)(image_base + r_offset);
-                    *patch += (uint32_t)image_base;
+                    if (r_offset >= base && (r_offset - base + 4) <= image_size) {
+                        uint32_t *patch = (uint32_t*)(image_base + (r_offset - base));
+                        *patch += ((uint32_t)image_base - base);
+                    }
                 }
             }
         }
@@ -320,8 +347,11 @@ void *PeGetEntryPoint(void *image_base) {
     // Check for ELF
     if (*(uint32_t*)image_base == 0x464C457F) {
         ELF32_HEADER *elf = (ELF32_HEADER*)image_base;
+        uint32_t base = PeGetELFLoadBase(elf);
         if (elf->entry != 0) {
-            return (uint8_t*)image_base + elf->entry;
+            return (base != 0 && elf->entry >= base)
+                ? (uint8_t*)image_base + (elf->entry - base)
+                : 0;
         }
         return 0;
     }
@@ -484,6 +514,7 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
 // Find a function in an ELF DLL
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
     ELF32_HEADER *elf = (ELF32_HEADER*)elf_base;
+    uint32_t base = PeGetELFLoadBase(elf);
     
     SerialPutString("[ELF] Looking for: ");
     SerialPutString(func_name);
@@ -508,7 +539,8 @@ static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
         if (strcmp(name, ".dynsym") == 0) {
             // Try addr first, then offset
             dynsym_addr = sh[i].addr;
-            if (dynsym_addr == 0) dynsym_addr = sh[i].offset;
+            if (dynsym_addr != 0 && dynsym_addr >= base) dynsym_addr -= base;
+            else dynsym_addr = sh[i].offset;
             dynsym = (ELF32_SYM*)((uint8_t*)elf_base + dynsym_addr);
             dynsym_count = sh[i].size / sizeof(ELF32_SYM);
             SerialPutString("[ELF] .dynsym at 0x");
@@ -519,7 +551,8 @@ static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
         }
         if (strcmp(name, ".dynstr") == 0) {
             dynstr_addr = sh[i].addr;
-            if (dynstr_addr == 0) dynstr_addr = sh[i].offset;
+            if (dynstr_addr != 0 && dynstr_addr >= base) dynstr_addr -= base;
+            else dynstr_addr = sh[i].offset;
             dynstr = (const char*)((uint8_t*)elf_base + dynstr_addr);
             SerialPutString("[ELF] .dynstr at 0x");
             SerialPrintHex(dynstr_addr);
@@ -562,8 +595,8 @@ static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
             SerialPrintHex(sym_value);
             SerialPutString("\r\n");
             
-            if (sym_value != 0) {
-                return (uint8_t*)elf_base + sym_value;
+            if (sym_value != 0 && sym_value >= base) {
+                return (uint8_t*)elf_base + (sym_value - base);
             }
             // If value is 0, maybe it's an import that needs resolving
             return 0;

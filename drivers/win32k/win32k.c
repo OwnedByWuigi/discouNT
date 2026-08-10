@@ -6,21 +6,213 @@
 #include "mouse.h"
 #include "serial.h"
 
-// Window list
 #define MAX_WINDOWS 32
+#define DESKTOP_COLOR        COLOR_BLUE
+#define FACE_COLOR           COLOR_LIGHT_GRAY
+#define SHADOW_COLOR         COLOR_DARK_GRAY
+#define FRAME_COLOR          COLOR_BLACK
+#define HILIGHT_COLOR        COLOR_WHITE
+#define ACTIVE_CAPTION       COLOR_BLUE
+#define INACTIVE_CAPTION     COLOR_DARK_GRAY
+#define ACTIVE_CAPTION_TEXT  COLOR_WHITE
+#define INACTIVE_CAPTION_TEXT COLOR_LIGHT_GRAY
+#define CLIENT_COLOR         COLOR_LIGHT_GRAY
+#define TITLEBAR_HEIGHT      18
+#define FRAME_THICKNESS      2
+#define EDGE_THICKNESS       1
+#define BUTTON_SIZE          14
+#define BUTTON_MARGIN        2
+#define ICON_BOX_SIZE        14
+
 static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
+static HANDLE active_window = INVALID_HANDLE;
 
-// Dragging state
 static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
 static int drag_offset_x = 0;
 static int drag_offset_y = 0;
 
+static int client_top(const WINDOW *win) {
+    return (win->style & WS_CAPTION) ? (FRAME_THICKNESS + TITLEBAR_HEIGHT + EDGE_THICKNESS) : FRAME_THICKNESS;
+}
+
+static int client_left(const WINDOW *win) {
+    return FRAME_THICKNESS + EDGE_THICKNESS;
+}
+
+static int client_right(const WINDOW *win) {
+    return win->width - FRAME_THICKNESS - EDGE_THICKNESS;
+}
+
+static int client_bottom(const WINDOW *win) {
+    return win->height - FRAME_THICKNESS - EDGE_THICKNESS;
+}
+
+static void draw_hline(int x, int y, int w, uint8_t color) {
+    FbFillRect(x, y, w, 1, color);
+}
+
+static void draw_vline(int x, int y, int h, uint8_t color) {
+    FbFillRect(x, y, 1, h, color);
+}
+
+static void draw_bevel(int x, int y, int w, int h, uint8_t light, uint8_t dark) {
+    if (w <= 1 || h <= 1) return;
+    draw_hline(x, y, w - 1, light);
+    draw_vline(x, y, h - 1, light);
+    draw_hline(x + 1, y + h - 1, w - 1, dark);
+    draw_vline(x + w - 1, y + 1, h - 1, dark);
+}
+
+static void draw_caption_button(int x, int y, int size, char glyph, int pressed) {
+    FbFillRect(x, y, size, size, FACE_COLOR);
+    if (pressed) draw_bevel(x, y, size, size, SHADOW_COLOR, HILIGHT_COLOR);
+    else draw_bevel(x, y, size, size, HILIGHT_COLOR, SHADOW_COLOR);
+    FbDrawChar(x + 3 + (pressed ? 1 : 0), y + 3 + (pressed ? 1 : 0), glyph, FRAME_COLOR, FACE_COLOR);
+}
+
+static void draw_sys_icon(int x, int y) {
+    FbFillRect(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, FACE_COLOR);
+    draw_bevel(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, HILIGHT_COLOR, SHADOW_COLOR);
+    FbFillRect(x + 3, y + 3, 8, 8, ACTIVE_CAPTION);
+    FbFillRect(x + 5, y + 5, 4, 1, HILIGHT_COLOR);
+}
+
+static void draw_window_frame(WINDOW *win) {
+    int x = win->x;
+    int y = win->y;
+    int w = win->width;
+    int h = win->height;
+    int title_color = win->active ? ACTIVE_CAPTION : INACTIVE_CAPTION;
+    int title_text_color = win->active ? ACTIVE_CAPTION_TEXT : INACTIVE_CAPTION_TEXT;
+
+    FbFillRect(x, y, w, h, FACE_COLOR);
+
+    draw_bevel(x, y, w, h, HILIGHT_COLOR, FRAME_COLOR);
+    draw_bevel(x + 1, y + 1, w - 2, h - 2, HILIGHT_COLOR, SHADOW_COLOR);
+
+    if (win->style & WS_CAPTION) {
+        int cap_x = x + FRAME_THICKNESS;
+        int cap_y = y + FRAME_THICKNESS;
+        int cap_w = w - (FRAME_THICKNESS * 2);
+
+        FbFillRect(cap_x, cap_y, cap_w, TITLEBAR_HEIGHT, title_color);
+
+        if (win->style & WS_SYSMENU) {
+            draw_sys_icon(cap_x + BUTTON_MARGIN, cap_y + BUTTON_MARGIN);
+        }
+
+        if (win->style & WS_SYSMENU) {
+            int btn_y = cap_y + BUTTON_MARGIN;
+            int close_x = x + w - FRAME_THICKNESS - BUTTON_MARGIN - BUTTON_SIZE;
+            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X', 0);
+        }
+
+        {
+            int text_x = cap_x + BUTTON_MARGIN + ((win->style & WS_SYSMENU) ? (ICON_BOX_SIZE + 4) : 2);
+            int text_right = x + w - FRAME_THICKNESS - BUTTON_MARGIN - ((win->style & WS_SYSMENU) ? (BUTTON_SIZE + 4) : 2);
+            int max_chars = (text_right - text_x) / 8;
+            char title_buf[64];
+            int len = (int)strlen(win->title);
+            if (len > max_chars) len = max_chars;
+            if (len < 0) len = 0;
+            memcpy(title_buf, win->title, (uint32_t)len);
+            title_buf[len] = 0;
+            FbDrawString(text_x, cap_y + 4, title_buf, title_text_color, title_color);
+        }
+    }
+
+    {
+        int left = x + client_left(win);
+        int top = y + client_top(win);
+        int right = x + client_right(win);
+        int bottom = y + client_bottom(win);
+        int client_w = right - left;
+        int client_h = bottom - top;
+
+        if (client_w > 0 && client_h > 0) {
+            FbFillRect(left, top, client_w, client_h, CLIENT_COLOR);
+            draw_bevel(left - 1, top - 1, client_w + 2, client_h + 2, SHADOW_COLOR, HILIGHT_COLOR);
+        }
+    }
+}
+
+static void set_window_active(HANDLE hwnd) {
+    active_window = hwnd;
+
+    for (int i = 0; i < window_count; i++) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
+        if (win) {
+            win->active = (window_list[i] == hwnd) ? 1 : 0;
+            ObDereferenceObject(window_list[i]);
+        }
+    }
+}
+
+static void raise_window(HANDLE hwnd) {
+    int pos = -1;
+    for (int i = 0; i < window_count; i++) {
+        if (window_list[i] == hwnd) {
+            pos = i;
+            break;
+        }
+    }
+    if (pos < 0 || pos == window_count - 1) return;
+
+    for (int i = pos; i < window_count - 1; i++) {
+        window_list[i] = window_list[i + 1];
+    }
+    window_list[window_count - 1] = hwnd;
+}
+
+static int is_in_window(WINDOW *win, int x, int y) {
+    return (x >= win->x && x < win->x + win->width &&
+            y >= win->y && y < win->y + win->height);
+}
+
+static int is_close_button(WINDOW *win, int x, int y) {
+    if (!(win->style & WS_CAPTION) || !(win->style & WS_SYSMENU)) return 0;
+    {
+        int bx = win->x + win->width - FRAME_THICKNESS - BUTTON_MARGIN - BUTTON_SIZE;
+        int by = win->y + FRAME_THICKNESS + BUTTON_MARGIN;
+        return (x >= bx && x < bx + BUTTON_SIZE && y >= by && y < by + BUTTON_SIZE);
+    }
+}
+
+static int is_title_bar(WINDOW *win, int x, int y) {
+    if (!(win->style & WS_CAPTION)) return 0;
+
+    {
+        int tx = win->x + FRAME_THICKNESS;
+        int ty = win->y + FRAME_THICKNESS;
+        int tw = win->width - (FRAME_THICKNESS * 2);
+        if (!(x >= tx && x < tx + tw && y >= ty && y < ty + TITLEBAR_HEIGHT)) return 0;
+    }
+
+    if (is_close_button(win, x, y)) return 0;
+    if ((win->style & WS_SYSMENU) &&
+        x < win->x + FRAME_THICKNESS + BUTTON_MARGIN + ICON_BOX_SIZE + 2) return 0;
+    return 1;
+}
+
+static HANDLE find_window_at(int x, int y) {
+    for (int i = window_count - 1; i >= 0; i--) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
+        if (win && win->visible) {
+            int found = is_in_window(win, x, y);
+            ObDereferenceObject(window_list[i]);
+            if (found) return window_list[i];
+        }
+    }
+    return INVALID_HANDLE;
+}
+
 void Win32kInit(void *mb_info) {
     FbInit(mb_info);
-    FbClearScreen(COLOR_BLUE);
+    FbClearScreen(DESKTOP_COLOR);
     window_count = 0;
+    active_window = INVALID_HANDLE;
     dragging = 0;
     drag_window = INVALID_HANDLE;
     
@@ -54,10 +246,13 @@ HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y
     int len = strlen(title);
     if (len > 63) len = 63;
     memcpy(win->title, title, len);
+    if (w < 96) w = 96;
+    if (h < 64) h = 64;
     win->x = x; win->y = y;
     win->width = w; win->height = h;
     win->style = style;
-    win->visible = 0;
+    win->visible = (style & WS_VISIBLE) ? 1 : 0;
+    win->active = 0;
     win->wndClass = wc;
     win->wndProc = wc->wndProc;
     
@@ -66,6 +261,9 @@ HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y
     if (window_count < MAX_WINDOWS) {
         window_list[window_count++] = hwnd;
     }
+
+    raise_window(hwnd);
+    set_window_active(hwnd);
     
     if (win->wndProc) win->wndProc(hwnd, WM_CREATE, 0, 0);
     ObDereferenceObject(hClass);
@@ -78,10 +276,17 @@ void Win32kDestroyWindow(HANDLE hwnd) {
     
     for (int i = 0; i < window_count; i++) {
         if (window_list[i] == hwnd) {
-            window_list[i] = window_list[window_count - 1];
+            for (int j = i; j < window_count - 1; j++) {
+                window_list[j] = window_list[j + 1];
+            }
             window_count--;
             break;
         }
+    }
+
+    if (active_window == hwnd) {
+        active_window = (window_count > 0) ? window_list[window_count - 1] : INVALID_HANDLE;
+        set_window_active(active_window);
     }
     
     if (win->wndProc) win->wndProc(hwnd, WM_DESTROY, 0, 0);
@@ -93,21 +298,7 @@ void Win32kShowWindow(HANDLE hwnd) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
     win->visible = 1;
-    
-    int x = win->x, y = win->y, w = win->width, h = win->height;
-    
-    FbFillRect(x, y, w, h, COLOR_LIGHT_GRAY);
-    
-    if (win->style & WS_CAPTION) {
-        FbFillRect(x, y, w, 18, COLOR_DARK_GRAY);
-        FbDrawString(x + 4, y + 2, win->title, COLOR_WHITE, COLOR_DARK_GRAY);
-        
-        FbFillRect(x + w - 18, y + 2, 14, 14, COLOR_RED);
-        FbDrawChar(x + w - 15, y + 3, 'X', COLOR_WHITE, COLOR_RED);
-    }
-    
-    FbDrawRect(x, y, w, h, COLOR_BLACK);
-    
+    draw_window_frame(win);
     ObDereferenceObject(hwnd);
 }
 
@@ -122,42 +313,12 @@ void Win32kUpdateWindow(HANDLE hwnd) {
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (win && rect) {
-        rect->left = 2;
-        rect->top = (win->style & WS_CAPTION) ? 20 : 2;
-        rect->right = win->width - 2;
-        rect->bottom = win->height - 2;
+        rect->left = client_left(win);
+        rect->top = client_top(win);
+        rect->right = client_right(win);
+        rect->bottom = client_bottom(win);
     }
     if (win) ObDereferenceObject(hwnd);
-}
-
-static int is_close_button(WINDOW *win, int x, int y) {
-    if (!(win->style & WS_CAPTION)) return 0;
-    int bx = win->x + win->width - 18;
-    int by = win->y + 2;
-    return (x >= bx && x < bx + 14 && y >= by && y < by + 14);
-}
-
-static int is_title_bar(WINDOW *win, int x, int y) {
-    if (!(win->style & WS_CAPTION)) return 0;
-    if (x >= win->x + win->width - 20 && y >= win->y && y < win->y + 18) return 0;
-    return (x >= win->x && x < win->x + win->width && y >= win->y && y < win->y + 18);
-}
-
-static int is_in_window(WINDOW *win, int x, int y) {
-    return (x >= win->x && x < win->x + win->width &&
-            y >= win->y && y < win->y + win->height);
-}
-
-static HANDLE find_window_at(int x, int y) {
-    for (int i = window_count - 1; i >= 0; i--) {
-        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && win->visible) {
-            int found = is_in_window(win, x, y);
-            ObDereferenceObject(window_list[i]);
-            if (found) return window_list[i];
-        }
-    }
-    return INVALID_HANDLE;
 }
 
 void Win32kHandleMouseDown(int x, int y, int button) {
@@ -165,6 +326,9 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     
     HANDLE hwnd = find_window_at(x, y);
     if (hwnd == INVALID_HANDLE) return;
+
+    raise_window(hwnd);
+    set_window_active(hwnd);
     
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
@@ -186,6 +350,7 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     }
     
     ObDereferenceObject(hwnd);
+    Win32kRedrawAll();
 }
 
 void Win32kHandleMouseUp(int x, int y, int button) {
@@ -207,11 +372,17 @@ void Win32kHandleMouseMove(int x, int y) {
     
     int new_x = x - drag_offset_x;
     int new_y = y - drag_offset_y;
-    
+    int screen_w = FbGetWidth();
+    int screen_h = FbGetHeight();
+    if (screen_w <= 0) screen_w = 640;
+    if (screen_h <= 0) screen_h = 480;
+
     if (new_x < 0) new_x = 0;
     if (new_y < 0) new_y = 0;
-    if (new_x + win->width > 640) new_x = 640 - win->width;
-    if (new_y + win->height > 480) new_y = 480 - win->height;
+    if (new_x + win->width > screen_w) new_x = screen_w - win->width;
+    if (new_y + win->height > screen_h) new_y = screen_h - win->height;
+    if (new_x < 0) new_x = 0;
+    if (new_y < 0) new_y = 0;
     
     if (new_x != win->x || new_y != win->y) {
         win->x = new_x;
@@ -223,20 +394,21 @@ void Win32kHandleMouseMove(int x, int y) {
 }
 
 void Win32kRedrawAll(void) {
-    // Don't clear the whole screen - just redraw windows
-    // First erase cursor
     MouseEraseCursor();
-    
-    // Clear screen
-    FbClearScreen(COLOR_BLUE);
-    
-    // Redraw all windows
+
+    FbClearScreen(DESKTOP_COLOR);
+
     for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
         if (win && win->visible) {
-            Win32kShowWindow(window_list[i]);
-            Win32kUpdateWindow(window_list[i]);
+            draw_window_frame(win);
+            if (win->wndProc) {
+                win->wndProc(window_list[i], WM_PAINT, 0, 0);
+            }
         }
         if (win) ObDereferenceObject(window_list[i]);
     }
+
+    MouseDrawCursor();
+    FbSwapBuffers();
 }

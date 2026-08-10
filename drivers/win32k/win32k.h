@@ -8,9 +8,13 @@
 #define WM_DESTROY  3
 #define WM_CLOSE    4
 
-#define WS_OVERLAPPED   0
-#define WS_VISIBLE      1
-#define WS_CAPTION      2
+#define WS_OVERLAPPED   0x00000000
+#define WS_VISIBLE      0x00000001
+#define WS_CAPTION      0x00000002
+#define WS_SYSMENU      0x00000004
+#define WS_THICKFRAME   0x00000008
+
+#define WS_OVERLAPPEDWINDOW (WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
 
 typedef struct _WNDCLASS {
     char     className[64];
@@ -24,6 +28,7 @@ typedef struct _WINDOW {
     int       width, height;
     uint32_t  style;
     uint8_t   visible;
+    uint8_t   active;
     WNDCLASS  *wndClass;
     void      (*wndProc)(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam);
 } WINDOW;
