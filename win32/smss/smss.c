@@ -69,6 +69,10 @@ static int smss_read_sector(uint32_t lba, uint8_t *buffer) { return CdfsReadSect
 static uint32_t smss_get_process_id(void) { return g_current_gui_pid; }
 static int smss_get_screen_width(void) { return FbGetWidth(); }
 static int smss_get_screen_height(void) { return FbGetHeight(); }
+static int smss_get_screen_mode_count(void) { return FbGetModeCount(); }
+static int smss_get_screen_mode_info(int index, int *width, int *height, int *bpp) {
+    return FbGetModeInfo(index, width, height, bpp);
+}
 
 static int smss_set_screen_resolution(int width, int height) {
     if (!FbSetResolution(width, height, 32)) return 0;
@@ -247,6 +251,8 @@ static const GUI_APP_API gui_api = {
     smss_get_process_id,
     smss_get_screen_width,
     smss_get_screen_height,
+    smss_get_screen_mode_count,
+    smss_get_screen_mode_info,
     smss_set_screen_resolution,
     smss_reboot,
     smss_shutdown

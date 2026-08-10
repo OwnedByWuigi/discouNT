@@ -42,6 +42,22 @@ static int dirty_y1 = 0;
 static int dirty_x2 = 0;
 static int dirty_y2 = 0;
 
+typedef struct _FB_MODE {
+    uint16_t width;
+    uint16_t height;
+    uint16_t bpp;
+} FB_MODE;
+
+static const FB_MODE fb_modes[] = {
+    {640, 480, 32},
+    {800, 600, 32},
+    {1024, 768, 32},
+    {1152, 864, 32},
+    {1280, 1024, 32}
+};
+
+#define FB_MODE_COUNT ((int)(sizeof(fb_modes) / sizeof(fb_modes[0])))
+
 static const uint16_t vga_to_rgb565[16] = {
     0x0000, 0x001F, 0x07E0, 0x07FF, 0xF800, 0xF81F, 0xA145, 0xC618,
     0x4208, 0x3C7F, 0x87E0, 0x87FF, 0xFC10, 0xFC1F, 0xFFE0, 0xFFFF
@@ -314,11 +330,30 @@ void FbInit(void *mb_info_ptr) {
 int FbIsFramebuffer(void) { return use_framebuffer; }
 int FbGetWidth(void) { return fb_width; }
 int FbGetHeight(void) { return fb_height; }
+int FbGetModeCount(void) { return FB_MODE_COUNT; }
+
+int FbGetModeInfo(int index, int *width, int *height, int *bpp) {
+    if (index < 0 || index >= FB_MODE_COUNT) return 0;
+    if (width) *width = fb_modes[index].width;
+    if (height) *height = fb_modes[index].height;
+    if (bpp) *bpp = fb_modes[index].bpp;
+    return 1;
+}
 
 int FbSetResolution(int width, int height, int bpp) {
+    int valid = 0;
     if (!use_framebuffer) return 0;
     if (width < 320 || height < 200) return 0;
     if (bpp != 16 && bpp != 24 && bpp != 32) return 0;
+    for (int i = 0; i < FB_MODE_COUNT; i++) {
+        if (fb_modes[i].width == width &&
+            fb_modes[i].height == height &&
+            fb_modes[i].bpp == bpp) {
+            valid = 1;
+            break;
+        }
+    }
+    if (!valid) return 0;
     if (!fb_try_bga_mode((uint16_t)width, (uint16_t)height, (uint16_t)bpp)) return 0;
     FbClearScreen(COLOR_BLUE);
     FbSwapBuffers();

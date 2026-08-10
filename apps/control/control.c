@@ -27,21 +27,10 @@ static int g_item_count = 0;
 static int g_selected = 0;
 
 extern void *memset(void *s, int c, uint32_t n);
-extern void *memcpy(void *d, const void *s, uint32_t n);
 extern uint32_t strlen(const char *s);
 extern int strcmp(const char *a, const char *b);
 extern void strcpy(char *d, const char *s);
 extern void strcat(char *d, const char *s);
-
-static void uppercase_copy(char *dst, const char *src, int max_len) {
-    int i = 0;
-    while (src[i] && i < max_len - 1) {
-        char c = src[i];
-        if (c >= 'a' && c <= 'z') c -= 32;
-        dst[i++] = c;
-    }
-    dst[i] = 0;
-}
 
 static int ends_with_cpl(const char *name) {
     int len = (int)strlen(name);
@@ -50,15 +39,6 @@ static int ends_with_cpl(const char *name) {
            name[len - 3] == 'C' &&
            name[len - 2] == 'P' &&
            name[len - 1] == 'L';
-}
-
-static void strip_extension(char *dst, const char *src, int max_len) {
-    int i = 0;
-    while (src[i] && src[i] != '.' && i < max_len - 1) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = 0;
 }
 
 static int sector_find_entry(uint32_t dir_lba, uint32_t dir_size, const char *name,
@@ -140,7 +120,7 @@ static void load_cpls(void) {
                 entry[ei] = 0;
 
                 if (!(flags & 0x02) && ends_with_cpl(entry)) {
-                    strip_extension(g_items[g_item_count].name, entry, sizeof(g_items[g_item_count].name));
+                    strcpy(g_items[g_item_count].name, entry);
                     strcpy(g_items[g_item_count].path, "/SYSTEM32/");
                     strcat(g_items[g_item_count].path, entry);
                     g_item_count++;
@@ -175,8 +155,7 @@ static void draw_item(int x, int y, int w, int h, const CPL_ITEM *item, int sele
     g_api->FillRect(x + 16, y + 16, 24, 4, COLOR_CYAN);
     g_api->FillRect(x + 22, y + 22, 12, 6, COLOR_YELLOW);
 
-    g_api->DrawString(x + 56, y + 14, item->name, text, face);
-    g_api->DrawString(x + 56, y + 28, ".CPL", text, face);
+    g_api->DrawString(x + 56, y + 20, item->name, text, face);
 }
 
 static void control_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
@@ -210,9 +189,6 @@ static void control_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
         g_api->FillRect(client_x, client_y, client_w, client_h, COLOR_LIGHT_GRAY);
         g_api->DrawString(client_x + 8, client_y + 8,
                           "Control Panel", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(client_x + 8, client_y + 22,
-                          "Double-click is not implemented. Click or press Enter.",
-                          COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
 
         cols = grid_columns(client_w - 16);
         cell_w = (client_w - 16 - ((cols - 1) * 8)) / cols;
@@ -222,12 +198,12 @@ static void control_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
             int row = i / cols;
             int col = i % cols;
             int x = client_x + 8 + col * (cell_w + 8);
-            int y = client_y + 44 + row * (cell_h + 8);
+            int y = client_y + 28 + row * (cell_h + 8);
             draw_item(x, y, cell_w, cell_h, &g_items[i], i == g_selected);
         }
 
         if (g_item_count == 0) {
-            g_api->DrawString(client_x + 8, client_y + 52,
+            g_api->DrawString(client_x + 8, client_y + 36,
                               "No .CPL files were found in SYSTEM32.",
                               COLOR_RED, COLOR_LIGHT_GRAY);
         }
@@ -291,7 +267,7 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
     int cell_w;
     int cell_h = 64;
     int grid_x = 8;
-    int grid_y = 44;
+    int grid_y = 28;
     if (!g_api || event_type != GUI_MOUSE_LDOWN || !(buttons & 1)) return;
 
     cols = grid_columns(480 - 16);
@@ -307,7 +283,10 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
             (x - grid_x) % (cell_w + 8) < cell_w &&
             rel_y % (cell_h + 8) < cell_h &&
             item >= 0 && item < g_item_count) {
-            if (g_selected == item) launch_selected();
+            if (g_selected == item) {
+                launch_selected();
+                return;
+            }
             g_selected = item;
         }
     }

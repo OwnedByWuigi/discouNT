@@ -40,6 +40,8 @@ typedef struct _GUI_APP_API {
     uint32_t (*GetProcessId)(void);
     int (*GetScreenWidth)(void);
     int (*GetScreenHeight)(void);
+    int (*GetScreenModeCount)(void);
+    int (*GetScreenModeInfo)(int index, int *width, int *height, int *bpp);
     int (*SetScreenResolution)(int width, int height);
     void (*Reboot)(void);
     void (*Shutdown)(void);

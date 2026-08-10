@@ -3,50 +3,33 @@
 
 #define COLOR_BLACK       0
 #define COLOR_BLUE        1
-#define COLOR_GREEN       2
 #define COLOR_CYAN        3
 #define COLOR_RED         4
 #define COLOR_LIGHT_GRAY  7
 #define COLOR_DARK_GRAY   8
 #define COLOR_LIGHT_BLUE  9
-#define COLOR_LIGHT_GREEN 10
 #define COLOR_WHITE       15
+
+#define MAX_MODES 16
 
 typedef struct _RES_MODE {
     int width;
     int height;
+    int bpp;
 } RES_MODE;
-
-static const RES_MODE g_modes[] = {
-    {640, 480},
-    {800, 600},
-    {1024, 768},
-    {1152, 864},
-    {1280, 1024}
-};
-
-#define MODE_COUNT ((int)(sizeof(g_modes) / sizeof(g_modes[0])))
 
 static const GUI_APP_API *g_api = 0;
 static GUI_HANDLE desk_class = 0xFFFFFFFFU;
 static GUI_HANDLE desk_window = 0xFFFFFFFFU;
 static int desk_exit_requested = 0;
-static int current_mode = 0;
+static RES_MODE g_modes[MAX_MODES];
+static int g_mode_count = 0;
 static int selected_mode = 0;
 static int applied_mode = 0;
 
 extern void *memset(void *s, int c, uint32_t n);
-extern uint32_t strlen(const char *s);
-extern void strcpy(char *d, const char *s);
 extern void strcat(char *d, const char *s);
 extern void itoa(int value, char *str, int base);
-
-static int find_mode(int width, int height) {
-    for (int i = 0; i < MODE_COUNT; i++) {
-        if (g_modes[i].width == width && g_modes[i].height == height) return i;
-    }
-    return 1;
-}
 
 static void mode_to_text(int index, char *buf) {
     char num[16];
@@ -59,11 +42,39 @@ static void mode_to_text(int index, char *buf) {
     strcat(buf, " pixels");
 }
 
+static int find_mode(int width, int height, int bpp) {
+    for (int i = 0; i < g_mode_count; i++) {
+        if (g_modes[i].width == width &&
+            g_modes[i].height == height &&
+            g_modes[i].bpp == bpp) return i;
+    }
+    return 0;
+}
+
+static void load_modes(void) {
+    int count;
+    g_mode_count = 0;
+    memset(g_modes, 0, sizeof(g_modes));
+
+    if (!g_api || !g_api->GetScreenModeCount || !g_api->GetScreenModeInfo) return;
+
+    count = g_api->GetScreenModeCount();
+    if (count > MAX_MODES) count = MAX_MODES;
+
+    for (int i = 0; i < count; i++) {
+        if (g_api->GetScreenModeInfo(i, &g_modes[g_mode_count].width,
+                                     &g_modes[g_mode_count].height,
+                                     &g_modes[g_mode_count].bpp)) {
+            g_mode_count++;
+        }
+    }
+}
+
 static int apply_selected_mode(void) {
     if (!g_api || !g_api->SetScreenResolution) return 0;
+    if (selected_mode < 0 || selected_mode >= g_mode_count) return 0;
     if (g_api->SetScreenResolution(g_modes[selected_mode].width, g_modes[selected_mode].height)) {
         applied_mode = selected_mode;
-        current_mode = selected_mode;
         return 1;
     }
     return 0;
@@ -120,14 +131,19 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
         slider_w = 176;
 
         g_api->FillRect(slider_x, slider_y + 6, slider_w, 4, COLOR_DARK_GRAY);
-        for (int i = 0; i < MODE_COUNT; i++) {
-            int px = slider_x + (i * (slider_w - 8)) / (MODE_COUNT - 1);
-            g_api->FillRect(px, slider_y + 2, 2, 12, COLOR_BLACK);
-        }
-        {
-            int knob_x = slider_x + (selected_mode * (slider_w - 8)) / (MODE_COUNT - 1);
-            g_api->FillRect(knob_x, slider_y, 10, 16, COLOR_WHITE);
-            g_api->DrawRect(knob_x, slider_y, 10, 16, COLOR_BLUE);
+        if (g_mode_count <= 1) {
+            g_api->FillRect(slider_x, slider_y, 10, 16, COLOR_WHITE);
+            g_api->DrawRect(slider_x, slider_y, 10, 16, COLOR_BLUE);
+        } else {
+            for (int i = 0; i < g_mode_count; i++) {
+                int px = slider_x + (i * (slider_w - 8)) / (g_mode_count - 1);
+                g_api->FillRect(px, slider_y + 2, 2, 12, COLOR_BLACK);
+            }
+            {
+                int knob_x = slider_x + (selected_mode * (slider_w - 8)) / (g_mode_count - 1);
+                g_api->FillRect(knob_x, slider_y, 10, 16, COLOR_WHITE);
+                g_api->DrawRect(knob_x, slider_y, 10, 16, COLOR_BLUE);
+            }
         }
 
         res_text[0] = 0;
@@ -138,7 +154,7 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
         g_api->FillRect(x0 + 16, y0 + 146, 220, 84, COLOR_WHITE);
         g_api->DrawRect(x0 + 16, y0 + 146, 220, 84, COLOR_DARK_GRAY);
 
-        for (int i = 0; i < MODE_COUNT; i++) {
+        for (int i = 0; i < g_mode_count; i++) {
             int iy = y0 + 150 + (i * 14);
             uint8_t bg = (i == selected_mode) ? COLOR_LIGHT_BLUE : COLOR_WHITE;
             uint8_t fg = (i == selected_mode) ? COLOR_WHITE : COLOR_BLACK;
@@ -165,16 +181,19 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
 __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     int screen_w;
     int screen_h;
+
     g_api = api;
     desk_class = 0xFFFFFFFFU;
     desk_window = 0xFFFFFFFFU;
     desk_exit_requested = 0;
 
-    screen_w = (g_api && g_api->GetScreenWidth) ? g_api->GetScreenWidth() : 800;
-    screen_h = (g_api && g_api->GetScreenHeight) ? g_api->GetScreenHeight() : 600;
-    current_mode = find_mode(screen_w, screen_h);
-    selected_mode = current_mode;
-    applied_mode = current_mode;
+    load_modes();
+    if (g_mode_count <= 0) return 0;
+
+    screen_w = (g_api && g_api->GetScreenWidth) ? g_api->GetScreenWidth() : g_modes[0].width;
+    screen_h = (g_api && g_api->GetScreenHeight) ? g_api->GetScreenHeight() : g_modes[0].height;
+    selected_mode = find_mode(screen_w, screen_h, 32);
+    applied_mode = selected_mode;
     return 1;
 }
 
@@ -190,7 +209,7 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
 
 __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, char ascii, uint8_t pressed) {
     (void)ascii;
-    if (!pressed) return;
+    if (!pressed || g_mode_count <= 0) return;
 
     switch (scancode) {
         case 0x01:
@@ -202,7 +221,7 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
             return;
         case 0x4D:
         case 0x50:
-            if (selected_mode + 1 < MODE_COUNT) selected_mode++;
+            if (selected_mode + 1 < g_mode_count) selected_mode++;
             return;
         case 0x1C:
             apply_selected_mode();
@@ -222,25 +241,31 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
     int list_y = 146;
     int list_w = 220;
     int list_h = 84;
-    int apply_x = 430 - 220;
-    int ok_x = 430 - 152;
-    int cancel_x = 430 - 84;
-    int btn_y = 280 - 34;
+    int client_w = 430 - 6;
+    int client_h = 280 - 24;
+    int apply_x = client_w - 220;
+    int ok_x = client_w - 152;
+    int cancel_x = client_w - 84;
+    int btn_y = client_h - 34;
 
-    if (event_type != GUI_MOUSE_LDOWN || !(buttons & 1)) return;
+    if (event_type != GUI_MOUSE_LDOWN || !(buttons & 1) || g_mode_count <= 0) return;
 
     if (x >= slider_x && x < slider_x + slider_w && y >= slider_y && y < slider_y + 20) {
-        int pos = x - slider_x;
-        int idx = (pos * (MODE_COUNT - 1) + ((slider_w - 8) / 2)) / (slider_w - 8);
+        int idx;
+        if (g_mode_count <= 1) idx = 0;
+        else {
+            int pos = x - slider_x;
+            idx = (pos * (g_mode_count - 1) + ((slider_w - 8) / 2)) / (slider_w - 8);
+        }
         if (idx < 0) idx = 0;
-        if (idx >= MODE_COUNT) idx = MODE_COUNT - 1;
+        if (idx >= g_mode_count) idx = g_mode_count - 1;
         selected_mode = idx;
         return;
     }
 
     if (x >= list_x && x < list_x + list_w && y >= list_y && y < list_y + list_h) {
         int item = (y - (list_y + 4)) / 14;
-        if (item >= 0 && item < MODE_COUNT) selected_mode = item;
+        if (item >= 0 && item < g_mode_count) selected_mode = item;
         return;
     }
 
