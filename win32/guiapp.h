@@ -23,6 +23,7 @@ typedef struct _GUI_RECT {
 typedef struct _GUI_APP_API {
     GUI_HANDLE (*RegisterClass)(const char *className, uint32_t style, void (*wndProc)(GUI_HANDLE, uint32_t, uint32_t, uint32_t));
     GUI_HANDLE (*CreateWindow)(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
+    GUI_HANDLE (*CreateWindowByClass)(GUI_HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style);
     void (*ShowWindow)(GUI_HANDLE hwnd);
     void (*UpdateWindow)(GUI_HANDLE hwnd);
     void (*GetClientRect)(GUI_HANDLE hwnd, GUI_RECT *rect);
@@ -32,6 +33,7 @@ typedef struct _GUI_APP_API {
     void (*DrawString)(int x, int y, const char *str, uint8_t fg, uint8_t bg);
     int (*ReadSector)(uint32_t lba, uint8_t *buffer);
     int (*ExecuteImage)(const char *path);
+    uint32_t (*GetProcessId)(void);
     void (*Reboot)(void);
     void (*Shutdown)(void);
 } GUI_APP_API;

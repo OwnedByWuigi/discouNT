@@ -40,6 +40,7 @@ typedef struct _RECT {
 void Win32kInit(void *mb_info);
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t));
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
+HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style);
 void Win32kShowWindow(HANDLE hwnd);
 void Win32kUpdateWindow(HANDLE hwnd);
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect);
@@ -51,5 +52,7 @@ void Win32kHandleMouseMove(int x, int y);
 void Win32kRedrawAll(void);
 void Win32kRefreshCursor(void);
 int Win32kIsDragging(void);
+HANDLE Win32kGetActiveWindow(void);
+void Win32kActivateWindow(HANDLE hwnd);
 
 #endif

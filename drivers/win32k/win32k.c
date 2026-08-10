@@ -321,10 +321,9 @@ HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc
     return ObCreateObject(OBJ_TYPE_WINDOW, className, wc, sizeof(WNDCLASS));
 }
 
-HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
-    HANDLE hClass = ObFindObject(className, OBJ_TYPE_WINDOW);
+HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style) {
     if (hClass == INVALID_HANDLE) return INVALID_HANDLE;
-    
+
     WNDCLASS *wc = (WNDCLASS*)ObReferenceObject(hClass);
     if (!wc) return INVALID_HANDLE;
     
@@ -355,6 +354,12 @@ HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y
     if (win->wndProc) win->wndProc(hwnd, WM_CREATE, 0, 0);
     ObDereferenceObject(hClass);
     return hwnd;
+}
+
+HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
+    HANDLE hClass = ObFindObject(className, OBJ_TYPE_WINDOW);
+    if (hClass == INVALID_HANDLE) return INVALID_HANDLE;
+    return Win32kCreateWindowByClass(hClass, title, x, y, w, h, style);
 }
 
 void Win32kDestroyWindow(HANDLE hwnd) {
@@ -505,6 +510,16 @@ void Win32kRefreshCursor(void) {
 
 int Win32kIsDragging(void) {
     return dragging;
+}
+
+HANDLE Win32kGetActiveWindow(void) {
+    return active_window;
+}
+
+void Win32kActivateWindow(HANDLE hwnd) {
+    if (hwnd == INVALID_HANDLE) return;
+    raise_window(hwnd);
+    set_window_active(hwnd);
 }
 
 void Win32kRedrawAll(void) {

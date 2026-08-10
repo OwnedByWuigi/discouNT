@@ -19,6 +19,7 @@ static char input_buf[CMD_COLS + 1];
 static int input_len = 0;
 static char current_path[256];
 static char exec_path[256];
+static uint32_t cmd_pid = 0;
 
 extern void *memcpy(void *d, const void *s, uint32_t n);
 extern uint32_t strlen(const char *s);
@@ -489,11 +490,15 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     input_buf[0] = 0;
     strcpy(current_path, "/");
     strcpy(exec_path, "/SYSTEM32");
+    cmd_pid = (g_api && g_api->GetProcessId) ? g_api->GetProcessId() : 0;
     cmd_clear_lines();
     return 1;
 }
 
 __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
+    char title[64];
+    char num[16];
+
     if (!g_api) return 0xFFFFFFFFU;
 
     if (cmd_class == 0xFFFFFFFFU) {
@@ -503,9 +508,20 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
     cmd_exit_requested = 0;
     input_len = 0;
     input_buf[0] = 0;
+    strcpy(title, "Command Prompt");
+    if (cmd_pid != 0) {
+        strcat(title, " #");
+        itoa((int)cmd_pid, num, 10);
+        strcat(title, num);
+    }
 
-    cmd_window = g_api->CreateWindow("GuiCmdClass", "Command Prompt",
-                                     72, 52, 640, 320, GUI_WS_OVERLAPPEDWINDOW);
+    if (g_api->CreateWindowByClass) {
+        cmd_window = g_api->CreateWindowByClass(cmd_class, title,
+                                                72, 52, 640, 320, GUI_WS_OVERLAPPEDWINDOW);
+    } else {
+        cmd_window = g_api->CreateWindow("GuiCmdClass", title,
+                                         72, 52, 640, 320, GUI_WS_OVERLAPPEDWINDOW);
+    }
     return cmd_window;
 }
 
