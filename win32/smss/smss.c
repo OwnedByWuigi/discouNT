@@ -29,7 +29,14 @@ static int smss_execute_bootstrap(const char *path) {
         return -2;
     }
 
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        SerialPutString("[SMSS] Import resolution failed: ");
+        if (PeGetLastError()) SerialPutString(PeGetLastError());
+        SerialPutString("\r\n");
+        PeFreeImage(image);
+        kfree(file_buf);
+        return -4;
+    }
     if (file_size >= 2 && file_buf[0] == 0x4D && file_buf[1] == 0x5A) {
         PePerformRelocations(image);
     }
@@ -45,7 +52,7 @@ static int smss_execute_bootstrap(const char *path) {
             if (exe_stack) kfree(exe_stack);
             PeFreeImage(image);
             kfree(file_buf);
-            return -3;
+            return -5;
         }
 
         exe_esp = (uint32_t)(exe_stack + 65536 - 256);

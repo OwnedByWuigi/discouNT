@@ -38,6 +38,10 @@ static GUI_APP_INSTANCE g_gui_apps[MAX_GUI_APPS];
 static int g_gui_app_count = 0;
 static uint32_t g_next_gui_pid = 1;
 static uint32_t g_current_gui_pid = 0;
+static char g_error_app[96];
+static char g_error_text[256];
+static HANDLE g_error_class = INVALID_HANDLE;
+static HANDLE g_error_window = INVALID_HANDLE;
 
 static void uppercase_copy(char *dst, const char *src, int max_len) {
     int i = 0;
@@ -47,6 +51,64 @@ static void uppercase_copy(char *dst, const char *src, int max_len) {
         dst[i++] = c;
     }
     dst[i] = 0;
+}
+
+static void csrss_error_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
+    (void)wParam;
+    (void)lParam;
+
+    if (msg == WM_PAINT) {
+        RECT rect;
+        Win32kGetClientRect(hwnd, &rect);
+        FbFillRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, COLOR_LIGHT_GRAY);
+        FbDrawString(rect.left + 10, rect.top + 12, g_error_app, COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(rect.left + 10, rect.top + 30, g_error_text, COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(rect.left + 10, rect.top + 54, "This program could not be started.", COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
+    } else if (msg == WM_DESTROY) {
+        g_error_window = INVALID_HANDLE;
+    }
+}
+
+static void csrss_show_launch_error(const char *path, const char *detail) {
+    if (g_error_class == INVALID_HANDLE) {
+        g_error_class = Win32kRegisterClass("LoaderErrorDialog", 0, csrss_error_wndproc);
+    }
+    if (g_error_class == INVALID_HANDLE) return;
+
+    if (path) {
+        int i = 0;
+        while (path[i] && i < (int)sizeof(g_error_app) - 1) {
+            g_error_app[i] = path[i];
+            i++;
+        }
+        g_error_app[i] = 0;
+    } else {
+        strcpy(g_error_app, "Application Error");
+    }
+
+    if (detail) {
+        int i = 0;
+        while (detail[i] && i < (int)sizeof(g_error_text) - 1) {
+            g_error_text[i] = detail[i];
+            i++;
+        }
+        g_error_text[i] = 0;
+    } else {
+        strcpy(g_error_text, "The application could not be started.");
+    }
+
+    if (g_error_window != INVALID_HANDLE) {
+        Win32kDestroyWindow(g_error_window);
+        g_error_window = INVALID_HANDLE;
+    }
+
+    g_error_window = Win32kCreateWindowByClass(g_error_class, "Application Error", 120, 120, 520, 120,
+                                               WS_VISIBLE | WS_CAPTION | WS_SYSMENU);
+    if (g_error_window != INVALID_HANDLE) {
+        Win32kActivateWindow(g_error_window);
+        Win32kShowWindow(g_error_window);
+        Win32kRedrawAll();
+    }
 }
 
 static GUI_HANDLE csrss_register_class(const char *className, uint32_t style, void (*wndProc)(GUI_HANDLE, uint32_t, uint32_t, uint32_t)) {
@@ -154,7 +216,12 @@ static int csrss_execute_image(const char *path) {
         return -3;
     }
 
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        csrss_show_launch_error(upper_path, PeGetLastError());
+        PeFreeImage(image);
+        kfree(file_buf);
+        return -5;
+    }
     if (!(*(uint32_t*)file_buf == 0x464C457F)) {
         PePerformRelocations(image);
     }
@@ -285,10 +352,16 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     kfree(file_buf);
     if (!app->image) {
         SerialPutString("[CSRSS] Failed to load GUI app image\r\n");
+        csrss_show_launch_error(path, "The application image could not be mapped.");
         return 0;
     }
 
-    PeResolveImports(app->image);
+    if (!PeResolveImports(app->image)) {
+        csrss_show_launch_error(path, PeGetLastError());
+        PeFreeImage(app->image);
+        app->image = 0;
+        return 0;
+    }
     if (*(uint32_t*)app->image != 0x464C457F) {
         PePerformRelocations(app->image);
     }
@@ -302,6 +375,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
 
     if (!init_fn || !create_window_fn || !app->handle_key || !app->should_exit || !app->reset_exit) {
         SerialPutString("[CSRSS] GUI app missing required exports\r\n");
+        csrss_show_launch_error(path, "The application is not a valid Win32 program.");
         PeFreeImage(app->image);
         app->image = 0;
         return 0;

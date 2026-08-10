@@ -65,7 +65,13 @@ static int driver_load_one(const DRIVER_SPEC *spec, void *context) {
         return 0;
     }
 
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        SerialPutString("[DRV] Import resolution failed: ");
+        if (PeGetLastError()) SerialPutString(PeGetLastError());
+        SerialPutString("\r\n");
+        PeFreeImage(image);
+        return 0;
+    }
     if (*(uint32_t*)image != 0x464C457F) {
         PePerformRelocations(image);
     }
@@ -109,7 +115,13 @@ static int driver_load_w32k_dll(void) {
         return 0;
     }
 
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        SerialPutString("[DRV] Import resolution failed: ");
+        if (PeGetLastError()) SerialPutString(PeGetLastError());
+        SerialPutString("\r\n");
+        PeFreeImage(image);
+        return 0;
+    }
     if (*(uint32_t*)image != 0x464C457F) {
         PePerformRelocations(image);
     }

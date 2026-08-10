@@ -8,6 +8,7 @@
 
 // DLL list
 static LOADED_DLL *dll_list = 0;
+static char pe_last_error[256];
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
 
@@ -89,6 +90,56 @@ typedef struct {
 #define R_386_GLOB_DAT 6
 #define R_386_JMP_SLOT 7
 #define R_386_RELATIVE 8
+
+static void PeSetLastError(const char *text) {
+    if (!text) {
+        pe_last_error[0] = 0;
+        return;
+    }
+
+    strncpy:
+    {
+        int i = 0;
+        while (text[i] && i < (int)sizeof(pe_last_error) - 1) {
+            pe_last_error[i] = text[i];
+            i++;
+        }
+        pe_last_error[i] = 0;
+    }
+}
+
+static void PeSetImportMissingDllError(const char *dll_name) {
+    int i = 0;
+    const char *prefix = "This application failed to start because ";
+    const char *suffix = " was not found.";
+
+    pe_last_error[0] = 0;
+    while (*prefix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *prefix++;
+    if (dll_name) {
+        while (*dll_name && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *dll_name++;
+    }
+    while (*suffix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *suffix++;
+    pe_last_error[i] = 0;
+}
+
+static void PeSetImportMissingProcError(const char *dll_name, const char *func_name) {
+    int i = 0;
+    const char *prefix = "The procedure entry point ";
+    const char *middle = " could not be located in ";
+    const char *suffix = ".";
+
+    pe_last_error[0] = 0;
+    while (*prefix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *prefix++;
+    if (func_name) {
+        while (*func_name && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *func_name++;
+    }
+    while (*middle && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *middle++;
+    if (dll_name) {
+        while (*dll_name && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *dll_name++;
+    }
+    while (*suffix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *suffix++;
+    pe_last_error[i] = 0;
+}
 
 static PE_RUNTIME_HEADER *PeGetRuntimeHeader(void *image_base) {
     PE_RUNTIME_HEADER *hdr;
@@ -561,6 +612,7 @@ void PePerformRelocations(void *image_base) {
 int PeResolveImports(void *image_base) {
     if (!image_base) return 0;
     if (*(uint32_t*)image_base == 0x464C457F) return 1;
+    PeClearLastError();
 
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)image_base;
     IMAGE_FILE_HEADER *file = (IMAGE_FILE_HEADER*)((uint8_t*)image_base + dos->e_lfanew);
@@ -614,6 +666,7 @@ int PeResolveImports(void *image_base) {
                 } else {
                     missing++;
                     *iat = 0;
+                    if (!pe_last_error[0]) PeSetImportMissingProcError(dll_name, func_name);
                     SerialPutString("  ");
                     SerialPutString(func_name);
                     SerialPutString(" -> MISSING\r\n");
@@ -621,6 +674,7 @@ int PeResolveImports(void *image_base) {
             } else if (func_name) {
                 missing++;
                 *iat = 0;
+                if (!pe_last_error[0]) PeSetImportMissingDllError(dll_name);
                 SerialPutString("  ");
                 SerialPutString(func_name);
                 SerialPutString(" -> NO DLL\r\n");
@@ -633,6 +687,14 @@ int PeResolveImports(void *image_base) {
     }
     
     return (missing == 0) ? 1 : 0;
+}
+
+const char *PeGetLastError(void) {
+    return pe_last_error[0] ? pe_last_error : 0;
+}
+
+void PeClearLastError(void) {
+    pe_last_error[0] = 0;
 }
 
 void *PeGetProcAddress(void *dll_base, const char *func_name) {

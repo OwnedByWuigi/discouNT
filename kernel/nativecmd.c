@@ -580,7 +580,15 @@ static void cmd_exec(char *args) {
         return;
     }
 
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        const char *error_text = PeGetLastError();
+        HalPutString("Application Error: ", 0x0C);
+        HalPutString(error_text ? error_text : "Missing imports.", 0x0C);
+        HalPutString("\n", 0x0C);
+        PeFreeImage(image);
+        kfree(file_buf);
+        return;
+    }
     if (is_pe_image(file_buf, file_size)) {
         PePerformRelocations(image);
     }
