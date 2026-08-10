@@ -33,6 +33,7 @@ static char cmd_buffer[256];
 static int cmd_pos = 0;
 static int shift_pressed = 0;
 static int capslock = 0;
+static void *boot_mb_info = 0;
 
 // Current directory state
 static uint32_t current_dir_lba = 0;
@@ -194,20 +195,26 @@ static void cmd_ls(void) {
 static void cmd_gui(void) {
     HalPutString("\nSwitching to GUI mode...\n", 0x0E);
     
-    // Switch to VGA graphics
-    VgaInit();
-    VgaClearScreen(COLOR_BLUE);
+    FbInit(boot_mb_info);
+    FbClearScreen(COLOR_BLUE);
     
     // Draw test screen
-    VgaFillRect(0, 0, 640, 22, COLOR_DARK_GRAY);
-    VgaDrawString(8, 3, "GUI Mode - Press ESC to return", COLOR_WHITE, COLOR_DARK_GRAY);
-    VgaDrawString(10, 40, "Keyboard test - type something:", COLOR_WHITE, COLOR_BLUE);
+    int fbw = FbGetWidth();
+    int fbh = FbGetHeight();
+    if (fbw > 640) fbw = 640;
+    if (fbh > 480) fbh = 480;
+    
+    FbFillRect(0, 0, fbw, 22, COLOR_DARK_GRAY);
+    FbDrawString(8, 3, "GUI Mode - Press ESC to return", COLOR_WHITE, COLOR_DARK_GRAY);
+    FbDrawString(10, 40, "Keyboard test - type something:", COLOR_WHITE, COLOR_BLUE);
     
     // Status bar
-    VgaFillRect(0, 462, 640, 18, COLOR_DARK_GRAY);
-    VgaDrawString(8, 464, "Press keys - ESC to exit", COLOR_WHITE, COLOR_DARK_GRAY);
+    if (fbh >= 18) {
+        FbFillRect(0, fbh - 18, fbw, 18, COLOR_DARK_GRAY);
+        FbDrawString(8, fbh - 16, "Press keys - ESC to exit", COLOR_WHITE, COLOR_DARK_GRAY);
+    }
     
-    VgaSwapBuffers();
+    FbSwapBuffers();
     
     // Text input buffer
     char input_text[80];
@@ -250,8 +257,8 @@ static void cmd_gui(void) {
                     }
                     
                     // Update display
-                    VgaFillRect(10, 60, 620, 20, COLOR_BLUE);
-                    VgaDrawString(10, 60, input_text, COLOR_YELLOW, COLOR_BLUE);
+                    FbFillRect(10, 60, 620, 20, COLOR_BLUE);
+                    FbDrawString(10, 60, input_text, COLOR_YELLOW, COLOR_BLUE);
                     
                     // Show scancode
                     char sc[16];
@@ -259,10 +266,10 @@ static void cmd_gui(void) {
                     sc[4] = '0' + (data / 16 > 9 ? data/16-10+'A' : data/16+'0');
                     sc[5] = '0' + (data%16 > 9 ? data%16-10+'A' : data%16+'0');
                     sc[6] = 0;
-                    VgaFillRect(10, 90, 100, 16, COLOR_BLUE);
-                    VgaDrawString(10, 90, sc, COLOR_LIGHT_GRAY, COLOR_BLUE);
+                    FbFillRect(10, 90, 100, 16, COLOR_BLUE);
+                    FbDrawString(10, 90, sc, COLOR_LIGHT_GRAY, COLOR_BLUE);
                     
-                    VgaSwapBuffers();
+                    FbSwapBuffers();
                 }
             }
         }
@@ -686,7 +693,8 @@ static void handle_keyboard(uint8_t scancode) {
 }
 
 void kmain(uint32_t magic, void *mb_info_ptr) {
-    (void)magic; (void)mb_info_ptr;
+    (void)magic;
+    boot_mb_info = mb_info_ptr;
     
     SerialInit();
     SerialPutString("\r\n========================================\r\n");

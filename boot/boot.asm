@@ -13,7 +13,7 @@ align 4
     dd 1    ; mode_type: 1 = graphics mode
     dd 640  ; requested width
     dd 480  ; requested height
-    dd 16   ; requested depth
+    dd 32   ; requested depth
 
 section .text
 global start
