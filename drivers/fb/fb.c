@@ -2,6 +2,31 @@
 #include "fb.h"
 #include "vga.h"
 #include "serial.h"
+#include "portio.h"
+#include "mm.h"
+#include "util.h"
+
+#define BGA_IOPORT_INDEX      0x01CE
+#define BGA_IOPORT_DATA       0x01CF
+
+#define BGA_INDEX_ID          0
+#define BGA_INDEX_XRES        1
+#define BGA_INDEX_YRES        2
+#define BGA_INDEX_BPP         3
+#define BGA_INDEX_ENABLE      4
+
+#define BGA_ID0               0xB0C0
+#define BGA_ID5               0xB0C5
+
+#define BGA_DISABLED          0x00
+#define BGA_ENABLED           0x01
+#define BGA_LFB_ENABLED       0x40
+#define BGA_NOCLEARMEM        0x80
+
+#define PCI_CONFIG_ADDR       0x0CF8
+#define PCI_CONFIG_DATA       0x0CFC
+#define QEMU_VGA_VENDOR_ID    0x1234
+#define QEMU_VGA_DEVICE_ID    0x1111
 
 int fb_width = 640;
 int fb_height = 480;
@@ -10,8 +35,12 @@ static int use_framebuffer = 0;
 static uint8_t *fb_addr = 0;
 static uint32_t fb_pitch = 0;
 static uint8_t fb_bpp = 0;
-static uint8_t fb_type = 0;
-static uint32_t fb_addr_hi = 0;
+static uint8_t *fb_shadow = 0;
+static int dirty_valid = 0;
+static int dirty_x1 = 0;
+static int dirty_y1 = 0;
+static int dirty_x2 = 0;
+static int dirty_y2 = 0;
 
 static const uint16_t vga_to_rgb565[16] = {
     0x0000, 0x001F, 0x07E0, 0x07FF, 0xF800, 0xF81F, 0xA145, 0xC618,
@@ -25,242 +54,282 @@ static const uint32_t vga_to_rgb888[16] = {
     0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
 };
 
-typedef struct {
-    uint16_t mode_attributes;
-    uint8_t win_a;
-    uint8_t win_b;
-    uint16_t win_granularity;
-    uint16_t win_size;
-    uint16_t win_seg_a;
-    uint16_t win_seg_b;
-    uint32_t win_func_ptr;
-    uint16_t bytes_per_scanline;
-    uint16_t width;
-    uint16_t height;
-    uint8_t char_width;
-    uint8_t char_height;
-    uint8_t planes;
-    uint8_t bpp;
-    uint8_t banks;
-    uint8_t memory_model;
-    uint8_t bank_size;
-    uint8_t image_pages;
-    uint8_t reserved0;
-    uint8_t red_mask;
-    uint8_t red_position;
-    uint8_t green_mask;
-    uint8_t green_position;
-    uint8_t blue_mask;
-    uint8_t blue_position;
-    uint8_t reserved_mask;
-    uint8_t reserved_position;
-    uint8_t direct_color_attributes;
-    uint32_t phys_base_ptr;
-    uint32_t offscreen_mem_offset;
-    uint16_t offscreen_mem_size;
-} __attribute__((packed)) VBEModeInfo;
+static const uint8_t font[96][8] = {
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},{0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
+    {0x66,0x66,0x00,0x00,0x00,0x00,0x00,0x00},{0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00},
+    {0x18,0x3E,0x60,0x3C,0x06,0x7C,0x18,0x00},{0x00,0xC6,0xCC,0x18,0x30,0x66,0xC6,0x00},
+    {0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00},{0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00},
+    {0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00},{0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00},
+    {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00},{0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00},
+    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x30},{0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00},
+    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00},{0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00},
+    {0x7C,0xC6,0xCE,0xD6,0xE6,0xC6,0x7C,0x00},{0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00},
+    {0x7C,0xC6,0x06,0x1C,0x30,0x66,0xFE,0x00},{0x7C,0xC6,0x06,0x3C,0x06,0xC6,0x7C,0x00},
+    {0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x1E,0x00},{0xFE,0xC0,0xFC,0x06,0x06,0xC6,0x7C,0x00},
+    {0x38,0x60,0xC0,0xFC,0xC6,0xC6,0x7C,0x00},{0xFE,0xC6,0x0C,0x18,0x30,0x30,0x30,0x00},
+    {0x7C,0xC6,0xC6,0x7C,0xC6,0xC6,0x7C,0x00},{0x7C,0xC6,0xC6,0x7E,0x06,0x0C,0x78,0x00},
+    {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00},{0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x30},
+    {0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00},{0x00,0x00,0x7E,0x00,0x7E,0x00,0x00,0x00},
+    {0x60,0x30,0x18,0x0C,0x18,0x30,0x60,0x00},{0x7C,0xC6,0x0C,0x18,0x18,0x00,0x18,0x00},
+    {0x7C,0xC6,0xDE,0xDE,0xDE,0xC0,0x78,0x00},{0x38,0x6C,0xC6,0xFE,0xC6,0xC6,0xC6,0x00},
+    {0xFC,0x66,0x66,0x7C,0x66,0x66,0xFC,0x00},{0x3C,0x66,0xC0,0xC0,0xC0,0x66,0x3C,0x00},
+    {0xF8,0x6C,0x66,0x66,0x66,0x6C,0xF8,0x00},{0xFE,0x62,0x68,0x78,0x68,0x62,0xFE,0x00},
+    {0xFE,0x62,0x68,0x78,0x68,0x60,0xF0,0x00},{0x3C,0x66,0xC0,0xCE,0xC6,0x66,0x3E,0x00},
+    {0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0x00},{0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0x00},
+    {0x1E,0x0C,0x0C,0x0C,0xCC,0xCC,0x78,0x00},{0xE6,0x66,0x6C,0x78,0x6C,0x66,0xE6,0x00},
+    {0xF0,0x60,0x60,0x60,0x62,0x66,0xFE,0x00},{0xC6,0xEE,0xFE,0xD6,0xC6,0xC6,0xC6,0x00},
+    {0xC6,0xE6,0xF6,0xDE,0xCE,0xC6,0xC6,0x00},{0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00},
+    {0xFC,0x66,0x66,0x7C,0x60,0x60,0xF0,0x00},{0x7C,0xC6,0xC6,0xC6,0xC6,0x7C,0x0E,0x00},
+    {0xFC,0x66,0x66,0x7C,0x6C,0x66,0xE6,0x00},{0x7C,0xC6,0x60,0x38,0x0C,0xC6,0x7C,0x00},
+    {0x7E,0x5A,0x18,0x18,0x18,0x18,0x3C,0x00},{0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00},
+    {0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x10,0x00},{0xC6,0xC6,0xD6,0xD6,0xFE,0x6C,0x6C,0x00},
+    {0xC6,0x6C,0x38,0x38,0x6C,0xC6,0xC6,0x00},{0x66,0x66,0x3C,0x18,0x18,0x18,0x3C,0x00},
+    {0xFE,0xC6,0x8C,0x18,0x32,0x66,0xFE,0x00},{0x3C,0x30,0x30,0x30,0x30,0x30,0x3C,0x00},
+    {0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00},{0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00},
+    {0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00},{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF},
+    {0x30,0x18,0x0C,0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x78,0x0C,0x7C,0xCC,0x76,0x00},
+    {0xE0,0x60,0x7C,0x66,0x66,0x66,0xDC,0x00},{0x00,0x00,0x7C,0xC6,0xC0,0xC6,0x7C,0x00},
+    {0x1C,0x0C,0x7C,0xCC,0xCC,0xCC,0x76,0x00},{0x00,0x00,0x7C,0xC6,0xFE,0xC0,0x7C,0x00},
+    {0x38,0x6C,0x60,0xF0,0x60,0x60,0xF0,0x00},{0x00,0x00,0x76,0xCC,0xCC,0x7C,0x0C,0xF8},
+    {0xE0,0x60,0x6C,0x76,0x66,0x66,0xE6,0x00},{0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00},
+    {0x06,0x00,0x06,0x06,0x06,0x66,0x66,0x3C},{0xE0,0x60,0x66,0x6C,0x78,0x6C,0xE6,0x00},
+    {0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00},{0x00,0x00,0xEC,0xFE,0xD6,0xD6,0xC6,0x00},
+    {0x00,0x00,0xF8,0xCC,0xCC,0xCC,0xCC,0x00},{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7C,0x00},
+    {0x00,0x00,0xDC,0x66,0x66,0x7C,0x60,0xF0},{0x00,0x00,0x76,0xCC,0xCC,0x7C,0x0C,0x1E},
+    {0x00,0x00,0xDC,0x76,0x60,0x60,0xF0,0x00},{0x00,0x00,0x7C,0xC0,0x7C,0x06,0xFC,0x00},
+    {0x30,0x30,0xFC,0x30,0x30,0x36,0x1C,0x00},{0x00,0x00,0xCC,0xCC,0xCC,0xCC,0x76,0x00},
+    {0x00,0x00,0xC6,0xC6,0x6C,0x38,0x10,0x00},{0x00,0x00,0xC6,0xD6,0xFE,0x6C,0x6C,0x00},
+    {0x00,0x00,0xC6,0x6C,0x38,0x6C,0xC6,0x00},{0x00,0x00,0xC6,0xC6,0x7E,0x06,0xFC,0x00},
+    {0x00,0x00,0xFE,0x8C,0x18,0x32,0xFE,0x00},{0x0E,0x18,0x18,0x70,0x18,0x18,0x0E,0x00},
+    {0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x00},{0x70,0x18,0x18,0x0E,0x18,0x18,0x70,0x00},
+    {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00},
+};
 
-static void fb_set_backbuffer_pixel(int x, int y, uint8_t color) {
-    if (x < 0 || x >= 640 || y < 0 || y >= 480) return;
-    back_buffer[y * 640 + x] = color & 0x0F;
+static const uint8_t *fb_get_font(char c) {
+    if (c >= 32 && c <= 126) return font[c - 32];
+    return font[0];
 }
 
-static void fb_clear_backbuffer(uint8_t color) {
-    for (int i = 0; i < 640 * 480; i++) {
-        back_buffer[i] = color & 0x0F;
+static uint8_t *fb_indexed_buffer(void) {
+    if (use_framebuffer) return fb_shadow;
+    return back_buffer;
+}
+
+static int fb_indexed_stride(void) {
+    if (use_framebuffer) return fb_width;
+    return 640;
+}
+
+static void bga_write(uint16_t index, uint16_t value) {
+    outw(BGA_IOPORT_INDEX, index);
+    outw(BGA_IOPORT_DATA, value);
+}
+
+static uint16_t bga_read(uint16_t index) {
+    outw(BGA_IOPORT_INDEX, index);
+    return inw(BGA_IOPORT_DATA);
+}
+
+static void fb_reset_dirty(void) {
+    dirty_valid = 0;
+    dirty_x1 = dirty_y1 = dirty_x2 = dirty_y2 = 0;
+}
+
+static void fb_mark_dirty(int x, int y, int w, int h) {
+    int x2;
+    int y2;
+
+    if (!use_framebuffer) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x >= fb_width || y >= fb_height || w <= 0 || h <= 0) return;
+    if (x + w > fb_width) w = fb_width - x;
+    if (y + h > fb_height) h = fb_height - y;
+    if (w <= 0 || h <= 0) return;
+
+    x2 = x + w - 1;
+    y2 = y + h - 1;
+
+    if (!dirty_valid) {
+        dirty_x1 = x;
+        dirty_y1 = y;
+        dirty_x2 = x2;
+        dirty_y2 = y2;
+        dirty_valid = 1;
+    } else {
+        if (x < dirty_x1) dirty_x1 = x;
+        if (y < dirty_y1) dirty_y1 = y;
+        if (x2 > dirty_x2) dirty_x2 = x2;
+        if (y2 > dirty_y2) dirty_y2 = y2;
     }
 }
 
-static void fb_flush_to_lfb(void) {
-    if (!use_framebuffer || !fb_addr) return;
-    
-    int max_y = fb_height < 480 ? fb_height : 480;
-    int max_x = fb_width < 640 ? fb_width : 640;
-    
-    for (int y = 0; y < max_y; y++) {
-        uint8_t *row = fb_addr + (y * fb_pitch);
-        for (int x = 0; x < max_x; x++) {
-            uint8_t color = back_buffer[y * 640 + x] & 0x0F;
-            
-            if (fb_bpp == 16) {
-                ((uint16_t*)row)[x] = vga_to_rgb565[color];
-            } else if (fb_bpp == 24) {
-                uint32_t rgb = vga_to_rgb888[color];
-                uint8_t *pixel = row + (x * 3);
-                pixel[0] = rgb & 0xFF;
-                pixel[1] = (rgb >> 8) & 0xFF;
-                pixel[2] = (rgb >> 16) & 0xFF;
-            } else if (fb_bpp == 32) {
-                ((uint32_t*)row)[x] = vga_to_rgb888[color];
+static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t address =
+        0x80000000U |
+        ((uint32_t)bus << 16) |
+        ((uint32_t)slot << 11) |
+        ((uint32_t)func << 8) |
+        (offset & 0xFC);
+    outl(PCI_CONFIG_ADDR, address);
+    return inl(PCI_CONFIG_DATA);
+}
+
+static uint32_t fb_find_lfb_phys(void) {
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            for (uint8_t func = 0; func < 8; func++) {
+                uint32_t id = pci_config_read32((uint8_t)bus, slot, func, 0x00);
+                if (id == 0xFFFFFFFFU) {
+                    if (func == 0) break;
+                    continue;
+                }
+
+                if ((id & 0xFFFFU) == QEMU_VGA_VENDOR_ID &&
+                    ((id >> 16) & 0xFFFFU) == QEMU_VGA_DEVICE_ID) {
+                    uint32_t bar0 = pci_config_read32((uint8_t)bus, slot, func, 0x10);
+                    if ((bar0 & 0xFFFFFFF0U) != 0) {
+                        SerialPutString("[FB] QEMU VGA PCI BAR0=0x");
+                        SerialPrintHex(bar0 & 0xFFFFFFF0U);
+                        SerialPutString("\r\n");
+                        return bar0 & 0xFFFFFFF0U;
+                    }
+                }
             }
         }
+    }
+
+    SerialPutString("[FB] VGA PCI BAR0 not found, trying legacy LFB\r\n");
+    return 0xE0000000U;
+}
+
+static int fb_try_bga_mode(uint16_t width, uint16_t height, uint16_t bpp) {
+    uint16_t id = bga_read(BGA_INDEX_ID);
+    uint32_t phys;
+    uint32_t shadow_size;
+
+    SerialPutString("[FB] BGA ID=0x");
+    SerialPrintHex(id);
+    SerialPutString("\r\n");
+
+    if (id < BGA_ID0 || id > BGA_ID5) {
+        SerialPutString("[FB] Bochs/QEMU BGA not present\r\n");
+        return 0;
+    }
+
+    phys = fb_find_lfb_phys();
+    if (phys < 0x100000U) {
+        SerialPutString("[FB] Invalid LFB address\r\n");
+        return 0;
+    }
+
+    bga_write(BGA_INDEX_ENABLE, BGA_DISABLED);
+    bga_write(BGA_INDEX_XRES, width);
+    bga_write(BGA_INDEX_YRES, height);
+    bga_write(BGA_INDEX_BPP, bpp);
+    bga_write(BGA_INDEX_ENABLE, BGA_ENABLED | BGA_LFB_ENABLED | BGA_NOCLEARMEM);
+
+    fb_width = bga_read(BGA_INDEX_XRES);
+    fb_height = bga_read(BGA_INDEX_YRES);
+    fb_bpp = (uint8_t)bga_read(BGA_INDEX_BPP);
+
+    if (fb_width != width || fb_height != height || fb_bpp != bpp) {
+        SerialPutString("[FB] BGA mode set mismatch\r\n");
+        return 0;
+    }
+
+    fb_addr = (uint8_t*)(uintptr_t)phys;
+    fb_pitch = fb_width * (fb_bpp / 8);
+    shadow_size = (uint32_t)fb_width * (uint32_t)fb_height;
+
+    if (fb_shadow) {
+        kfree(fb_shadow);
+        fb_shadow = 0;
+    }
+
+    fb_shadow = (uint8_t*)kmalloc(shadow_size);
+    if (!fb_shadow) {
+        SerialPutString("[FB] Shadow allocation failed\r\n");
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < shadow_size; i++) fb_shadow[i] = 0;
+
+    use_framebuffer = 1;
+    fb_reset_dirty();
+    fb_mark_dirty(0, 0, fb_width, fb_height);
+
+    SerialPutString("[FB] BGA framebuffer active: ");
+    SerialPrintDec(fb_width);
+    SerialPutString("x");
+    SerialPrintDec(fb_height);
+    SerialPutString("x");
+    SerialPrintDec(fb_bpp);
+    SerialPutString(" @ 0x");
+    SerialPrintHex((uint32_t)(uintptr_t)fb_addr);
+    SerialPutString("\r\n");
+
+    return 1;
+}
+
+static void fb_write_hw_pixel(int x, int y, uint8_t color) {
+    uint8_t *row;
+    if (!fb_addr) return;
+    if (x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+
+    row = fb_addr + (y * fb_pitch);
+    if (fb_bpp == 16) {
+        ((uint16_t*)row)[x] = vga_to_rgb565[color & 0x0F];
+    } else if (fb_bpp == 24) {
+        uint8_t *pixel = row + (x * 3);
+        uint32_t rgb = vga_to_rgb888[color & 0x0F];
+        pixel[0] = rgb & 0xFF;
+        pixel[1] = (rgb >> 8) & 0xFF;
+        pixel[2] = (rgb >> 16) & 0xFF;
+    } else {
+        ((uint32_t*)row)[x] = vga_to_rgb888[color & 0x0F];
     }
 }
 
 void FbInit(void *mb_info_ptr) {
-    if (!mb_info_ptr) {
-        SerialPutString("[FB] No multiboot info pointer\r\n");
-        VgaInit();
-        fb_width = 640;
-        fb_height = 480;
-        use_framebuffer = 0;
-        fb_clear_backbuffer(0);
+    (void)mb_info_ptr;
+
+    use_framebuffer = 0;
+    fb_addr = 0;
+    fb_pitch = 0;
+    fb_bpp = 0;
+    fb_width = 640;
+    fb_height = 480;
+    fb_reset_dirty();
+
+    if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32)) {
+        FbSwapBuffers();
         return;
     }
 
-    uint32_t *mb = (uint32_t*)mb_info_ptr;
-    uint32_t flags = mb[0];
-    
-    SerialPutString("[FB] Multiboot flags: 0x");
-    SerialPrintHex(flags);
-    SerialPutString("\r\n");
-    
-    // Check for VBE info (bit 11) using the Multiboot v1 info layout.
-    // Offsets here are fixed byte offsets, not mb[] indices.
-    if (flags & (1 << 11)) {
-        uint8_t *bytes = (uint8_t*)mb_info_ptr;
-        uint32_t vbe_ctrl_info = *(uint32_t*)(bytes + 72);
-        uint32_t vbe_mode_info_ptr = *(uint32_t*)(bytes + 76);
-        uint16_t vbe_mode = *(uint16_t*)(bytes + 80);
-        uint16_t vbe_interface_seg = *(uint16_t*)(bytes + 82);
-        uint16_t vbe_interface_off = *(uint16_t*)(bytes + 84);
-        uint16_t vbe_interface_len = *(uint16_t*)(bytes + 86);
-        
-        SerialPutString("[VBE] Control info: 0x");
-        SerialPrintHex(vbe_ctrl_info);
-        SerialPutString("\r\n");
-        SerialPutString("[VBE] Mode info: 0x");
-        SerialPrintHex(vbe_mode_info_ptr);
-        SerialPutString(" mode=0x");
-        SerialPrintHex(vbe_mode);
-        SerialPutString("\r\n");
-        SerialPutString("[VBE] Interface: 0x");
-        SerialPrintHex(vbe_interface_seg);
-        SerialPutString(":0x");
-        SerialPrintHex(vbe_interface_off);
-        SerialPutString(" (len=");
-        SerialPrintDec(vbe_interface_len);
-        SerialPutString(")\r\n");
-
-        if (vbe_mode_info_ptr != 0) {
-            VBEModeInfo *mode_info = (VBEModeInfo*)(uintptr_t)vbe_mode_info_ptr;
-
-            SerialPutString("[VBE] attrs=0x");
-            SerialPrintHex(mode_info->mode_attributes);
-            SerialPutString(" phys=0x");
-            SerialPrintHex(mode_info->phys_base_ptr);
-            SerialPutString(" pitch=");
-            SerialPrintDec(mode_info->bytes_per_scanline);
-            SerialPutString(" w=");
-            SerialPrintDec(mode_info->width);
-            SerialPutString(" h=");
-            SerialPrintDec(mode_info->height);
-            SerialPutString(" bpp=");
-            SerialPrintDec(mode_info->bpp);
-            SerialPutString(" mem=");
-            SerialPrintDec(mode_info->memory_model);
-            SerialPutString("\r\n");
-
-            if ((mode_info->mode_attributes & (1 << 4)) &&
-                (mode_info->mode_attributes & (1 << 7)) &&
-                mode_info->phys_base_ptr >= 0x100000 &&
-                mode_info->bytes_per_scanline != 0 &&
-                mode_info->width >= 640 &&
-                mode_info->height >= 480 &&
-                (mode_info->bpp == 16 || mode_info->bpp == 24 || mode_info->bpp == 32)) {
-                fb_addr = (uint8_t*)(uintptr_t)mode_info->phys_base_ptr;
-                fb_addr_hi = 0;
-                fb_pitch = mode_info->bytes_per_scanline;
-                fb_width = mode_info->width;
-                fb_height = mode_info->height;
-                fb_bpp = mode_info->bpp;
-                fb_type = 1;
-                use_framebuffer = 1;
-                SerialPutString("[FB] VBE linear framebuffer active!\r\n");
-                fb_clear_backbuffer(0);
-                fb_flush_to_lfb();
-                return;
-            }
-        }
-    }
-    
-    // Check if framebuffer is directly available (bit 12)
-    if (flags & (1 << 12)) {
-        uint8_t *bytes = (uint8_t*)mb_info_ptr;
-        uint32_t fb_addr_low = *(uint32_t*)(bytes + 88);
-        uint32_t fb_addr_high = *(uint32_t*)(bytes + 92);
-        uint32_t fb_pitch_val = *(uint32_t*)(bytes + 96);
-        uint32_t fb_width_val = *(uint32_t*)(bytes + 100);
-        uint32_t fb_height_val = *(uint32_t*)(bytes + 104);
-        uint8_t fb_bpp_val = bytes[108];
-        uint8_t fb_type_val = bytes[109];
-        
-        SerialPutString("[FB] addr=0x");
-        SerialPrintHex(fb_addr_low);
-        SerialPutString(" hi=0x");
-        SerialPrintHex(fb_addr_high);
-        SerialPutString(" w=");
-        SerialPrintDec(fb_width_val);
-        SerialPutString(" h=");
-        SerialPrintDec(fb_height_val);
-        SerialPutString(" bpp=");
-        SerialPrintDec(fb_bpp_val);
-        SerialPutString(" type=");
-        SerialPrintDec(fb_type_val);
-        SerialPutString("\r\n");
-        
-        if (fb_addr_high == 0 &&
-            fb_addr_low >= 0x100000 &&
-            fb_width_val >= 640 &&
-            fb_height_val >= 480 &&
-            fb_pitch_val != 0 &&
-            fb_type_val == 1 &&
-            (fb_bpp_val == 16 || fb_bpp_val == 24 || fb_bpp_val == 32)) {
-            fb_addr = (uint8_t*)(uintptr_t)fb_addr_low;
-            fb_addr_hi = fb_addr_high;
-            fb_pitch = fb_pitch_val;
-            fb_width = fb_width_val;
-            fb_height = fb_height_val;
-            fb_bpp = fb_bpp_val;
-            fb_type = fb_type_val;
-            use_framebuffer = 1;
-            SerialPutString("[FB] Multiboot framebuffer active!\r\n");
-            fb_clear_backbuffer(0);
-            fb_flush_to_lfb();
-            return;
-        }
-    }
-    
-    // The ONLY reliable way: use the multiboot header to force graphics
-    // If we got here, GRUB didn't give us graphics mode
-    // We need to fix the multiboot header and GRUB config
-    
-    SerialPutString("[FB] No graphics framebuffer from GRUB\r\n");
-    SerialPutString("[FB] Make sure GRUB config has:\r\n");
-    SerialPutString("[FB]   terminal_output gfxterm\r\n");
-    SerialPutString("[FB]   set gfxpayload=keep\r\n");
-    SerialPutString("[FB] And boot.asm has mode_type=1\r\n");
     SerialPutString("[FB] Falling back to VGA\r\n");
-    
     VgaInit();
-    fb_width = 640;
-    fb_height = 480;
-    use_framebuffer = 0;
-    fb_bpp = 0;
-    fb_pitch = 0;
-    fb_type = 0;
-    fb_addr = 0;
-    fb_addr_hi = 0;
-    fb_clear_backbuffer(0);
 }
 
 int FbIsFramebuffer(void) { return use_framebuffer; }
 int FbGetWidth(void) { return fb_width; }
 int FbGetHeight(void) { return fb_height; }
 
+uint8_t FbGetPixel(int x, int y) {
+    uint8_t *buf = fb_indexed_buffer();
+    int stride = fb_indexed_stride();
+    int width = use_framebuffer ? fb_width : 640;
+    int height = use_framebuffer ? fb_height : 480;
+    if (!buf || x < 0 || x >= width || y < 0 || y >= height) return 0;
+    return buf[y * stride + x];
+}
+
 void FbClearScreen(uint8_t color) {
     if (use_framebuffer) {
-        fb_clear_backbuffer(color);
+        uint32_t count = (uint32_t)fb_width * (uint32_t)fb_height;
+        if (!fb_shadow) return;
+        for (uint32_t i = 0; i < count; i++) fb_shadow[i] = color & 0x0F;
+        fb_mark_dirty(0, 0, fb_width, fb_height);
     } else {
         VgaClearScreen(color);
     }
@@ -268,7 +337,9 @@ void FbClearScreen(uint8_t color) {
 
 void FbPutPixel(int x, int y, uint8_t color) {
     if (use_framebuffer) {
-        fb_set_backbuffer_pixel(x, y, color);
+        if (!fb_shadow || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+        fb_shadow[y * fb_width + x] = color & 0x0F;
+        fb_mark_dirty(x, y, 1, 1);
     } else {
         VgaPutPixel(x, y, color);
     }
@@ -276,14 +347,18 @@ void FbPutPixel(int x, int y, uint8_t color) {
 
 void FbFillRect(int x, int y, int w, int h, uint8_t color) {
     if (use_framebuffer) {
+        if (!fb_shadow) return;
         if (x < 0) { w += x; x = 0; }
         if (y < 0) { h += y; y = 0; }
         if (x + w > fb_width) w = fb_width - x;
         if (y + h > fb_height) h = fb_height - y;
         if (w <= 0 || h <= 0) return;
-        for (int row = y; row < y + h; row++)
-            for (int col = x; col < x + w; col++)
-                fb_set_backbuffer_pixel(col, row, color);
+
+        for (int row = y; row < y + h; row++) {
+            uint8_t *dst = fb_shadow + (row * fb_width) + x;
+            for (int col = 0; col < w; col++) dst[col] = color & 0x0F;
+        }
+        fb_mark_dirty(x, y, w, h);
     } else {
         VgaFillRect(x, y, w, h, color);
     }
@@ -297,17 +372,91 @@ void FbDrawRect(int x, int y, int w, int h, uint8_t color) {
 }
 
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) {
-    VgaDrawChar(x, y, c, fg, bg);
+    if (use_framebuffer) {
+        const uint8_t *glyph = fb_get_font(c);
+        for (int row = 0; row < 8; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < 8; col++) {
+                FbPutPixel(x + col, y + row, (bits & (0x80 >> col)) ? fg : bg);
+            }
+        }
+    } else {
+        VgaDrawChar(x, y, c, fg, bg);
+    }
 }
 
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
-    VgaDrawString(x, y, str, fg, bg);
+    if (use_framebuffer) {
+        int cx = x;
+        int cy = y;
+        while (*str) {
+            if (*str == '\n') {
+                cx = x;
+                cy += 10;
+            } else {
+                FbDrawChar(cx, cy, *str, fg, bg);
+                cx += 8;
+                if (cx + 8 > fb_width) {
+                    cx = x;
+                    cy += 10;
+                }
+            }
+            str++;
+            if (cy + 8 > fb_height) break;
+        }
+    } else {
+        VgaDrawString(x, y, str, fg, bg);
+    }
 }
 
 void FbSwapBuffers(void) {
     if (use_framebuffer) {
-        fb_flush_to_lfb();
+        if (!fb_shadow || !dirty_valid) return;
+
+        for (int y = dirty_y1; y <= dirty_y2; y++) {
+            for (int x = dirty_x1; x <= dirty_x2; x++) {
+                fb_write_hw_pixel(x, y, fb_shadow[y * fb_width + x]);
+            }
+        }
+
+        fb_reset_dirty();
     } else {
         VgaSwapBuffers();
     }
+}
+
+void FbCapture(uint8_t *dst, int dst_stride) {
+    uint8_t *src = fb_indexed_buffer();
+    int stride = fb_indexed_stride();
+    int width = use_framebuffer ? fb_width : 640;
+    int height = use_framebuffer ? fb_height : 480;
+
+    if (!dst || !src || dst_stride < width) return;
+
+    for (int y = 0; y < height; y++) {
+        memcpy(dst + (y * dst_stride), src + (y * stride), (uint32_t)width);
+    }
+}
+
+void FbBlitIndexed(int x, int y, int w, int h, const uint8_t *src, int src_stride) {
+    uint8_t *dst = fb_indexed_buffer();
+    int stride = fb_indexed_stride();
+    int width = use_framebuffer ? fb_width : 640;
+    int height = use_framebuffer ? fb_height : 480;
+
+    if (!dst || !src) return;
+    if (x < 0) { src -= x; w += x; x = 0; }
+    if (y < 0) { src -= y * src_stride; h += y; y = 0; }
+    if (x >= width || y >= height || w <= 0 || h <= 0) return;
+    if (x + w > width) w = width - x;
+    if (y + h > height) h = height - y;
+    if (w <= 0 || h <= 0) return;
+
+    for (int row = 0; row < h; row++) {
+        memcpy(dst + ((y + row) * stride) + x,
+               src + (row * src_stride),
+               (uint32_t)w);
+    }
+
+    if (use_framebuffer) fb_mark_dirty(x, y, w, h);
 }

@@ -48,5 +48,7 @@ void Win32kHandleMouseDown(int x, int y, int button);
 void Win32kHandleMouseUp(int x, int y, int button);
 void Win32kHandleMouseMove(int x, int y);
 void Win32kRedrawAll(void);
+void Win32kRefreshCursor(void);
+int Win32kIsDragging(void);
 
 #endif

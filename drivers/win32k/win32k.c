@@ -32,6 +32,9 @@ static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
 static int drag_offset_x = 0;
 static int drag_offset_y = 0;
+static uint8_t *drag_background = 0;
+static int drag_bg_width = 0;
+static int drag_bg_height = 0;
 
 static int client_top(const WINDOW *win) {
     return (win->style & WS_CAPTION) ? (FRAME_THICKNESS + TITLEBAR_HEIGHT + EDGE_THICKNESS) : FRAME_THICKNESS;
@@ -208,6 +211,90 @@ static HANDLE find_window_at(int x, int y) {
     return INVALID_HANDLE;
 }
 
+static int rects_intersect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2) {
+    if (x1 + w1 <= x2) return 0;
+    if (x2 + w2 <= x1) return 0;
+    if (y1 + h1 <= y2) return 0;
+    if (y2 + h2 <= y1) return 0;
+    return 1;
+}
+
+static void render_scene(HANDLE skip_window) {
+    FbClearScreen(DESKTOP_COLOR);
+
+    for (int i = 0; i < window_count; i++) {
+        HANDLE hwnd = window_list[i];
+        WINDOW *win;
+        if (hwnd == skip_window) continue;
+
+        win = (WINDOW*)ObReferenceObject(hwnd);
+        if (win && win->visible) {
+            draw_window_frame(win);
+            if (win->wndProc) win->wndProc(hwnd, WM_PAINT, 0, 0);
+        }
+        if (win) ObDereferenceObject(hwnd);
+    }
+}
+
+static void ensure_drag_background(int width, int height) {
+    int size = width * height;
+    if (drag_background && drag_bg_width == width && drag_bg_height == height) return;
+    if (drag_background) {
+        kfree(drag_background);
+        drag_background = 0;
+    }
+    drag_background = (uint8_t*)kmalloc((uint32_t)size);
+    if (drag_background) {
+        drag_bg_width = width;
+        drag_bg_height = height;
+    } else {
+        drag_bg_width = 0;
+        drag_bg_height = 0;
+    }
+}
+
+static void begin_fast_drag(HANDLE hwnd) {
+    int width = FbGetWidth();
+    int height = FbGetHeight();
+
+    if (width <= 0) width = 640;
+    if (height <= 0) height = 480;
+
+    ensure_drag_background(width, height);
+    if (!drag_background) return;
+
+    render_scene(hwnd);
+    FbCapture(drag_background, width);
+    FbBlitIndexed(0, 0, width, height, drag_background, width);
+}
+
+static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
+    int width = FbGetWidth();
+    int height = FbGetHeight();
+
+    if (!drag_background || !win) {
+        Win32kRedrawAll();
+        return;
+    }
+
+    if (width <= 0) width = 640;
+    if (height <= 0) height = 480;
+
+    FbBlitIndexed(old_x, old_y, win->width, win->height,
+                  drag_background + (old_y * drag_bg_width) + old_x, drag_bg_width);
+
+    if (!rects_intersect(old_x, old_y, win->width, win->height,
+                         win->x, win->y, win->width, win->height)) {
+        FbBlitIndexed(win->x, win->y, win->width, win->height,
+                      drag_background + (win->y * drag_bg_width) + win->x, drag_bg_width);
+    }
+
+    draw_window_frame(win);
+    if (win->wndProc) win->wndProc(drag_window, WM_PAINT, 0, 0);
+    MouseDrawCursor();
+    FbSwapBuffers();
+}
+
 void Win32kInit(void *mb_info) {
     FbInit(mb_info);
     FbClearScreen(DESKTOP_COLOR);
@@ -347,6 +434,7 @@ void Win32kHandleMouseDown(int x, int y, int button) {
         drag_window = hwnd;
         drag_offset_x = x - win->x;
         drag_offset_y = y - win->y;
+        begin_fast_drag(hwnd);
     }
     
     ObDereferenceObject(hwnd);
@@ -370,6 +458,9 @@ void Win32kHandleMouseMove(int x, int y) {
     WINDOW *win = (WINDOW*)ObReferenceObject(drag_window);
     if (!win) { dragging = 0; return; }
     
+    {
+        int old_x = win->x;
+        int old_y = win->y;
     int new_x = x - drag_offset_x;
     int new_y = y - drag_offset_y;
     int screen_w = FbGetWidth();
@@ -387,10 +478,22 @@ void Win32kHandleMouseMove(int x, int y) {
     if (new_x != win->x || new_y != win->y) {
         win->x = new_x;
         win->y = new_y;
-        Win32kRedrawAll();
+        MouseEraseCursor();
+        fast_drag_present(win, old_x, old_y);
+    }
     }
     
     ObDereferenceObject(drag_window);
+}
+
+void Win32kRefreshCursor(void) {
+    MouseEraseCursor();
+    MouseDrawCursor();
+    FbSwapBuffers();
+}
+
+int Win32kIsDragging(void) {
+    return dragging;
 }
 
 void Win32kRedrawAll(void) {

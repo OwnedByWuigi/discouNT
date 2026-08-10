@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "mouse.h"
 #include "vga.h"
+#include "fb.h"
 #include "portio.h"
 #include "serial.h"
 
@@ -143,12 +144,18 @@ void MouseHandleInterrupt(void) {
             else if (y_move < 0) y_move = y_move * 2;
             
             mouse.x += x_move;
-            mouse.y += y_move;
+    mouse.y += y_move;
             
-            if (mouse.x < 0) mouse.x = 0;
-            if (mouse.x >= 628) mouse.x = 628;  // Leave room for cursor
-            if (mouse.y < 0) mouse.y = 0;
-            if (mouse.y >= 462) mouse.y = 462;
+            {
+                int max_x = FbGetWidth() - 12;
+                int max_y = FbGetHeight() - 18;
+                if (max_x < 0) max_x = 0;
+                if (max_y < 0) max_y = 0;
+                if (mouse.x < 0) mouse.x = 0;
+                if (mouse.x > max_x) mouse.x = max_x;
+                if (mouse.y < 0) mouse.y = 0;
+                if (mouse.y > max_y) mouse.y = max_y;
+            }
             
             mouse_cycle = 0;
             break;
@@ -166,8 +173,8 @@ void MouseEraseCursor(void) {
             if (cursor[row][col] != 0) {
                 int px = x + col;
                 int py = y + row;
-                if (px >= 0 && px < 640 && py >= 0 && py < 480) {
-                    back_buffer[py * 640 + px] = cursor_bg[row][col];
+                if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
+                    FbPutPixel(px, py, cursor_bg[row][col]);
                 }
             }
         }
@@ -184,8 +191,8 @@ void MouseDrawCursor(void) {
             if (cursor[row][col] != 0) {
                 int px = x + col;
                 int py = y + row;
-                if (px >= 0 && px < 640 && py >= 0 && py < 480) {
-                    cursor_bg[row][col] = back_buffer[py * 640 + px];
+                if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
+                    cursor_bg[row][col] = FbGetPixel(px, py);
                 }
             }
         }
@@ -197,11 +204,11 @@ void MouseDrawCursor(void) {
         for (int col = 0; col < 11; col++) {
             int px = x + col;
             int py = y + row;
-            if (px >= 0 && px < 640 && py >= 0 && py < 480) {
+            if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
                 if (cursor[row][col] == 1) {
-                    back_buffer[py * 640 + px] = COLOR_WHITE;
+                    FbPutPixel(px, py, COLOR_WHITE);
                 } else if (cursor[row][col] == 2) {
-                    back_buffer[py * 640 + px] = COLOR_BLACK;
+                    FbPutPixel(px, py, COLOR_BLACK);
                 }
             }
         }

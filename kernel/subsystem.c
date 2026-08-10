@@ -203,7 +203,8 @@ void SubsystemLaunchSmss(void) {
                     Win32kHandleMouseMove(mouse_state.x, mouse_state.y);
                     last_x = mouse_state.x;
                     last_y = mouse_state.y;
-                    Win32kRedrawAll();
+                    if (Win32kIsDragging()) Win32kRedrawAll();
+                    else Win32kRefreshCursor();
                 }
 
                 if ((mouse_state.buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT)) {

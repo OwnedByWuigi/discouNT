@@ -33,5 +33,8 @@ void FbSwapBuffers(void);
 int FbIsFramebuffer(void);
 int FbGetWidth(void);
 int FbGetHeight(void);
+uint8_t FbGetPixel(int x, int y);
+void FbCapture(uint8_t *dst, int dst_stride);
+void FbBlitIndexed(int x, int y, int w, int h, const uint8_t *src, int src_stride);
 
 #endif
