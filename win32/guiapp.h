@@ -14,6 +14,10 @@ typedef struct _GUI_RECT {
 #define GUI_WM_DESTROY  3
 #define GUI_WM_CLOSE    4
 
+#define GUI_MOUSE_MOVE      1
+#define GUI_MOUSE_LDOWN     2
+#define GUI_MOUSE_LUP       3
+
 #define GUI_WS_VISIBLE           0x00000001
 #define GUI_WS_CAPTION           0x00000002
 #define GUI_WS_SYSMENU           0x00000004
@@ -34,6 +38,9 @@ typedef struct _GUI_APP_API {
     int (*ReadSector)(uint32_t lba, uint8_t *buffer);
     int (*ExecuteImage)(const char *path);
     uint32_t (*GetProcessId)(void);
+    int (*GetScreenWidth)(void);
+    int (*GetScreenHeight)(void);
+    int (*SetScreenResolution)(int width, int height);
     void (*Reboot)(void);
     void (*Shutdown)(void);
 } GUI_APP_API;

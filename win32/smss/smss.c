@@ -16,6 +16,7 @@
 typedef int (*CmdAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*CmdAppCreateMainWindowFn)(void);
 typedef void (*CmdAppHandleKeyFn)(uint8_t scancode, char ascii, uint8_t pressed);
+typedef void (*CmdAppHandleMouseFn)(int x, int y, uint8_t buttons, uint8_t event_type);
 typedef int (*CmdAppShouldExitFn)(void);
 typedef void (*CmdAppResetExitFn)(void);
 
@@ -24,6 +25,7 @@ typedef struct _GUI_APP_INSTANCE {
     void *image;
     GUI_HANDLE window;
     CmdAppHandleKeyFn handle_key;
+    CmdAppHandleMouseFn handle_mouse;
     CmdAppShouldExitFn should_exit;
     CmdAppResetExitFn reset_exit;
 } GUI_APP_INSTANCE;
@@ -65,6 +67,40 @@ static void smss_draw_rect(int x, int y, int w, int h, uint8_t color) { FbDrawRe
 static void smss_draw_string(int x, int y, const char *str, uint8_t fg, uint8_t bg) { FbDrawString(x, y, str, fg, bg); }
 static int smss_read_sector(uint32_t lba, uint8_t *buffer) { return CdfsReadSector(lba, buffer); }
 static uint32_t smss_get_process_id(void) { return g_current_gui_pid; }
+static int smss_get_screen_width(void) { return FbGetWidth(); }
+static int smss_get_screen_height(void) { return FbGetHeight(); }
+
+static int smss_set_screen_resolution(int width, int height) {
+    if (!FbSetResolution(width, height, 32)) return 0;
+
+    for (int i = 0; i < g_gui_app_count; i++) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(g_gui_apps[i].window);
+        int screen_w;
+        int screen_h;
+        if (!win) continue;
+
+        screen_w = FbGetWidth();
+        screen_h = FbGetHeight();
+        if (screen_w <= 0) screen_w = 640;
+        if (screen_h <= 0) screen_h = 480;
+
+        if (win->maximized) {
+            win->x = 0;
+            win->y = 0;
+            win->width = screen_w;
+            win->height = screen_h;
+        } else {
+            if (win->x + win->width > screen_w) win->x = screen_w - win->width;
+            if (win->y + win->height > screen_h) win->y = screen_h - win->height;
+            if (win->x < 0) win->x = 0;
+            if (win->y < 0) win->y = 0;
+        }
+        ObDereferenceObject(g_gui_apps[i].window);
+    }
+
+    Win32kRedrawAll();
+    return 1;
+}
 
 static void smss_reboot(void) {
     uint8_t status;
@@ -92,6 +128,7 @@ static int smss_spawn_gui_instance(const char *path) {
     app.image = 0;
     app.window = 0xFFFFFFFFU;
     app.handle_key = 0;
+    app.handle_mouse = 0;
     app.should_exit = 0;
     app.reset_exit = 0;
 
@@ -208,6 +245,9 @@ static const GUI_APP_API gui_api = {
     smss_read_sector,
     smss_execute_image,
     smss_get_process_id,
+    smss_get_screen_width,
+    smss_get_screen_height,
+    smss_set_screen_resolution,
     smss_reboot,
     smss_shutdown
 };
@@ -242,6 +282,7 @@ static int smss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     init_fn = (CmdAppInitFn)PeGetProcAddress(app->image, "CmdAppInit");
     create_window_fn = (CmdAppCreateMainWindowFn)PeGetProcAddress(app->image, "CmdAppCreateMainWindow");
     app->handle_key = (CmdAppHandleKeyFn)PeGetProcAddress(app->image, "CmdAppHandleKey");
+    app->handle_mouse = (CmdAppHandleMouseFn)PeGetProcAddress(app->image, "CmdAppHandleMouse");
     app->should_exit = (CmdAppShouldExitFn)PeGetProcAddress(app->image, "CmdAppShouldExit");
     app->reset_exit = (CmdAppResetExitFn)PeGetProcAddress(app->image, "CmdAppResetExit");
 
@@ -371,9 +412,59 @@ void SmssSessionRun(void *mb_info) {
 
                 if ((mouse_state.buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT)) {
                     Win32kHandleMouseDown(mouse_state.x, mouse_state.y, 1);
+                    active_hwnd = Win32kGetActiveWindow();
+                    for (int i = 0; i < g_gui_app_count; i++) {
+                        if (g_gui_apps[i].window == active_hwnd && g_gui_apps[i].handle_mouse) {
+                            WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
+                            if (win) {
+                                int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                                int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                                int client_right = win->x + win->width - 3;
+                                int client_bottom = win->y + win->height - 3;
+
+                                if (!win->minimized &&
+                                    mouse_state.x >= client_left && mouse_state.x < client_right &&
+                                    mouse_state.y >= client_top && mouse_state.y < client_bottom) {
+                                    g_current_gui_pid = g_gui_apps[i].pid;
+                                    g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
+                                                               mouse_state.y - client_top,
+                                                               mouse_state.buttons,
+                                                               GUI_MOUSE_LDOWN);
+                                    g_current_gui_pid = 0;
+                                }
+                                ObDereferenceObject(active_hwnd);
+                            }
+                            break;
+                        }
+                    }
                 }
                 if (!(mouse_state.buttons & MOUSE_LEFT) && (last_buttons & MOUSE_LEFT)) {
                     Win32kHandleMouseUp(mouse_state.x, mouse_state.y, 1);
+                    active_hwnd = Win32kGetActiveWindow();
+                    for (int i = 0; i < g_gui_app_count; i++) {
+                        if (g_gui_apps[i].window == active_hwnd && g_gui_apps[i].handle_mouse) {
+                            WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
+                            if (win) {
+                                int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                                int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                                int client_right = win->x + win->width - 3;
+                                int client_bottom = win->y + win->height - 3;
+
+                                if (!win->minimized &&
+                                    mouse_state.x >= client_left && mouse_state.x < client_right &&
+                                    mouse_state.y >= client_top && mouse_state.y < client_bottom) {
+                                    g_current_gui_pid = g_gui_apps[i].pid;
+                                    g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
+                                                               mouse_state.y - client_top,
+                                                               mouse_state.buttons,
+                                                               GUI_MOUSE_LUP);
+                                    g_current_gui_pid = 0;
+                                }
+                                ObDereferenceObject(active_hwnd);
+                            }
+                            break;
+                        }
+                    }
                     Win32kRedrawAll();
                 }
 

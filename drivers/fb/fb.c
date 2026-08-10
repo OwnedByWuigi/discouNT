@@ -315,6 +315,16 @@ int FbIsFramebuffer(void) { return use_framebuffer; }
 int FbGetWidth(void) { return fb_width; }
 int FbGetHeight(void) { return fb_height; }
 
+int FbSetResolution(int width, int height, int bpp) {
+    if (!use_framebuffer) return 0;
+    if (width < 320 || height < 200) return 0;
+    if (bpp != 16 && bpp != 24 && bpp != 32) return 0;
+    if (!fb_try_bga_mode((uint16_t)width, (uint16_t)height, (uint16_t)bpp)) return 0;
+    FbClearScreen(COLOR_BLUE);
+    FbSwapBuffers();
+    return 1;
+}
+
 uint8_t FbGetPixel(int x, int y) {
     uint8_t *buf = fb_indexed_buffer();
     int stride = fb_indexed_stride();

@@ -68,6 +68,8 @@ DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 APP_SRC_FILES := $(wildcard apps/*.c) $(wildcard apps/*/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
 SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
+CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
+DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
 
 .PHONY: all clean iso kernel dlls apps run
 
@@ -77,7 +79,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS)
 
-apps: $(BUILT_APP_FILES) $(SMSS_APP)
+apps: $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL)
 
 $(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
@@ -127,6 +129,20 @@ $(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c
 		-o $@ \
 		$< kernel/util.c
 
+$(CONTROL_APP): apps/control/control.c
+	@mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+		-Wl,-e,main \
+		-o $@ \
+		$< kernel/util.c
+
+$(DESK_CPL): apps/control/desk/desk.c
+	@mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+		-Wl,-e,main \
+		-o $@ \
+		$< kernel/util.c
+
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
@@ -134,7 +150,7 @@ $(SMSS_APP): win32/smss/smss_app.c
 		-o $@ \
 		$< kernel/util.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(DESK_CPL)
 	@mkdir -p $(SYSTEM32_DIR)
 	@rm -rf $(ISO_DIR)/APPS
 	@for dll in $(DLL_OUTPUTS); do \
@@ -145,6 +161,12 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP)
 	fi
 	@if [ -f "$(BUILD_DIR)/apps/cmd/cmd.exe" ]; then \
 		cp "$(BUILD_DIR)/apps/cmd/cmd.exe" "$(SYSTEM32_DIR)/CMD.EXE"; \
+	fi
+	@if [ -f "$(CONTROL_APP)" ]; then \
+		cp "$(CONTROL_APP)" "$(SYSTEM32_DIR)/CONTROL.EXE"; \
+	fi
+	@if [ -f "$(DESK_CPL)" ]; then \
+		cp "$(DESK_CPL)" "$(SYSTEM32_DIR)/DESK.CPL"; \
 	fi
 	@touch $@
 
