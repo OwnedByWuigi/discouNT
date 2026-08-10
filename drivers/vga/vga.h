@@ -31,6 +31,6 @@ void VgaDrawRect(int x, int y, int w, int h, uint8_t color);
 void VgaDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg);
 void VgaDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg);
 void VgaSwapBuffers(void);
-// Add at the end of vga.h, before #endif
+
 extern uint8_t back_buffer[];
 #endif

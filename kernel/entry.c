@@ -113,7 +113,7 @@ static void cmd_clear(void) {
 }
 
 static void cmd_info(void) {
-    HalPutString("\nNT-like OS v0.9\n", 0x1F);
+    HalPutString("\ndiscouNT\n", 0x1F);
     HalPutString("===============\n", 0x1F);
     HalPutString("Kernel: NT-like\n", 0x0F);
     HalPutString("Filesystem: CDFS (ISO 9660)\n", 0x0F);
@@ -325,7 +325,7 @@ static void cmd_gui(void) {
     // Reset HAL state
     HalInitialize();
     HalClearScreen(0x1F);
-    HalPutString("NT-like OS v0.9\n", 0x1F);
+    HalPutString("discouNT\n", 0x1F);
     HalPutString("===============\n", 0x1F);
     HalPutString("Returned from GUI.\n\n", 0x0A);
 }
@@ -690,12 +690,12 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     
     SerialInit();
     SerialPutString("\r\n========================================\r\n");
-    SerialPutString("  NT-like OS v0.9\r\n");
+    SerialPutString("  discouNT\r\n");
     SerialPutString("========================================\r\n\r\n");
     
     HalInitialize();
     HalClearScreen(0x1F);
-    HalPutString("NT-like OS v0.9\n", 0x1F);
+    HalPutString("discouNT\n", 0x1F);
     HalPutString("===============\n", 0x1F);
     HalPutString("Type 'help' for commands\n\n", 0x0F);
     
