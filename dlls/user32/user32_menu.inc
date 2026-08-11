@@ -71,6 +71,10 @@ static U32_RUNTIME_HEADER *u32_get_runtime_header(void *image_base) {
 }
 
 static const uint8_t *u32_get_embedded_menu_blob(HINSTANCE hInstance, uint32_t *out_size) {
+    return u32_get_embedded_blob(hInstance, ".disres", out_size);
+}
+
+static const uint8_t *u32_get_embedded_blob(HINSTANCE hInstance, const char *section_name, uint32_t *out_size) {
     U32_RUNTIME_HEADER *rt;
     U32_ELF32_HEADER *elf;
     U32_ELF32_SHDR *sh;
@@ -90,7 +94,7 @@ static const uint8_t *u32_get_embedded_menu_blob(HINSTANCE hInstance, uint32_t *
         const char *name;
         if (sh[i].offset >= rt->source_size) continue;
         name = shstrtab + sh[i].name;
-        if (name && u32_menu_strcmp_a(name, ".disres") == 0) {
+        if (name && section_name && u32_menu_strcmp_a(name, section_name) == 0) {
             if (sh[i].offset + sh[i].size > rt->source_size) return 0;
             if (out_size) *out_size = sh[i].size;
             return (const uint8_t*)rt->source_image + sh[i].offset;

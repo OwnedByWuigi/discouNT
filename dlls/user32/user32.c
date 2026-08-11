@@ -29,6 +29,8 @@ extern HDC GdiCreateScreenDC(HWND hwnd);
 extern HDC GdiCreateScreenDCEx(HWND hwnd, int origin_x, int origin_y, int width, int height);
 extern void GdiDestroyScreenDC(HDC hdc);
 
+static const uint8_t *u32_get_embedded_blob(HINSTANCE hInstance, const char *section_name, uint32_t *out_size);
+
 #define MAX_U32_CLASSES 64
 #define MAX_U32_WINDOWS 256
 #define MAX_U32_TIMERS 64

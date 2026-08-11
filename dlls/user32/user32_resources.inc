@@ -45,7 +45,13 @@ BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent) {
 
 HICON LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
     HICON icon = 0;
+    uint32_t icon_size = 0;
+    const uint8_t *icon_data = u32_get_embedded_blob(hInstance, ".disicon", &icon_size);
     if (u32_is_int_resource(lpIconName)) {
+        if (icon_data && icon_size) {
+            icon = u32_create_icon_from_ico_buffer(icon_data, icon_size, 32, 32);
+            if (icon) return icon;
+        }
         icon = u32_try_load_module_sidecar_icon(hInstance, 32, 32);
         if (icon) return icon;
         return u32_alloc_icon(u32_resource_id(lpIconName), 32, 32);
@@ -64,6 +70,14 @@ HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT
     width = cx > 0 ? cx : 32;
     height = cy > 0 ? cy : 32;
     if (u32_is_int_resource(name)) {
+        {
+            uint32_t icon_size = 0;
+            const uint8_t *icon_data = u32_get_embedded_blob(hinst, ".disicon", &icon_size);
+            if (icon_data && icon_size) {
+                HANDLE icon = (HANDLE)u32_create_icon_from_ico_buffer(icon_data, icon_size, width, height);
+                if (icon) return icon;
+            }
+        }
         HANDLE icon = (HANDLE)u32_try_load_module_sidecar_icon(hinst, width, height);
         if (icon) return icon;
         return (HANDLE)u32_alloc_icon(u32_resource_id(name), width, height);
