@@ -12,6 +12,8 @@
 #include "object.h"
 
 void BootSerialInit(void);
+void BootSerialSetDebugEnabled(int enabled);
+int BootSerialIsDebugEnabled(void);
 void BootSerialPutChar(char c);
 void BootSerialPutString(const char *str);
 void BootSerialPrintHex(uint32_t val);
@@ -27,6 +29,7 @@ static void (*pSerialPutChar)(char c) = 0;
 static void (*pSerialPutString)(const char *str) = 0;
 static void (*pSerialPrintHex)(uint32_t val) = 0;
 static void (*pSerialPrintDec)(uint32_t val) = 0;
+static int serial_debug_enabled = 0;
 
 static void (*pVgaInit)(void) = 0;
 static void (*pVgaClearScreen)(uint8_t color) = 0;
@@ -100,11 +103,33 @@ static void (*pWin32kActivateWindow)(HANDLE hwnd) = 0;
 int fb_width = 640;
 int fb_height = 480;
 
-void SerialInit(void) { if (pSerialInit) pSerialInit(); else BootSerialInit(); }
-void SerialPutChar(char c) { if (pSerialPutChar) pSerialPutChar(c); else BootSerialPutChar(c); }
-void SerialPutString(const char *str) { if (pSerialPutString) pSerialPutString(str); else BootSerialPutString(str); }
-void SerialPrintHex(uint32_t val) { if (pSerialPrintHex) pSerialPrintHex(val); else BootSerialPrintHex(val); }
-void SerialPrintDec(uint32_t val) { if (pSerialPrintDec) pSerialPrintDec(val); else BootSerialPrintDec(val); }
+void SerialSetDebugEnabled(int enabled) {
+    serial_debug_enabled = enabled ? 1 : 0;
+    BootSerialSetDebugEnabled(serial_debug_enabled);
+}
+
+int SerialIsDebugEnabled(void) { return serial_debug_enabled; }
+
+void SerialInit(void) {
+    if (!serial_debug_enabled) return;
+    if (pSerialInit) pSerialInit(); else BootSerialInit();
+}
+void SerialPutChar(char c) {
+    if (!serial_debug_enabled) return;
+    if (pSerialPutChar) pSerialPutChar(c); else BootSerialPutChar(c);
+}
+void SerialPutString(const char *str) {
+    if (!serial_debug_enabled) return;
+    if (pSerialPutString) pSerialPutString(str); else BootSerialPutString(str);
+}
+void SerialPrintHex(uint32_t val) {
+    if (!serial_debug_enabled) return;
+    if (pSerialPrintHex) pSerialPrintHex(val); else BootSerialPrintHex(val);
+}
+void SerialPrintDec(uint32_t val) {
+    if (!serial_debug_enabled) return;
+    if (pSerialPrintDec) pSerialPrintDec(val); else BootSerialPrintDec(val);
+}
 
 void VgaInit(void) { if (pVgaInit) pVgaInit(); }
 void VgaClearScreen(uint8_t color) { if (pVgaClearScreen) pVgaClearScreen(color); }

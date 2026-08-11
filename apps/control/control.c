@@ -174,6 +174,10 @@ static void control_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
         int client_y;
         int client_w;
         int client_h;
+        int win_w;
+        int win_h;
+        int border_x;
+        int border_y;
         int cols;
         int cell_w;
         int cell_h = 64;
@@ -181,10 +185,18 @@ static void control_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
         g_api->GetClientRect(hwnd, &client);
         g_api->GetWindowRect(hwnd, &win);
 
-        client_x = win.left + client.left;
-        client_y = win.top + client.top;
         client_w = client.right - client.left;
         client_h = client.bottom - client.top;
+        win_w = win.right - win.left;
+        win_h = win.bottom - win.top;
+
+        /* GetClientRect is client-relative (0,0), while the GUI drawing
+         * API takes screen coordinates.  Account for the non-client frame;
+         * otherwise the panel is painted through the title bar. */
+        border_x = (win_w > client_w) ? ((win_w - client_w) / 2) : 0;
+        border_y = (win_h > client_h) ? (win_h - client_h - border_x) : 0;
+        client_x = win.left + border_x;
+        client_y = win.top + border_y;
 
         g_api->FillRect(client_x, client_y, client_w, client_h, COLOR_LIGHT_GRAY);
         g_api->DrawString(client_x + 8, client_y + 8,

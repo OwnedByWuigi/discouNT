@@ -902,7 +902,12 @@ void CsrssSessionRun(void *mb_info) {
             } else {
                 THREAD *thread = (THREAD*)ObReferenceObject(g_gui_apps[i].thread);
                 if (thread) {
-                    if (thread->state == THREAD_TERMINATED || g_gui_apps[i].exited) {
+                    /* Wait until the scheduler has returned from the app
+                     * thread before releasing its code image.  The app sets
+                     * exited just before returning, so using that flag here
+                     * can free executable memory while it is still on the
+                     * thread's call path. */
+                    if (thread->state == THREAD_TERMINATED) {
                         if (g_gui_apps[i].window != INVALID_HANDLE) {
                             /* A standard WinMain app is allowed to return
                              * without destroying its last window.  CSRSS

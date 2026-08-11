@@ -126,7 +126,7 @@ $(BUILD_DIR)/%.o: %.c
 
 $(BOOT_SERIAL_OBJ): drivers/serial/serial.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
 
 $(BOOT_CDFS_OBJ): drivers/cdfs/cdfs.c
 	@mkdir -p $(@D)
@@ -168,9 +168,9 @@ $(BUILD_DIR)/apps/%.exe: apps/%.c
 		-o $@ \
 		$< kernel/util.c
 
-$(CMD_APP): apps/cmd/cmd.c
+$(CMD_APP): apps/cmd/cmd.c kernel/version.h
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 -Ikernel \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c

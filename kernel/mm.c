@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include "mm.h"
 
-#define KERNEL_HEAP_SIZE 0x800000
+/* USER32 list views reserve sizeable backing tables for native Win32 apps
+ * (Task Manager has several).  Eight MiB was enough for the shell alone but
+ * left no room to start a second GUI process. */
+#define KERNEL_HEAP_SIZE 0x1000000
 #define MM_ALIGN         8
 #define MM_SPLIT_MIN     16
 

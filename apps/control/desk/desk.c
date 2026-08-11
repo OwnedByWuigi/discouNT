@@ -101,6 +101,10 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
         int y0;
         int cw;
         int ch;
+        int win_w;
+        int win_h;
+        int border_x;
+        int border_y;
         int slider_x;
         int slider_y;
         int slider_w;
@@ -109,10 +113,14 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
 
         g_api->GetClientRect(hwnd, &client);
         g_api->GetWindowRect(hwnd, &win);
-        x0 = win.left + client.left;
-        y0 = win.top + client.top;
         cw = client.right - client.left;
         ch = client.bottom - client.top;
+        win_w = win.right - win.left;
+        win_h = win.bottom - win.top;
+        border_x = (win_w > cw) ? ((win_w - cw) / 2) : 0;
+        border_y = (win_h > ch) ? (win_h - ch - border_x) : 0;
+        x0 = win.left + border_x;
+        y0 = win.top + border_y;
 
         g_api->FillRect(x0, y0, cw, ch, COLOR_LIGHT_GRAY);
 

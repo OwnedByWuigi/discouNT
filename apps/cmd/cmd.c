@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "guiapp.h"
+#include "version.h"
 
 #define CMD_COLS 72
 #define CMD_ROWS 22
@@ -455,7 +456,7 @@ static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t
 
     if (msg == GUI_WM_CREATE) {
         cmd_clear_lines();
-        cmd_append_line("discouNT [Version 0.0.3]");
+        cmd_append_line(DISCOUNT_NAME " [Version " DISCOUNT_VERSION "]");
         cmd_append_line("(c) wuggy 2026");
         cmd_append_line("");
         return;

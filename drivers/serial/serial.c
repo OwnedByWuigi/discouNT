@@ -3,7 +3,6 @@
 #include "portio.h"
 
 static int serial_ready = 0;
-static int serial_debug_enabled = 0;
 
 // Check if transmit buffer is empty
 static int serial_is_transmit_empty(void) {
@@ -11,11 +10,6 @@ static int serial_is_transmit_empty(void) {
 }
 
 void SerialInit(void) {
-    if (!serial_debug_enabled) {
-        serial_ready = 0;
-        return;
-    }
-
     // Disable interrupts
     outb(COM1_PORT + 1, 0x00);
     
@@ -40,16 +34,15 @@ void SerialInit(void) {
 }
 
 void SerialSetDebugEnabled(int enabled) {
-    serial_debug_enabled = enabled ? 1 : 0;
-    if (!serial_debug_enabled) serial_ready = 0;
+    (void)enabled;
 }
 
 int SerialIsDebugEnabled(void) {
-    return serial_debug_enabled;
+    return 1;
 }
 
 void SerialPutChar(char c) {
-    if (!serial_debug_enabled || !serial_ready) return;
+    if (!serial_ready) return;
     
     // Wait for transmit buffer to be empty
     while (!serial_is_transmit_empty());
