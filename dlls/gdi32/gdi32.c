@@ -7,6 +7,7 @@ extern void *memset(void *dest, int c, uint32_t n);
 extern void *memcpy(void *dest, const void *src, uint32_t n);
 extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kGetClientRect(void *hwnd, LPRECT lpRect);
+extern void Win32kGetClientScreenRect(void *hwnd, LPRECT lpRect);
 
 extern void FbPutPixel(int x, int y, uint8_t color);
 extern void FbFillRect(int x, int y, int w, int h, uint8_t color);
@@ -157,7 +158,7 @@ static void gdi_get_screen_origin(HWND hwnd, int *ox, int *oy) {
     if (ox) *ox = 0;
     if (oy) *oy = 0;
     if (!hwnd) return;
-    Win32kGetWindowRect((void*)hwnd, &rc);
+    Win32kGetClientScreenRect((void*)hwnd, &rc);
     if (ox) *ox = rc.left;
     if (oy) *oy = rc.top;
 }

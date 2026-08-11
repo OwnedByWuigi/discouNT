@@ -42,9 +42,6 @@ static int resize_start_x = 0;
 static int resize_start_y = 0;
 static int resize_start_width = 0;
 static int resize_start_height = 0;
-static uint8_t *drag_background = 0;
-static int drag_bg_width = 0;
-static int drag_bg_height = 0;
 
 typedef enum _CAPTION_BUTTON_HIT {
     CAPBTN_NONE = 0,
@@ -511,36 +508,9 @@ static void render_scene(HANDLE skip_window) {
     }
 }
 
-static void ensure_drag_background(int width, int height) {
-    int size = width * height;
-    if (drag_background && drag_bg_width == width && drag_bg_height == height) return;
-    if (drag_background) {
-        kfree(drag_background);
-        drag_background = 0;
-    }
-    drag_background = (uint8_t*)kmalloc((uint32_t)size);
-    if (drag_background) {
-        drag_bg_width = width;
-        drag_bg_height = height;
-    } else {
-        drag_bg_width = 0;
-        drag_bg_height = 0;
-    }
-}
-
 static void begin_fast_drag(HANDLE hwnd) {
-    int width = FbGetWidth();
-    int height = FbGetHeight();
-
-    if (width <= 0) width = 640;
-    if (height <= 0) height = 480;
-
-    ensure_drag_background(width, height);
-    if (!drag_background) return;
-
-    render_scene(hwnd);
-    FbCapture(drag_background, width);
-    FbBlitIndexed(0, 0, width, height, drag_background, width);
+    (void)hwnd;
+    Win32kRedrawAll();
 }
 
 static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
@@ -700,10 +670,21 @@ void Win32kUpdateWindow(HANDLE hwnd) {
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     if (win && rect) {
-        rect->left = client_left(win);
-        rect->top = client_top(win);
-        rect->right = client_right(win);
-        rect->bottom = client_bottom(win);
+        rect->left = 0;
+        rect->top = 0;
+        rect->right = client_right(win) - client_left(win);
+        rect->bottom = client_bottom(win) - client_top(win);
+    }
+    if (win) ObDereferenceObject(hwnd);
+}
+
+void Win32kGetClientScreenRect(HANDLE hwnd, RECT *rect) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (win && rect) {
+        rect->left = win->x + client_left(win);
+        rect->top = win->y + client_top(win);
+        rect->right = win->x + client_right(win);
+        rect->bottom = win->y + client_bottom(win);
     }
     if (win) ObDereferenceObject(hwnd);
 }

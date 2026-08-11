@@ -32,6 +32,7 @@ extern void GdiDestroyScreenDC(HDC hdc);
 #define MAX_U32_MENUS 64
 #define MAX_U32_MESSAGES 256
 #define MAX_U32_ICONS 64
+#define MAX_U32_QUIT_STATES 32
 #define MAX_LV_COLUMNS 32
 #define MAX_LV_ITEMS 256
 #define MAX_TAB_ITEMS 16
@@ -46,6 +47,9 @@ typedef struct _U32_CLASS {
     UINT style;
     HICON hIcon;
     HICON hIconSm;
+    HCURSOR hCursor;
+    HBRUSH hbrBackground;
+    HINSTANCE hInstance;
     HANDLE win32k_class;
 } U32_CLASS;
 
@@ -105,6 +109,7 @@ typedef struct _U32_WINDOW {
     WCHAR status_text[8][64];
     void *listview_data;
     WCHAR *edit_text;
+    HFONT hFont;
     HICON hIcon;
     HICON hIconSm;
     DWORD owner_pid;
@@ -136,20 +141,32 @@ typedef struct _U32_ICON {
     int height;
 } U32_ICON;
 
+typedef struct _U32_QUIT_STATE {
+    int used;
+    DWORD owner_pid;
+    int exit_requested;
+    int exit_code;
+} U32_QUIT_STATE;
+
 static U32_CLASS g_classes[MAX_U32_CLASSES];
 static U32_WINDOW g_windows[MAX_U32_WINDOWS];
 static U32_TIMER g_timers[MAX_U32_TIMERS];
 static U32_MENU g_menus[MAX_U32_MENUS];
 static U32_MESSAGE g_messages[MAX_U32_MESSAGES];
 static U32_ICON g_icons[MAX_U32_ICONS];
+static U32_QUIT_STATE g_quit_states[MAX_U32_QUIT_STATES];
 static HWND g_focus = NULL;
 static HWND g_active_window = NULL;
-static int g_message_loop_exit = 0;
-static int g_quit_exit_code = 0;
 
 static void u32_paint_children(HWND hwnd);
 static void u32_mark_invalid(HWND hwnd);
+static void u32_mark_invalid_descendants(HWND hwnd);
+static void u32_clear_invalid(HWND hwnd);
 BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+
+#ifndef BN_CLICKED
+#define BN_CLICKED 0
+#endif
 
 #define U32_CTRL_GENERIC   0
 #define U32_CTRL_DIALOG    1
@@ -417,6 +434,20 @@ static U32_WINDOW *u32_lookup_window(HWND hwnd) {
     return NULL;
 }
 
+static U32_QUIT_STATE *u32_get_quit_state(DWORD pid, int create) {
+    int i;
+    U32_QUIT_STATE *free_slot = NULL;
+    for (i = 0; i < MAX_U32_QUIT_STATES; i++) {
+        if (g_quit_states[i].used && g_quit_states[i].owner_pid == pid) return &g_quit_states[i];
+        if (!g_quit_states[i].used && !free_slot) free_slot = &g_quit_states[i];
+    }
+    if (!create || !free_slot) return NULL;
+    memset(free_slot, 0, sizeof(*free_slot));
+    free_slot->used = 1;
+    free_slot->owner_pid = pid;
+    return free_slot;
+}
+
 static U32_WINDOW *u32_alloc_window(void) {
     int i;
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
@@ -487,9 +518,18 @@ static int u32_client_offset_y(const U32_WINDOW *win) {
 
 static void u32_sync_top_level(U32_WINDOW *win) {
     RECT rc;
+    int moved;
+    int sized;
     if (!win || !win->top_level || !win->hwnd) return;
     Win32kGetWindowRect((HANDLE)win->hwnd, &rc);
+    moved = (win->rect.left != rc.left) || (win->rect.top != rc.top);
+    sized = ((win->rect.right - win->rect.left) != (rc.right - rc.left)) ||
+            ((win->rect.bottom - win->rect.top) != (rc.bottom - rc.top));
     win->rect = rc;
+    if (moved || sized) {
+        u32_mark_invalid_descendants(win->hwnd);
+        u32_mark_invalid(win->hwnd);
+    }
 }
 
 static HWND u32_get_root_window(HWND hwnd) {
@@ -506,6 +546,79 @@ static int u32_is_descendant(HWND parent, HWND child) {
         win = u32_lookup_window(win->parent);
     }
     return 0;
+}
+
+static HWND u32_find_top_level_window_for_pid(DWORD pid) {
+    int i;
+    for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+        if (g_windows[i].used &&
+            g_windows[i].top_level &&
+            g_windows[i].owner_pid == pid &&
+            g_windows[i].visible) {
+            return g_windows[i].hwnd;
+        }
+    }
+    for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+        if (g_windows[i].used &&
+            g_windows[i].top_level &&
+            g_windows[i].owner_pid == pid) {
+            return g_windows[i].hwnd;
+        }
+    }
+    return NULL;
+}
+
+static HWND u32_dialog_focused_child(HWND hDlg) {
+    if (g_focus && u32_is_descendant(hDlg, g_focus)) return g_focus;
+    return NULL;
+}
+
+static int u32_is_tabstop_candidate(const U32_WINDOW *win, HWND hDlg) {
+    if (!win || !win->used) return 0;
+    if (win->hwnd == hDlg) return 0;
+    if (!u32_is_descendant(hDlg, win->hwnd)) return 0;
+    if (!win->visible || !win->enabled) return 0;
+    if (!(win->style & WS_TABSTOP)) return 0;
+    if (win->ctrl_type == U32_CTRL_STATIC || win->ctrl_type == U32_CTRL_GROUPBOX) return 0;
+    return 1;
+}
+
+static HWND u32_dialog_find_next_tabstop(HWND hDlg, HWND start) {
+    int i;
+    int start_index = -1;
+    int first_index = -1;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].hwnd == start) {
+            start_index = i;
+            break;
+        }
+    }
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (u32_is_tabstop_candidate(&g_windows[i], hDlg)) {
+            if (first_index < 0) first_index = i;
+            if (start_index >= 0 && i > start_index) return g_windows[i].hwnd;
+        }
+    }
+    if (first_index >= 0) return g_windows[first_index].hwnd;
+    return NULL;
+}
+
+static void u32_dialog_click_button(HWND hButton) {
+    U32_WINDOW *button = u32_lookup_window(hButton);
+    if (!button) return;
+    if (button->parent) {
+        SendMessageW(button->parent, WM_COMMAND, MAKEWPARAM(button->id, BN_CLICKED), (LPARAM)hButton);
+    }
+}
+
+static HWND u32_dialog_find_child_by_id(HWND hDlg, UINT id) {
+    int i;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].parent == hDlg && g_windows[i].id == id) {
+            return g_windows[i].hwnd;
+        }
+    }
+    return NULL;
 }
 
 static HWND u32_hit_test_child(HWND parent, int x, int y) {
@@ -854,6 +967,12 @@ static void u32_clear_invalid_subtree(HWND hwnd) {
     }
 }
 
+static void u32_clear_invalid(HWND hwnd) {
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    if (!win) return;
+    win->invalidated = 0;
+}
+
 static void u32_flush_invalid_window(HWND hwnd) {
     int i;
     U32_WINDOW *win = u32_lookup_window(hwnd);
@@ -868,7 +987,7 @@ static void u32_flush_invalid_window(HWND hwnd) {
         if (logged_flush <= 12) {
             SerialPutString("[USER32] flush invalid end\r\n");
         }
-        u32_clear_invalid_subtree(hwnd);
+        u32_clear_invalid(hwnd);
         return;
     }
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
@@ -965,6 +1084,11 @@ ATOM RegisterClassW(const WNDCLASSW *lpWndClass) {
     cls->used = 1;
     cls->proc = lpWndClass->lpfnWndProc;
     cls->style = lpWndClass->style;
+    cls->hIcon = lpWndClass->hIcon;
+    cls->hIconSm = lpWndClass->hIcon;
+    cls->hCursor = lpWndClass->hCursor;
+    cls->hbrBackground = lpWndClass->hbrBackground;
+    cls->hInstance = lpWndClass->hInstance;
     u32_wstrcpy(cls->name, lpWndClass->lpszClassName, 64);
     u32_wide_to_ansi(cls->name, class_name, 64);
     cls->win32k_class = Win32kRegisterClass(class_name, 0, u32_win32k_callback);
@@ -991,9 +1115,63 @@ ATOM RegisterClassExW(const WNDCLASSEXW *lpwcx) {
         if (cls) {
             cls->hIcon = lpwcx->hIcon;
             cls->hIconSm = lpwcx->hIconSm ? lpwcx->hIconSm : lpwcx->hIcon;
+            cls->hCursor = lpwcx->hCursor;
+            cls->hbrBackground = lpwcx->hbrBackground;
+            cls->hInstance = lpwcx->hInstance;
         }
         return atom;
     }
+}
+
+BOOL UnregisterClassW(LPCWSTR lpClassName, HINSTANCE hInstance) {
+    U32_CLASS *cls = u32_find_class(lpClassName);
+    int i;
+    (void)hInstance;
+    if (!cls) return FALSE;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].klass == cls) return FALSE;
+    }
+    memset(cls, 0, sizeof(*cls));
+    return TRUE;
+}
+
+int GetClassNameW(HWND hWnd, LPWSTR lpClassName, int nMaxCount) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    if (!win || !win->klass || !lpClassName || nMaxCount <= 0) return 0;
+    u32_wstrcpy(lpClassName, win->klass->name, nMaxCount);
+    return u32_wstrlen(lpClassName);
+}
+
+BOOL GetClassInfoW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSW lpWndClass) {
+    U32_CLASS *cls = u32_find_class(lpClassName);
+    (void)hInstance;
+    if (!cls || !lpWndClass) return FALSE;
+    memset(lpWndClass, 0, sizeof(*lpWndClass));
+    lpWndClass->style = cls->style;
+    lpWndClass->lpfnWndProc = cls->proc;
+    lpWndClass->hInstance = cls->hInstance;
+    lpWndClass->hIcon = cls->hIcon;
+    lpWndClass->hCursor = cls->hCursor;
+    lpWndClass->hbrBackground = cls->hbrBackground;
+    lpWndClass->lpszClassName = cls->name;
+    return TRUE;
+}
+
+BOOL GetClassInfoExW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSEXW lpwcx) {
+    U32_CLASS *cls = u32_find_class(lpClassName);
+    (void)hInstance;
+    if (!cls || !lpwcx) return FALSE;
+    memset(lpwcx, 0, sizeof(*lpwcx));
+    lpwcx->cbSize = sizeof(*lpwcx);
+    lpwcx->style = cls->style;
+    lpwcx->lpfnWndProc = cls->proc;
+    lpwcx->hInstance = cls->hInstance;
+    lpwcx->hIcon = cls->hIcon;
+    lpwcx->hCursor = cls->hCursor;
+    lpwcx->hbrBackground = cls->hbrBackground;
+    lpwcx->lpszClassName = cls->name;
+    lpwcx->hIconSm = cls->hIconSm ? cls->hIconSm : cls->hIcon;
+    return TRUE;
 }
 
 LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
@@ -1123,7 +1301,11 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
 }
 
 BOOL GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax) {
+    DWORD current_pid;
+    U32_QUIT_STATE *quit_state;
     if (!lpMsg) return FALSE;
+    current_pid = GetCurrentProcessId();
+    quit_state = u32_get_quit_state(current_pid, 1);
     for (;;) {
         int invalid_index;
 
@@ -1146,10 +1328,10 @@ BOOL GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax)
             return TRUE;
         }
 
-        if (g_message_loop_exit) {
+        if (quit_state && quit_state->exit_requested) {
             lpMsg->hwnd = NULL;
             lpMsg->message = WM_QUIT;
-            lpMsg->wParam = (WPARAM)g_quit_exit_code;
+            lpMsg->wParam = (WPARAM)quit_state->exit_code;
             lpMsg->lParam = 0;
             lpMsg->time = GetTickCount();
             lpMsg->pt.x = 0;
@@ -1210,8 +1392,12 @@ BOOL UpdateWindow(HWND hWnd) {
 }
 
 void PostQuitMessage(int nExitCode) {
-    g_message_loop_exit = 1;
-    g_quit_exit_code = nExitCode;
+    DWORD current_pid = GetCurrentProcessId();
+    U32_QUIT_STATE *quit_state = u32_get_quit_state(current_pid, 1);
+    if (quit_state) {
+        quit_state->exit_requested = 1;
+        quit_state->exit_code = nExitCode;
+    }
     u32_enqueue_message(NULL, WM_QUIT, (WPARAM)nExitCode, 0);
 }
 
@@ -1389,10 +1575,31 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     }
 
     if (Msg == WM_PAINT) {
-        u32_clear_invalid_subtree(hWnd);
+        u32_clear_invalid(hWnd);
     }
 
     switch (Msg) {
+    case WM_SETFONT:
+        win->hFont = (HFONT)wParam;
+        if (lParam) u32_mark_invalid(hWnd);
+        return 0;
+    case WM_GETFONT:
+        return (LRESULT)win->hFont;
+    case WM_GETDLGCODE:
+        switch (win->ctrl_type) {
+        case U32_CTRL_EDIT:
+            return DLGC_WANTCHARS | DLGC_HASSETSEL;
+        case U32_CTRL_BUTTON:
+            return DLGC_BUTTON;
+        case U32_CTRL_GROUPBOX:
+        case U32_CTRL_STATIC:
+            return DLGC_STATIC;
+        case U32_CTRL_TAB:
+            return DLGC_WANTARROWS;
+        default:
+            break;
+        }
+        return 0;
     case WM_SETTEXT:
         if (win->ctrl_type == U32_CTRL_EDIT) {
             u32_edit_set_text(win, (LPCWSTR)lParam);
@@ -1697,349 +1904,8 @@ BOOL DestroyWindow(HWND hWnd) {
     return TRUE;
 }
 
-BOOL GetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win || !lpwndpl) return FALSE;
-    lpwndpl->length = sizeof(*lpwndpl);
-    lpwndpl->flags = 0;
-    lpwndpl->showCmd = win->visible ? SW_SHOW : SW_HIDE;
-    lpwndpl->rcNormalPosition = win->rect;
-    return TRUE;
-}
-
-BOOL SetWindowPlacement(HWND hWnd, const WINDOWPLACEMENT *lpwndpl) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win || !lpwndpl) return FALSE;
-    win->rect = lpwndpl->rcNormalPosition;
-    u32_sync_top_level(win);
-    return TRUE;
-}
-
-UINT SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, void *lpTimerFunc) {
-    int i;
-    (void)lpTimerFunc;
-    for (i = 0; i < MAX_U32_TIMERS; i++) {
-        if (!g_timers[i].used) {
-            g_timers[i].used = 1;
-            g_timers[i].hwnd = hWnd;
-            g_timers[i].id = nIDEvent;
-            g_timers[i].elapse = uElapse;
-            g_timers[i].tick = GetTickCount() + (uElapse ? uElapse : 1);
-            return (UINT)nIDEvent;
-        }
-    }
-    return 0;
-}
-
-BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent) {
-    int i;
-    for (i = 0; i < MAX_U32_TIMERS; i++) {
-        if (g_timers[i].used && g_timers[i].hwnd == hWnd && g_timers[i].id == uIDEvent) {
-            memset(&g_timers[i], 0, sizeof(g_timers[i]));
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
-HICON LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
-    (void)hInstance;
-    if (u32_is_int_resource(lpIconName)) {
-        return u32_create_icon(u32_resource_id(lpIconName), 32, 32);
-    }
-    return u32_create_icon(0, 32, 32);
-}
-
-HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT fuLoad) {
-    int width;
-    int height;
-    (void)hinst;
-    (void)fuLoad;
-    if (type != IMAGE_ICON) return 0;
-    width = cx > 0 ? cx : 32;
-    height = cy > 0 ? cy : 32;
-    if (u32_is_int_resource(name)) {
-        return (HANDLE)u32_create_icon(u32_resource_id(name), width, height);
-    }
-    return (HANDLE)u32_create_icon(0, width, height);
-}
-
-int LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax) {
-    LPCWSTR text;
-    int len;
-    (void)hInstance;
-    if (!lpBuffer || cchBufferMax <= 0) return 0;
-    text = u32_string_for_id(uID);
-    len = u32_wstrlen(text);
-    if (len >= cchBufferMax) len = cchBufferMax - 1;
-    memcpy(lpBuffer, text, len * sizeof(WCHAR));
-    lpBuffer[len] = 0;
-    return len;
-}
-
-int LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax) {
-    WCHAR temp[128];
-    int i, len;
-    (void)hInstance;
-    len = LoadStringW(hInstance, uID, temp, 128);
-    if (!lpBuffer || cchBufferMax <= 0) return 0;
-    if (len >= cchBufferMax) len = cchBufferMax - 1;
-    for (i = 0; i < len; i++) lpBuffer[i] = (char)temp[i];
-    lpBuffer[len] = 0;
-    return len;
-}
-
-BOOL GetClientRect(HWND hWnd, LPRECT lpRect) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    int width;
-    int height;
-    if (!win || !lpRect) return FALSE;
-    if (win->top_level) u32_sync_top_level(win);
-    width = win->rect.right - win->rect.left;
-    height = win->rect.bottom - win->rect.top;
-    lpRect->left = 0;
-    lpRect->top = 0;
-    if (win->top_level) {
-        width -= (u32_client_offset_x(win) + U32_FRAME_THICKNESS + U32_EDGE_THICKNESS);
-        height -= (u32_client_offset_y(win) + U32_FRAME_THICKNESS + U32_EDGE_THICKNESS);
-        if (width < 0) width = 0;
-        if (height < 0) height = 0;
-    }
-    lpRect->right = width;
-    lpRect->bottom = height;
-    return TRUE;
-}
-
-BOOL GetWindowRect(HWND hWnd, LPRECT lpRect) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win || !lpRect) return FALSE;
-    if (win->top_level) {
-        u32_sync_top_level(win);
-        *lpRect = win->rect;
-    } else {
-        u32_get_absolute_rect(win, lpRect);
-    }
-    return TRUE;
-}
-
-int GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win || !lpString || nMaxCount <= 0) return 0;
-    if (win->ctrl_type == U32_CTRL_EDIT && win->edit_text) u32_lv_copy_out(lpString, nMaxCount, win->edit_text);
-    else u32_lv_copy_out(lpString, nMaxCount, win->title);
-    return u32_wstrlen(lpString);
-}
-
-int GetWindowTextLengthW(HWND hWnd) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win) return 0;
-    if (win->ctrl_type == U32_CTRL_EDIT) return win->edit_len;
-    return u32_wstrlen(win->title);
-}
-
-HWND GetDlgItem(HWND hDlg, int nIDDlgItem) {
-    int i;
-    for (i = 0; i < MAX_U32_WINDOWS; i++) {
-        if (g_windows[i].used && g_windows[i].parent == hDlg && g_windows[i].id == (UINT)nIDDlgItem) return g_windows[i].hwnd;
-    }
-    return u32_create_placeholder_child(hDlg, (UINT)nIDDlgItem);
-}
-
-UINT GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax) {
-    HWND child = GetDlgItem(hDlg, nIDDlgItem);
-    if (!child || !lpString || cchMax <= 0) return 0;
-    return (UINT)GetWindowTextW(child, lpString, cchMax);
-}
-
-BOOL SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString) {
-    HWND child = GetDlgItem(hDlg, nIDDlgItem);
-    if (!child) return FALSE;
-    return SetWindowTextW(child, lpString);
-}
-
-UINT GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned) {
-    WCHAR buf[64];
-    UINT value = 0;
-    int i = 0;
-    int neg = 0;
-    if (lpTranslated) *lpTranslated = FALSE;
-    if (!GetDlgItemTextW(hDlg, nIDDlgItem, buf, ARRAY_SIZE(buf))) return 0;
-    if (bSigned && buf[0] == L'-') {
-        neg = 1;
-        i++;
-    }
-    while (buf[i] >= L'0' && buf[i] <= L'9') {
-        value = value * 10 + (UINT)(buf[i] - L'0');
-        i++;
-    }
-    if (lpTranslated) *lpTranslated = TRUE;
-    return neg ? (UINT)(-(int)value) : value;
-}
-
-BOOL SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned) {
-    WCHAR buf[32];
-    int pos = 0;
-    if (bSigned) pos = u32_append_number(buf, pos, ARRAY_SIZE(buf), (int)uValue, 0);
-    else pos = u32_append_number(buf, pos, ARRAY_SIZE(buf), (int)uValue, 1);
-    buf[pos] = 0;
-    return SetDlgItemTextW(hDlg, nIDDlgItem, buf);
-}
-
-BOOL SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {
-    if (!lprc) return FALSE;
-    lprc->left = xLeft;
-    lprc->top = yTop;
-    lprc->right = xRight;
-    lprc->bottom = yBottom;
-    return TRUE;
-}
-
-int GetSystemMetrics(int nIndex) {
-    switch (nIndex) {
-    case SM_CXSCREEN:
-        return 800;
-    case SM_CYSCREEN:
-        return 600;
-    case SM_CXSMICON:
-    case SM_CYSMICON:
-        return 16;
-    default:
-        return 0;
-    }
-}
-
-UINT GetDpiForWindow(HWND hWnd) {
-    (void)hWnd;
-    return 96;
-}
-
-BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    (void)hWndInsertAfter;
-    if (!win) return FALSE;
-    if (!(uFlags & SWP_NOMOVE)) {
-        win->rect.left = X;
-        win->rect.top = Y;
-    }
-    if (!(uFlags & SWP_NOSIZE)) {
-        win->rect.right = win->rect.left + cx;
-        win->rect.bottom = win->rect.top + cy;
-    }
-    if (uFlags & SWP_SHOWWINDOW) win->visible = 1;
-    u32_sync_top_level(win);
-    SendMessageW(hWnd, WM_SIZE, SIZE_RESTORED,
-                 MAKELPARAM(win->rect.right - win->rect.left, win->rect.bottom - win->rect.top));
-    return TRUE;
-}
-
-HMENU GetMenu(HWND hWnd) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win) return NULL;
-    if (!win->menu) win->menu = CreatePopupMenu();
-    return win->menu;
-}
-
-HMENU GetSubMenu(HMENU hMenu, int nPos) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    if (!menu || nPos < 0 || nPos >= menu->count) return NULL;
-    return menu->items[nPos].submenu;
-}
-
-int GetMenuItemCount(HMENU hMenu) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    return menu ? menu->count : -1;
-}
-
-BOOL CheckMenuRadioItem(HMENU hmenu, UINT first, UINT last, UINT check, UINT flags) {
-    U32_MENU *menu = u32_lookup_menu(hmenu);
-    int i;
-    (void)flags;
-    if (!menu) return FALSE;
-    for (i = 0; i < menu->count; i++) {
-        if (menu->items[i].id >= first && menu->items[i].id <= last) {
-            menu->items[i].flags &= ~MF_CHECKED;
-            if (menu->items[i].id == check) menu->items[i].flags |= MF_CHECKED;
-        }
-    }
-    return TRUE;
-}
-
-BOOL CheckMenuItem(HMENU hmenu, UINT idCheckItem, UINT uCheck) {
-    U32_MENU *menu = u32_lookup_menu(hmenu);
-    int i;
-    if (!menu) return FALSE;
-    for (i = 0; i < menu->count; i++) {
-        if (menu->items[i].id == idCheckItem) {
-            menu->items[i].flags = uCheck;
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
-BOOL EnableMenuItem(HMENU hMenu, UINT uIDEnableItem, UINT uEnable) {
-    return CheckMenuItem(hMenu, uIDEnableItem, uEnable);
-}
-
-BOOL DestroyMenu(HMENU hMenu) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    if (!menu) return FALSE;
-    memset(menu, 0, sizeof(*menu));
-    return TRUE;
-}
-
-BOOL RemoveMenu(HMENU hMenu, UINT uPosition, UINT uFlags) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    int index = (int)uPosition;
-    int i;
-    if (!menu) return FALSE;
-    if (!(uFlags & MF_BYPOSITION)) {
-        for (index = 0; index < menu->count; index++) if (menu->items[index].id == uPosition) break;
-    }
-    if (index < 0 || index >= menu->count) return FALSE;
-    for (i = index; i < menu->count - 1; i++) menu->items[i] = menu->items[i + 1];
-    menu->count--;
-    return TRUE;
-}
-
-BOOL AppendMenuW(HMENU hMenu, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    if (!menu || menu->count >= 32) return FALSE;
-    menu->items[menu->count].id = (UINT)uIDNewItem;
-    menu->items[menu->count].flags = uFlags;
-    menu->items[menu->count].submenu = (uFlags & MF_POPUP) ? (HMENU)uIDNewItem : NULL;
-    u32_wstrcpy(menu->items[menu->count].text, lpNewItem, 64);
-    menu->count++;
-    return TRUE;
-}
-
-HMENU LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName) {
-    U32_MENU *root = u32_alloc_menu();
-    U32_MENU *sub = u32_alloc_menu();
-    (void)hInstance;
-    (void)lpMenuName;
-    if (!root || !sub) return NULL;
-    AppendMenuW(root->handle, MF_POPUP, (UINT_PTR)sub->handle, L"Menu");
-    return root->handle;
-}
-
-BOOL InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem) {
-    U32_MENU *menu = u32_lookup_menu(hMenu);
-    int i;
-    if (!menu || menu->count >= 32) return FALSE;
-    if (!(uFlags & MF_BYPOSITION)) return AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem);
-    if ((int)uPosition > menu->count) uPosition = (UINT)menu->count;
-    for (i = menu->count; i > (int)uPosition; i--) menu->items[i] = menu->items[i - 1];
-    memset(&menu->items[uPosition], 0, sizeof(menu->items[uPosition]));
-    menu->items[uPosition].id = (UINT)uIDNewItem;
-    menu->items[uPosition].flags = uFlags;
-    menu->items[uPosition].submenu = (uFlags & MF_POPUP) ? (HMENU)uIDNewItem : NULL;
-    u32_wstrcpy(menu->items[uPosition].text, lpNewItem, 64);
-    menu->count++;
-    return TRUE;
-}
-
-BOOL DrawMenuBar(HWND hWnd) { (void)hWnd; return TRUE; }
+#include "user32_resources.inc"
+#include "user32_menu.inc"
 BOOL BringWindowToTop(HWND hWnd) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win) return FALSE;
@@ -2060,6 +1926,7 @@ HWND SetFocus(HWND hWnd) {
     if (hWnd) SendMessageW(hWnd, WM_SETFOCUS, (WPARAM)old, 0);
     return old;
 }
+HWND GetActiveWindow(void) { return g_active_window; }
 HWND SetActiveWindow(HWND hWnd) {
     HWND old = g_active_window;
     g_active_window = hWnd;
@@ -2067,7 +1934,6 @@ HWND SetActiveWindow(HWND hWnd) {
     return old;
 }
 HWND GetDesktopWindow(void) { return (HWND)1; }
-HMENU CreatePopupMenu(void) { U32_MENU *menu = u32_alloc_menu(); return menu ? menu->handle : NULL; }
 DWORD FormatMessageW(DWORD dwFlags, LPCVOID lpSource, DWORD dwMessageId, DWORD dwLanguageId,
                      LPWSTR lpBuffer, DWORD nSize, void *Arguments) {
     LPCWSTR text = L"Error";
@@ -2127,51 +1993,47 @@ LONG_PTR GetClassLongPtrW(HWND hWnd, int nIndex) {
     if (!win) return 0;
     cls = win->klass;
     if (!cls) return 0;
+    if (nIndex == GCLP_WNDPROC) return (LONG_PTR)cls->proc;
     if (nIndex == GCLP_HICON) return (LONG_PTR)cls->hIcon;
+    if (nIndex == GCLP_HCURSOR) return (LONG_PTR)cls->hCursor;
+    if (nIndex == GCLP_HMODULE) return (LONG_PTR)cls->hInstance;
     if (nIndex == GCLP_HICONSM) return (LONG_PTR)(cls->hIconSm ? cls->hIconSm : cls->hIcon);
+    if (nIndex == GCLP_HBRBACKGROUND) return (LONG_PTR)cls->hbrBackground;
     return 0;
+}
+ULONG_PTR SetClassLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    U32_CLASS *cls;
+    ULONG_PTR old = 0;
+    if (!win) return 0;
+    cls = win->klass;
+    if (!cls) return 0;
+    if (nIndex == GCLP_WNDPROC) {
+        old = (ULONG_PTR)cls->proc;
+        cls->proc = (WNDPROC)dwNewLong;
+    } else if (nIndex == GCLP_HICON) {
+        old = (ULONG_PTR)cls->hIcon;
+        cls->hIcon = (HICON)dwNewLong;
+    } else if (nIndex == GCLP_HICONSM) {
+        old = (ULONG_PTR)cls->hIconSm;
+        cls->hIconSm = (HICON)dwNewLong;
+    } else if (nIndex == GCLP_HCURSOR) {
+        old = (ULONG_PTR)cls->hCursor;
+        cls->hCursor = (HCURSOR)dwNewLong;
+    } else if (nIndex == GCLP_HMODULE) {
+        old = (ULONG_PTR)cls->hInstance;
+        cls->hInstance = (HINSTANCE)dwNewLong;
+    } else if (nIndex == GCLP_HBRBACKGROUND) {
+        old = (ULONG_PTR)cls->hbrBackground;
+        cls->hbrBackground = (HBRUSH)dwNewLong;
+    }
+    return old;
 }
 BOOL IsWindowVisible(HWND hWnd) { U32_WINDOW *win = u32_lookup_window(hWnd); return win ? win->visible : FALSE; }
 BOOL IsIconic(HWND hWnd) { (void)hWnd; return FALSE; }
-BOOL DeleteMenu(HMENU hMenu, UINT uPosition, UINT uFlags) { return RemoveMenu(hMenu, uPosition, uFlags); }
-BOOL SetMenuDefaultItem(HMENU hMenu, UINT uItem, UINT fByPos) { U32_MENU *menu = u32_lookup_menu(hMenu); (void)fByPos; if (!menu) return FALSE; menu->default_item = (int)uItem; return TRUE; }
-BOOL TrackPopupMenuEx(HMENU hmenu, UINT fuFlags, int x, int y, HWND hwnd, void *lptpm) { (void)hmenu; (void)fuFlags; (void)x; (void)y; (void)hwnd; (void)lptpm; return TRUE; }
-UINT GetMenuState(HMENU hMenu, UINT uId, UINT uFlags) { U32_MENU *menu = u32_lookup_menu(hMenu); int i; (void)uFlags; if (!menu) return 0; for (i = 0; i < menu->count; i++) if (menu->items[i].id == uId) return menu->items[i].flags; return 0; }
 HWND GetWindow(HWND hWnd, UINT uCmd) { (void)uCmd; return hWnd; }
 LRESULT CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) { return lpPrevWndFunc ? lpPrevWndFunc(hWnd, Msg, wParam, lParam) : 0; }
-HDC GetDC(HWND hWnd) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (win && !win->top_level) {
-        RECT rc;
-        u32_get_absolute_rect(win, &rc);
-        return GdiCreateScreenDCEx(u32_get_root_window(hWnd), rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-    }
-    return GdiCreateScreenDC(hWnd);
-}
-int ReleaseDC(HWND hWnd, HDC hDC) { (void)hWnd; if (hDC) GdiDestroyScreenDC(hDC); return 1; }
 DWORD GetSysColor(int nIndex) { (void)nIndex; return RGB(192,192,192); }
-HDC BeginPaint(HWND hWnd, LPPAINTSTRUCT lpPaint) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    HDC hdc;
-    if (win && !win->top_level) {
-        RECT rc;
-        u32_get_absolute_rect(win, &rc);
-        hdc = GdiCreateScreenDCEx(u32_get_root_window(hWnd), rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-    } else {
-        hdc = GdiCreateScreenDC(hWnd);
-    }
-    if (lpPaint) {
-        memset(lpPaint, 0, sizeof(*lpPaint));
-        lpPaint->hdc = hdc;
-        GetClientRect(hWnd, &lpPaint->rcPaint);
-    }
-    return hdc;
-}
-BOOL EndPaint(HWND hWnd, const PAINTSTRUCT *lpPaint) {
-    (void)hWnd;
-    if (lpPaint && lpPaint->hdc) GdiDestroyScreenDC(lpPaint->hdc);
-    return TRUE;
-}
 BOOL OpenIcon(HWND hWnd) { return ShowWindow(hWnd, SW_RESTORE); }
 BOOL SetForegroundWindow(HWND hWnd) { BringWindowToTop(hWnd); return TRUE; }
 int wsprintfW(LPWSTR lpOut, LPCWSTR lpFmt, ...) { int r; va_list ap; va_start(ap, lpFmt); r = u32_vsnprintfw(lpOut, 1024, lpFmt, ap); va_end(ap); return r; }
@@ -2180,71 +2042,12 @@ int swprintf(WCHAR *buffer, size_t count, const WCHAR *format, ...) { int r; va_
 BOOL EnableWindow(HWND hWnd, BOOL bEnable) { U32_WINDOW *win = u32_lookup_window(hWnd); if (!win) return FALSE; win->enabled = bEnable; return TRUE; }
 BOOL IsClipboardFormatAvailable(UINT format) { (void)format; return FALSE; }
 BOOL CopyRect(LPRECT lprcDst, const RECT *lprcSrc) { if (!lprcDst || !lprcSrc) return FALSE; *lprcDst = *lprcSrc; return TRUE; }
-int DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format) {
-    int len = cchText;
-    int x = 0, y = 0;
-    (void)format;
-    if (!lpchText) return 0;
-    if (len < 0) len = u32_wstrlen(lpchText);
-    if (lprc) {
-        x = lprc->left;
-        y = lprc->top;
-    }
-    TextOutW(hdc, x, y, lpchText, len);
-    return len;
-}
-BOOL InvalidateRect(HWND hWnd, const RECT *lpRect, BOOL bErase) {
-    static int g_logged_graph_invalidates = 0;
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    (void)lpRect;
-    (void)bErase;
-    if (win && g_logged_graph_invalidates < 8 &&
-        (win->id == 1049 || win->id == 1050 || win->id == 1047 || win->id == 1048)) {
-        g_logged_graph_invalidates++;
-        SerialPutString("[USER32] graph invalidate\r\n");
-    }
-    u32_mark_invalid(hWnd);
-    return TRUE;
-}
 BOOL IsWindow(HWND hWnd) { return u32_lookup_window(hWnd) ? TRUE : FALSE; }
 HWND GetParent(HWND hWnd) { U32_WINDOW *win = u32_lookup_window(hWnd); return win ? win->parent : NULL; }
-int MapWindowPoints(HWND hWndFrom, HWND hWndTo, LPPOINT lpPoints, UINT cPoints) {
-    U32_WINDOW *from = u32_lookup_window(hWndFrom);
-    U32_WINDOW *to = u32_lookup_window(hWndTo);
-    RECT frc, trc;
-    int dx = 0, dy = 0;
-    UINT i;
-    if (!lpPoints) return 0;
-    if (from) { u32_get_absolute_rect(from, &frc); dx += frc.left; dy += frc.top; }
-    if (to) { u32_get_absolute_rect(to, &trc); dx -= trc.left; dy -= trc.top; }
-    for (i = 0; i < cPoints; i++) {
-        lpPoints[i].x += dx;
-        lpPoints[i].y += dy;
-    }
-    return (int)cPoints;
-}
-BOOL SetWindowTextW(HWND hWnd, LPCWSTR lpString) {
-    U32_WINDOW *win = u32_lookup_window(hWnd);
-    if (!win) return FALSE;
-    if (win->ctrl_type == U32_CTRL_EDIT) {
-        u32_edit_set_text(win, lpString ? lpString : L"");
-    } else {
-        u32_wstrcpy(win->title, lpString, 128);
-    }
-    u32_mark_invalid(hWnd);
-    return TRUE;
-}
-BOOL TrackPopupMenu(HMENU hMenu, UINT uFlags, int x, int y, int nReserved, HWND hWnd, const RECT *prcRect) { (void)hMenu; (void)uFlags; (void)x; (void)y; (void)nReserved; (void)hWnd; (void)prcRect; return TRUE; }
 LRESULT SendMessageTimeoutW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, UINT fuFlags, UINT uTimeout, PDWORD_PTR lpdwResult) { LRESULT r = SendMessageW(hWnd, Msg, wParam, lParam); (void)fuFlags; (void)uTimeout; if (lpdwResult) *lpdwResult = (DWORD_PTR)r; return r; }
 BOOL EnumWindows(BOOL (CALLBACK *lpEnumFunc)(HWND, LPARAM), LPARAM lParam) { int i; for (i = 0; i < MAX_U32_WINDOWS; i++) if (g_windows[i].used && g_windows[i].top_level) if (!lpEnumFunc(g_windows[i].hwnd, lParam)) break; return TRUE; }
 BOOL IsHungAppWindow(HWND hWnd) { (void)hWnd; return FALSE; }
-BOOL DestroyIcon(HICON hIcon) {
-    U32_ICON *icon = u32_lookup_icon(hIcon);
-    if (icon) {
-        memset(icon, 0, sizeof(*icon));
-    }
-    return TRUE;
-}
+#include "user32_paint.inc"
 WORD TileWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 WORD CascadeWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 void SwitchToThisWindow(HWND hWnd, BOOL fAltTab) { (void)fAltTab; BringWindowToTop(hWnd); }
@@ -2254,9 +2057,61 @@ DWORD GetWindowThreadProcessId(HWND hWnd, DWORD *lpdwProcessId) {
     if (lpdwProcessId) *lpdwProcessId = pid;
     return pid;
 }
+HWND FindTopLevelWindowForProcessId(DWORD pid) {
+    return u32_find_top_level_window_for_pid(pid);
+}
 HCURSOR LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName) { (void)hInstance; (void)lpCursorName; return (HCURSOR)1; }
 UINT RegisterWindowMessageW(LPCWSTR lpString) { static UINT next = 0xC000; (void)lpString; return next++; }
-BOOL IsDialogMessageW(HWND hDlg, LPMSG lpMsg) { (void)hDlg; (void)lpMsg; return FALSE; }
+BOOL IsDialogMessageW(HWND hDlg, LPMSG lpMsg) {
+    HWND focus;
+    U32_WINDOW *focus_win;
+    HWND next;
+    HWND button;
+    if (!lpMsg) return FALSE;
+    if (lpMsg->message != WM_KEYDOWN && lpMsg->message != WM_SYSKEYDOWN) return FALSE;
+    if (lpMsg->hwnd != hDlg && !u32_is_descendant(hDlg, lpMsg->hwnd)) return FALSE;
+
+    focus = u32_dialog_focused_child(hDlg);
+    focus_win = u32_lookup_window(focus);
+    switch ((UINT)lpMsg->wParam) {
+    case VK_TAB:
+        next = u32_dialog_find_next_tabstop(hDlg, focus);
+        if (next) {
+            SetFocus(next);
+            return TRUE;
+        }
+        return FALSE;
+    case VK_RETURN:
+        if (focus_win && focus_win->ctrl_type == U32_CTRL_BUTTON) {
+            u32_dialog_click_button(focus);
+            return TRUE;
+        }
+        if (focus_win && focus_win->ctrl_type == U32_CTRL_EDIT) {
+            LRESULT code = SendMessageW(focus, WM_GETDLGCODE, lpMsg->wParam, (LPARAM)lpMsg);
+            if (code & (DLGC_WANTALLKEYS | DLGC_WANTCHARS)) return FALSE;
+        }
+        button = u32_dialog_find_child_by_id(hDlg, IDOK);
+        if (button) {
+            u32_dialog_click_button(button);
+            return TRUE;
+        }
+        return FALSE;
+    case VK_ESCAPE:
+        button = u32_dialog_find_child_by_id(hDlg, IDCANCEL);
+        if (button) {
+            u32_dialog_click_button(button);
+            return TRUE;
+        }
+        if (u32_lookup_window(hDlg) && u32_lookup_window(hDlg)->dialog) {
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        return FALSE;
+    default:
+        break;
+    }
+    return FALSE;
+}
 HACCEL LoadAcceleratorsW(HINSTANCE hInstance, LPCWSTR lpTableName) { (void)hInstance; (void)lpTableName; return (HACCEL)1; }
 int TranslateAcceleratorW(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg) { (void)hWnd; (void)hAccTable; (void)lpMsg; return 0; }
 BOOL DragAcceptFiles(HWND hWnd, BOOL fAccept) { (void)hWnd; (void)fAccept; return TRUE; }

@@ -63,8 +63,8 @@ BOOT_SERIAL_OBJ := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ)
 
-DLL_SRCS := $(wildcard dlls/*/*.c)
-DLL_NAMES := $(sort $(notdir $(basename $(DLL_SRCS))))
+DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(wildcard $(d)/$(notdir $(d)).c),$(d),)))
+DLL_NAMES := $(notdir $(DLL_DIRS))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 W32K_DLL := $(BUILD_DIR)/win32/w32k/w32k.dll
 

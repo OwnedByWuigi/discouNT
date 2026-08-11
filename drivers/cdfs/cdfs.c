@@ -470,14 +470,21 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
 
 int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size) {
     uint32_t lba, size;
+    uint32_t sectors;
+    uint32_t alloc_size;
     
     if (!CdfsFindFile(path, &lba, &size)) return 0;
     
-    uint8_t *buffer = (uint8_t*)kmalloc(size);
+    sectors = (size + 2047) / 2048;
+    alloc_size = sectors * 2048;
+    if (alloc_size == 0) alloc_size = 1;
+
+    uint8_t *buffer = (uint8_t*)kmalloc(alloc_size);
     if (!buffer) {
         SerialPutString("[CDFS] Out of memory!\r\n");
         return 0;
     }
+    memset(buffer, 0, alloc_size);
     
     SerialPutString("[CDFS] Reading ");
     SerialPrintDec(size);
@@ -485,7 +492,6 @@ int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size) {
     SerialPrintDec(lba);
     SerialPutString("...\r\n");
     
-    uint32_t sectors = (size + 2047) / 2048;
     for (uint32_t i = 0; i < sectors; i++) {
         if (!CdfsReadSector(lba + i, buffer + i * 2048)) {
             SerialPutString("[CDFS] Read error at sector ");

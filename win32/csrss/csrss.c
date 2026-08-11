@@ -25,6 +25,7 @@ typedef void (*GuiAppResetExitFn)(void);
 typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLine, int nCmdShow);
 typedef int (*GuiMainFn)(void);
 typedef int (*User32PostMessageWFn)(GUI_HANDLE hWnd, uint32_t Msg, uint32_t wParam, uint32_t lParam);
+typedef GUI_HANDLE (*User32FindTopLevelWindowForProcessIdFn)(uint32_t pid);
 
 typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
@@ -69,6 +70,7 @@ static char g_pending_error_text[256];
 static int g_pending_launch = 0;
 static char g_pending_launch_path[256];
 static User32PostMessageWFn g_user32_post_message = 0;
+static User32FindTopLevelWindowForProcessIdFn g_user32_find_top_level_window = 0;
 
 #define WM_KEYDOWN      0x0100
 #define WM_KEYUP        0x0101
@@ -376,7 +378,6 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
 
 static int csrss_spawn_gui_instance(const char *path) {
     GUI_APP_INSTANCE *app;
-    GUI_HANDLE previous_active;
 
     if (g_gui_app_count >= MAX_GUI_APPS) return -5;
 
@@ -392,39 +393,46 @@ static int csrss_spawn_gui_instance(const char *path) {
     SerialPutString(" path=");
     SerialPutString(path);
     SerialPutString("\r\n");
-    previous_active = Win32kGetActiveWindow();
 
     if (!csrss_load_gui_instance(path, app)) return -1;
 
     if (app->kind != GUI_APP_KIND_CUSTOM) {
-        for (int tries = 0; tries < 8; tries++) KeYield();
-        if (app->window == INVALID_HANDLE) {
-            GUI_HANDLE active = Win32kGetActiveWindow();
-            if (active != INVALID_HANDLE && active != previous_active) {
-                app->window = active;
+        for (int tries = 0; tries < 32 && app->window == INVALID_HANDLE; tries++) {
+            if (g_user32_find_top_level_window) {
+                app->window = g_user32_find_top_level_window(app->pid);
+                if (app->window != INVALID_HANDLE && app->window != 0) {
+                    SerialPutString("[CSRSS] Bound standard app pid=");
+                    SerialPrintDec(app->pid);
+                    SerialPutString(" hwnd via USER32\r\n");
+                    break;
+                }
+                app->window = INVALID_HANDLE;
             }
+            KeYield();
         }
     }
 
     if (app->window != INVALID_HANDLE) {
-        WINDOW *win = (WINDOW*)ObReferenceObject(app->window);
-        if (win) {
-            int cascade = g_gui_app_count * 24;
-            int screen_w = FbGetWidth();
-            int screen_h = FbGetHeight();
+        if (app->kind == GUI_APP_KIND_CUSTOM) {
+            WINDOW *win = (WINDOW*)ObReferenceObject(app->window);
+            if (win) {
+                int cascade = g_gui_app_count * 24;
+                int screen_w = FbGetWidth();
+                int screen_h = FbGetHeight();
 
-            if (screen_w <= 0) screen_w = 640;
-            if (screen_h <= 0) screen_h = 480;
+                if (screen_w <= 0) screen_w = 640;
+                if (screen_h <= 0) screen_h = 480;
 
-            win->x += cascade;
-            win->y += cascade;
+                win->x += cascade;
+                win->y += cascade;
 
-            if (win->x + win->width > screen_w) win->x = screen_w - win->width;
-            if (win->y + win->height > screen_h) win->y = screen_h - win->height;
-            if (win->x < 0) win->x = 0;
-            if (win->y < 0) win->y = 0;
+                if (win->x + win->width > screen_w) win->x = screen_w - win->width;
+                if (win->y + win->height > screen_h) win->y = screen_h - win->height;
+                if (win->x < 0) win->x = 0;
+                if (win->y < 0) win->y = 0;
 
-            ObDereferenceObject(app->window);
+                ObDereferenceObject(app->window);
+            }
         }
 
         Win32kActivateWindow(app->window);
@@ -710,6 +718,8 @@ void CsrssSessionRun(void *mb_info) {
         void *user32_image = PeLoadDll("USER32.DLL");
         if (user32_image) {
             g_user32_post_message = (User32PostMessageWFn)PeGetProcAddress(user32_image, "PostMessageW");
+            g_user32_find_top_level_window =
+                (User32FindTopLevelWindowForProcessIdFn)PeGetProcAddress(user32_image, "FindTopLevelWindowForProcessId");
         }
     }
     PeLoadDll("SHELL32.DLL");

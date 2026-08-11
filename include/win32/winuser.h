@@ -96,7 +96,9 @@ typedef struct tagMINMAXINFO {
 #define WM_GETTEXT          0x000D
 #define WM_GETTEXTLENGTH    0x000E
 #define WM_SETFONT          0x0030
+#define WM_GETFONT          0x0031
 #define WM_GETICON          0x007F
+#define WM_GETDLGCODE       0x0087
 #define WM_QUERYDRAGICON    0x0037
 #define WM_PAINT            0x000F
 #define WM_CLOSE            0x0010
@@ -204,6 +206,19 @@ typedef struct tagMINMAXINFO {
 #define SW_RESTORE         9
 
 #define VK_RETURN 0x0D
+#define VK_TAB    0x09
+#define VK_ESCAPE 0x1B
+
+#define DLGC_WANTARROWS      0x0001
+#define DLGC_WANTTAB         0x0002
+#define DLGC_WANTALLKEYS     0x0004
+#define DLGC_HASSETSEL       0x0008
+#define DLGC_DEFPUSHBUTTON   0x0010
+#define DLGC_UNDEFPUSHBUTTON 0x0020
+#define DLGC_RADIOBUTTON     0x0040
+#define DLGC_WANTCHARS       0x0080
+#define DLGC_STATIC          0x0100
+#define DLGC_BUTTON          0x2000
 #define MK_LBUTTON 0x0001
 
 #define IMAGE_ICON 1
@@ -221,7 +236,10 @@ typedef struct tagMINMAXINFO {
 #define GWLP_WNDPROC       (-4)
 #define GWLP_ID            (-12)
 #define GCLP_HBRBACKGROUND (-10)
+#define GCLP_HCURSOR       (-12)
 #define GCLP_HICON         (-14)
+#define GCLP_HMODULE       (-16)
+#define GCLP_WNDPROC       (-24)
 #define GCLP_HICONSM       (-34)
 
 #define HWND_TOP           ((HWND)0)
@@ -318,6 +336,10 @@ typedef struct tagMINMAXINFO {
 
 ATOM WINAPI RegisterClassW(const WNDCLASSW *lpWndClass);
 ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *lpwcx);
+BOOL WINAPI UnregisterClassW(LPCWSTR lpClassName, HINSTANCE hInstance);
+int WINAPI GetClassNameW(HWND hWnd, LPWSTR lpClassName, int nMaxCount);
+BOOL WINAPI GetClassInfoW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSW lpWndClass);
+BOOL WINAPI GetClassInfoExW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSEXW lpwcx);
 LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 BOOL WINAPI GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax);
 LRESULT WINAPI DispatchMessageW(const MSG *lpMsg);
@@ -384,6 +406,7 @@ LONG WINAPI SetWindowLongW(HWND hWnd, int nIndex, LONG dwNewLong);
 LONG_PTR WINAPI GetWindowLongPtrW(HWND hWnd, int nIndex);
 LONG_PTR WINAPI SetWindowLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong);
 LONG_PTR WINAPI GetClassLongPtrW(HWND hWnd, int nIndex);
+ULONG_PTR WINAPI SetClassLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong);
 BOOL WINAPI IsWindowVisible(HWND hWnd);
 BOOL WINAPI IsIconic(HWND hWnd);
 BOOL WINAPI DeleteMenu(HMENU hMenu, UINT uPosition, UINT uFlags);
