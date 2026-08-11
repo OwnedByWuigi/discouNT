@@ -143,6 +143,7 @@ void DriverLoadAll(void *mb_info) {
         {"/SYSTEM32/DRIVERS/MOUSE.SYS", DriverInstallMouse},
         {"/SYSTEM32/DRIVERS/NET.SYS", DriverInstallNet},
         {"/SYSTEM32/DRIVERS/FB.SYS", DriverInstallFb},
+        {"/SYSTEM32/DRIVERS/USB.SYS", 0},
     };
 
     for (uint32_t i = 0; i < (sizeof(specs) / sizeof(specs[0])); i++) {
