@@ -27,6 +27,9 @@
 #define PCI_CONFIG_DATA       0x0CFC
 #define QEMU_VGA_VENDOR_ID    0x1234
 #define QEMU_VGA_DEVICE_ID    0x1111
+#define VMWARE_VENDOR_ID      0x15AD
+#define VMWARE_SVGA_DEVICE_ID 0x0405
+#define VMWARE_SVGA2_DEVICE_ID 0x0710
 
 int fb_width = 640;
 int fb_height = 480;
@@ -36,6 +39,10 @@ static uint8_t *fb_addr = 0;
 static uint32_t fb_pitch = 0;
 static uint8_t fb_bpp = 0;
 static uint8_t *fb_shadow = 0;
+static uint16_t svga_io_port = 0;
+static uint32_t *svga_fifo = 0;
+static uint32_t svga_fifo_max = 0;
+static int svga_active = 0;
 static int dirty_valid = 0;
 static int dirty_x1 = 0;
 static int dirty_y1 = 0;
@@ -191,6 +198,18 @@ static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8
     return inl(PCI_CONFIG_DATA);
 }
 
+static void pci_config_write32(uint8_t bus, uint8_t slot, uint8_t func,
+                               uint8_t offset, uint32_t value) {
+    uint32_t address =
+        0x80000000U |
+        ((uint32_t)bus << 16) |
+        ((uint32_t)slot << 11) |
+        ((uint32_t)func << 8) |
+        (offset & 0xFC);
+    outl(PCI_CONFIG_ADDR, address);
+    outl(PCI_CONFIG_DATA, value);
+}
+
 static uint32_t fb_find_lfb_phys(void) {
     for (uint16_t bus = 0; bus < 256; bus++) {
         for (uint8_t slot = 0; slot < 32; slot++) {
@@ -288,6 +307,200 @@ static int fb_try_bga_mode(uint16_t width, uint16_t height, uint16_t bpp) {
     return 1;
 }
 
+/* VMware SVGA II register protocol.  VMware presents the framebuffer as a
+ * PCI memory BAR and the device registers through an I/O BAR; it does not
+ * implement the Bochs BGA ports used by QEMU's std VGA device. */
+#define SVGA_INDEX_ID             0
+#define SVGA_INDEX_ENABLE         1
+#define SVGA_INDEX_WIDTH          2
+#define SVGA_INDEX_HEIGHT         3
+#define SVGA_INDEX_DEPTH          4
+#define SVGA_INDEX_BITS_PER_PIXEL 7
+#define SVGA_INDEX_BYTES_PER_LINE 12
+#define SVGA_INDEX_FB_START       13
+#define SVGA_INDEX_FB_OFFSET      14
+
+#define SVGA_ID_1                 0x90000001U
+#define SVGA_ID_2                 0x90000002U
+
+static void svga_write(uint16_t index_port, uint32_t index, uint32_t value) {
+    outl(index_port, index);
+    /* VMware's SVGA value register is at BAR1 + 1.  The register interface
+     * is byte-spaced even though values are transferred as 32-bit words. */
+    outl((uint16_t)(index_port + 1), value);
+}
+
+static uint32_t svga_read(uint16_t index_port, uint32_t index) {
+    outl(index_port, index);
+    return inl((uint16_t)(index_port + 1));
+}
+
+static int fb_find_vmware(uint16_t *io_port, uint32_t *fb_phys) {
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            for (uint8_t func = 0; func < 8; func++) {
+                uint32_t id = pci_config_read32((uint8_t)bus, slot, func, 0x00);
+                uint16_t vendor;
+                uint16_t device;
+                uint32_t bar0;
+                uint32_t bar1;
+
+                if (id == 0xFFFFFFFFU) {
+                    if (func == 0) break;
+                    continue;
+                }
+                vendor = (uint16_t)(id & 0xFFFFU);
+                device = (uint16_t)(id >> 16);
+                if (vendor != VMWARE_VENDOR_ID ||
+                    (device != VMWARE_SVGA_DEVICE_ID &&
+                     device != VMWARE_SVGA2_DEVICE_ID)) continue;
+
+                /* Enable I/O and memory decoding plus bus mastering. */
+                pci_config_write32((uint8_t)bus, slot, func, 0x04,
+                                   pci_config_read32((uint8_t)bus, slot, func, 0x04) | 0x7U);
+                bar0 = pci_config_read32((uint8_t)bus, slot, func, 0x10);
+                bar1 = pci_config_read32((uint8_t)bus, slot, func, 0x14);
+
+                /* 0405 uses BAR0 for the index/value I/O pair and BAR1 for
+                 * the framebuffer.  The older 0710 keeps the legacy I/O
+                 * ports and normally exposes the framebuffer in BAR0. */
+                if (device == VMWARE_SVGA_DEVICE_ID) {
+                    if ((bar0 & 1U) == 0 || (bar1 & 1U) != 0) continue;
+                    *io_port = (uint16_t)(bar0 & 0xFFFCU);
+                    *fb_phys = bar1 & 0xFFFFFFF0U;
+                } else {
+                    *io_port = 0x4560;
+                    if ((bar0 & 1U) == 0 && (bar0 & 0xFFFFFFF0U))
+                        *fb_phys = bar0 & 0xFFFFFFF0U;
+                    else if ((bar1 & 1U) == 0 && (bar1 & 0xFFFFFFF0U))
+                        *fb_phys = bar1 & 0xFFFFFFF0U;
+                    else
+                        continue;
+                }
+                SerialPutString("[FB] VMware SVGA PCI BAR0=0x");
+                SerialPrintHex(*fb_phys);
+                SerialPutString(" BAR1=0x");
+                SerialPrintHex(*io_port);
+                SerialPutString("\r\n");
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int fb_try_vmware_mode(uint16_t width, uint16_t height, uint16_t bpp) {
+    uint16_t io_port;
+    uint32_t bar_fb;
+    uint32_t fb_start;
+    uint32_t pitch;
+    uint32_t shadow_size;
+    uint32_t id;
+    uint32_t mem_start;
+    uint32_t mem_size;
+
+    if (!fb_find_vmware(&io_port, &bar_fb)) return 0;
+
+    svga_write(io_port, SVGA_INDEX_ID, SVGA_ID_2);
+    id = svga_read(io_port, SVGA_INDEX_ID);
+    if (id != SVGA_ID_2 && id != SVGA_ID_1) {
+        SerialPutString("[FB] VMware SVGA protocol negotiation failed\r\n");
+        return 0;
+    }
+
+    svga_write(io_port, SVGA_INDEX_ENABLE, 0);
+    svga_write(io_port, SVGA_INDEX_WIDTH, width);
+    svga_write(io_port, SVGA_INDEX_HEIGHT, height);
+    svga_write(io_port, SVGA_INDEX_BITS_PER_PIXEL, bpp);
+    svga_write(io_port, SVGA_INDEX_ENABLE, 1);
+
+    fb_width = (int)svga_read(io_port, SVGA_INDEX_WIDTH);
+    fb_height = (int)svga_read(io_port, SVGA_INDEX_HEIGHT);
+    fb_bpp = (uint8_t)svga_read(io_port, SVGA_INDEX_BITS_PER_PIXEL);
+    pitch = svga_read(io_port, SVGA_INDEX_BYTES_PER_LINE);
+    fb_start = svga_read(io_port, SVGA_INDEX_FB_START);
+    if (!fb_start) fb_start = bar_fb;
+
+    if (fb_width != width || fb_height != height ||
+        (fb_bpp != bpp && fb_bpp != 32) || pitch < (uint32_t)fb_width * 4U ||
+        fb_start < 0x100000U) {
+        SerialPutString("[FB] VMware SVGA mode set mismatch\r\n");
+        return 0;
+    }
+
+    fb_addr = (uint8_t*)(uintptr_t)(fb_start + svga_read(io_port, SVGA_INDEX_FB_OFFSET));
+    fb_pitch = pitch;
+    svga_io_port = io_port;
+    svga_active = 0;
+
+    /* VMware does not refresh the host display merely because guest memory
+     * changed.  Set up the minimum command FIFO and use UPDATE commands for
+     * dirty rectangles. */
+    mem_start = svga_read(io_port, 18); /* SVGA_REG_MEM_START */
+    mem_size = svga_read(io_port, 19);  /* SVGA_REG_MEM_SIZE */
+    if (mem_start >= 0x100000U && mem_size >= 1024U) {
+        svga_fifo = (uint32_t*)(uintptr_t)mem_start;
+        svga_fifo[0] = 16;                    /* FIFO_MIN */
+        svga_fifo[1] = 16 + 10 * 1024;       /* FIFO_MAX */
+        if (svga_fifo[1] > mem_size) svga_fifo[1] = mem_size & ~3U;
+        svga_fifo[2] = 16;                    /* FIFO_NEXT_CMD */
+        svga_fifo[3] = 16;                    /* FIFO_STOP */
+        svga_fifo_max = svga_fifo[1];
+        svga_write(io_port, 20, 1);           /* SVGA_REG_CONFIG_DONE */
+        if (svga_fifo_max >= 36) svga_active = 1;
+    }
+    shadow_size = (uint32_t)fb_width * (uint32_t)fb_height;
+    if (fb_shadow) {
+        kfree(fb_shadow);
+        fb_shadow = 0;
+    }
+    fb_shadow = (uint8_t*)kmalloc(shadow_size);
+    if (!fb_shadow) {
+        SerialPutString("[FB] VMware shadow allocation failed\r\n");
+        return 0;
+    }
+    for (uint32_t i = 0; i < shadow_size; i++) fb_shadow[i] = 0;
+
+    use_framebuffer = 1;
+    fb_reset_dirty();
+    fb_mark_dirty(0, 0, fb_width, fb_height);
+    SerialPutString("[FB] VMware SVGA framebuffer active: ");
+    SerialPrintDec(fb_width);
+    SerialPutString("x");
+    SerialPrintDec(fb_height);
+    SerialPutString("x");
+    SerialPrintDec(fb_bpp);
+    SerialPutString(" pitch=");
+    SerialPrintDec(fb_pitch);
+    SerialPutString(" @ 0x");
+    SerialPrintHex((uint32_t)(uintptr_t)fb_addr);
+    SerialPutString("\r\n");
+    if (!svga_active) {
+        SerialPutString("[FB] VMware FIFO unavailable; framebuffer disabled\r\n");
+        use_framebuffer = 0;
+        kfree(fb_shadow);
+        fb_shadow = 0;
+        fb_addr = 0;
+        return 0;
+    }
+    return 1;
+}
+
+static void svga_update(int x, int y, int w, int h) {
+    uint32_t next;
+    if (!svga_active || !svga_fifo || w <= 0 || h <= 0) return;
+    next = svga_fifo[2];
+    if (next < svga_fifo[0] || next + 20 > svga_fifo_max) next = svga_fifo[0];
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 0) = 1; /* SVGA_CMD_UPDATE */
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 4) = (uint32_t)x;
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 8) = (uint32_t)y;
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 12) = (uint32_t)w;
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 16) = (uint32_t)h;
+    next += 20;
+    if (next >= svga_fifo_max) next = svga_fifo[0];
+    svga_fifo[2] = next;
+}
+
 static void fb_write_hw_pixel(int x, int y, uint8_t color) {
     uint8_t *row;
     if (!fb_addr) return;
@@ -311,6 +524,9 @@ void FbInit(void *mb_info_ptr) {
     (void)mb_info_ptr;
 
     use_framebuffer = 0;
+    svga_active = 0;
+    svga_fifo = 0;
+    svga_fifo_max = 0;
     fb_addr = 0;
     fb_pitch = 0;
     fb_bpp = 0;
@@ -318,7 +534,8 @@ void FbInit(void *mb_info_ptr) {
     fb_height = 480;
     fb_reset_dirty();
 
-    if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32)) {
+    if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32) ||
+        fb_try_vmware_mode(800, 600, 32) || fb_try_vmware_mode(640, 480, 32)) {
         FbSwapBuffers();
         return;
     }
@@ -458,11 +675,18 @@ void FbSwapBuffers(void) {
     if (use_framebuffer) {
         if (!fb_shadow || !dirty_valid) return;
 
+        int update_x = dirty_x1;
+        int update_y = dirty_y1;
+        int update_w = dirty_x2 - dirty_x1 + 1;
+        int update_h = dirty_y2 - dirty_y1 + 1;
+
         for (int y = dirty_y1; y <= dirty_y2; y++) {
             for (int x = dirty_x1; x <= dirty_x2; x++) {
                 fb_write_hw_pixel(x, y, fb_shadow[y * fb_width + x]);
             }
         }
+
+        svga_update(update_x, update_y, update_w, update_h);
 
         fb_reset_dirty();
     } else {
