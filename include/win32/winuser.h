@@ -95,6 +95,7 @@ typedef struct tagMINMAXINFO {
 #define WM_SETTEXT          0x000C
 #define WM_GETTEXT          0x000D
 #define WM_GETTEXTLENGTH    0x000E
+#define WM_SETFONT          0x0030
 #define WM_GETICON          0x007F
 #define WM_QUERYDRAGICON    0x0037
 #define WM_PAINT            0x000F
@@ -108,6 +109,10 @@ typedef struct tagMINMAXINFO {
 #define WM_DRAWITEM         0x002B
 #define WM_MEASUREITEM      0x002C
 #define WM_COMMAND          0x0111
+#define WM_CUT              0x0300
+#define WM_COPY             0x0301
+#define WM_PASTE            0x0302
+#define WM_CLEAR            0x0303
 #define WM_SYSCOMMAND       0x0112
 #define WM_TIMER            0x0113
 #define WM_HSCROLL          0x0114
@@ -116,6 +121,7 @@ typedef struct tagMINMAXINFO {
 #define WM_NOTIFY           0x004E
 #define WM_USER             0x0400
 #define WM_APP              0x8000
+#define WM_DROPFILES        0x0233
 #define DM_SETDEFID         (WM_USER + 1)
 #define WM_SETICON          0x0080
 #define WM_NCPAINT          0x0085
@@ -123,6 +129,7 @@ typedef struct tagMINMAXINFO {
 #define WM_NCCALCSIZE       0x0083
 #define WM_ENTERMENULOOP    0x0211
 #define WM_EXITMENULOOP     0x0212
+#define WM_INITMENUPOPUP    0x0117
 #define WM_MENUSELECT       0x011F
 #define WM_SIZING           0x0214
 #define WM_RBUTTONDOWN      0x0204
@@ -135,6 +142,7 @@ typedef struct tagMINMAXINFO {
 #define WM_MBUTTONUP        0x0208
 #define WM_MBUTTONDBLCLK    0x0209
 #define WM_CAPTURECHANGED   0x0215
+#define WM_DESTROYCLIPBOARD 0x0307
 #define WM_MOUSEACTIVATE    0x0021
 #define WM_MOUSEMOVE        0x0200
 #define WM_CHAR             0x0102
@@ -166,17 +174,24 @@ typedef struct tagMINMAXINFO {
 #define ICON_BIG   1
 
 #define MB_OK              0x00000000L
+#define MB_OKCANCEL        0x00000001L
 #define MB_YESNO           0x00000004L
+#define MB_YESNOCANCEL     0x00000003L
 #define MB_ICONSTOP        0x00000010L
 #define MB_ICONHAND        MB_ICONSTOP
 #define MB_ICONERROR       MB_ICONSTOP
+#define MB_ICONQUESTION    0x00000020L
 #define MB_ICONWARNING     0x00000030L
 #define MB_ICONINFORMATION 0x00000040L
+#define MB_ICONEXCLAMATION MB_ICONWARNING
+#define MB_ICONMASK        0x000000F0L
 
 #define IDOK 1
 #define IDCANCEL 2
 #define IDYES 6
+#define IDNO 7
 #define IDIGNORE 5
+#define IDHELP 9
 
 #define SW_HIDE            0
 #define SW_SHOWNORMAL      1
@@ -189,6 +204,7 @@ typedef struct tagMINMAXINFO {
 #define SW_RESTORE         9
 
 #define VK_RETURN 0x0D
+#define MK_LBUTTON 0x0001
 
 #define IMAGE_ICON 1
 
@@ -198,6 +214,7 @@ typedef struct tagMINMAXINFO {
 
 #define WS_EX_TOPMOST      0x00000008L
 #define WS_EX_TOOLWINDOW   0x00000080L
+#define WS_EX_CLIENTEDGE   0x00000200L
 
 #define GWL_STYLE          (-16)
 #define GWL_EXSTYLE        (-20)
@@ -219,13 +236,38 @@ typedef struct tagMINMAXINFO {
 #define SWP_NOOWNERZORDER  0x0200
 
 #define SIZE_MINIMIZED     1
+#define SIZE_RESTORED      0
 
+#define SM_CXSCREEN        0
+#define SM_CYSCREEN        1
 #define SM_CXSMICON        49
 #define SM_CYSMICON        50
 
+#define ES_LEFT            0x0000L
+#define ES_MULTILINE       0x0004L
+#define ES_AUTOVSCROLL     0x0040L
+#define ES_AUTOHSCROLL     0x0080L
+#define ES_NOHIDESEL       0x0100L
+
+#define EM_GETSEL          0x00B0
+#define EM_SETSEL          0x00B1
+#define EM_GETMODIFY       0x00B8
+#define EM_SETMODIFY       0x00B9
+#define EM_LINEINDEX       0x00BB
+#define EM_REPLACESEL      0x00C2
+#define EM_LIMITTEXT       0x00C5
+#define EM_CANUNDO         0x00C6
+#define EM_UNDO            0x00C7
+#define EM_LINEFROMCHAR    0x00C9
+#define EM_EMPTYUNDOBUFFER 0x00CD
+
+#define CF_TEXT            1
+
 #define LR_SHARED          0x00008000
+#define IDC_ARROW          ((LPWSTR)((ULONG_PTR)32512))
 
 #define HELP_FINDER        0x000b
+#define HELP_INDEX         0x0003
 
 #define TPM_LEFTBUTTON     0x0000L
 #define TPM_LEFTALIGN      0x0000L
@@ -233,6 +275,12 @@ typedef struct tagMINMAXINFO {
 
 #define MDITILE_VERTICAL   0x0000
 #define MDITILE_HORIZONTAL 0x0001
+
+#define CBN_SELCHANGE      1
+#define CB_ERR             (-1)
+#define CB_ADDSTRING       0x0143
+#define CB_GETCURSEL       0x0147
+#define CB_SETCURSEL       0x014E
 
 #define MF_BYCOMMAND       0x00000000L
 #define MF_BYPOSITION      0x00000400L
@@ -297,10 +345,16 @@ int WINAPI LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBuf
 BOOL WINAPI GetClientRect(HWND hWnd, LPRECT lpRect);
 BOOL WINAPI GetWindowRect(HWND hWnd, LPRECT lpRect);
 int WINAPI GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount);
+int WINAPI GetWindowTextLengthW(HWND hWnd);
 HWND WINAPI GetDlgItem(HWND hDlg, int nIDDlgItem);
+UINT WINAPI GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax);
+BOOL WINAPI SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString);
+UINT WINAPI GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned);
+BOOL WINAPI SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned);
 BOOL WINAPI SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom);
 int WINAPI GetSystemMetrics(int nIndex);
 BOOL WINAPI SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags);
+BOOL WINAPI MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint);
 HMENU WINAPI GetMenu(HWND hWnd);
 HMENU WINAPI GetSubMenu(HMENU hMenu, int nPos);
 int WINAPI GetMenuItemCount(HMENU hMenu);
@@ -315,6 +369,8 @@ BOOL WINAPI InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNe
 BOOL WINAPI DrawMenuBar(HWND hWnd);
 BOOL WINAPI BringWindowToTop(HWND hWnd);
 HWND WINAPI SetFocus(HWND hWnd);
+HWND WINAPI SetActiveWindow(HWND hWnd);
+HWND WINAPI GetDesktopWindow(void);
 HMENU WINAPI CreatePopupMenu(void);
 DWORD WINAPI FormatMessageW(DWORD dwFlags, LPCVOID lpSource, DWORD dwMessageId, DWORD dwLanguageId,
                             LPWSTR lpBuffer, DWORD nSize, void *Arguments);
@@ -345,6 +401,7 @@ BOOL WINAPI OpenIcon(HWND hWnd);
 BOOL WINAPI SetForegroundWindow(HWND hWnd);
 int WINAPI wsprintfW(LPWSTR lpOut, LPCWSTR lpFmt, ...);
 BOOL WINAPI EnableWindow(HWND hWnd, BOOL bEnable);
+BOOL WINAPI IsClipboardFormatAvailable(UINT format);
 BOOL WINAPI CopyRect(LPRECT lprcDst, const RECT *lprcSrc);
 int WINAPI DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format);
 BOOL WINAPI InvalidateRect(HWND hWnd, const RECT *lpRect, BOOL bErase);
@@ -363,6 +420,14 @@ WORD WINAPI CascadeWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT 
 void WINAPI SwitchToThisWindow(HWND hWnd, BOOL fAltTab);
 DWORD WINAPI GetWindowThreadProcessId(HWND hWnd, DWORD *lpdwProcessId);
 BOOL WINAPI IsIconic(HWND hWnd);
+HCURSOR WINAPI LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName);
+UINT WINAPI RegisterWindowMessageW(LPCWSTR lpString);
+BOOL WINAPI DragAcceptFiles(HWND hWnd, BOOL fAccept);
+UINT WINAPI DragQueryFileW(HANDLE hDrop, UINT iFile, LPWSTR lpszFile, UINT cch);
+void WINAPI DragFinish(HANDLE hDrop);
+HWND WINAPI CreateWindowW(LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle,
+                          int X, int Y, int nWidth, int nHeight, HWND hWndParent,
+                          HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
 
 #define GW_OWNER 4
 

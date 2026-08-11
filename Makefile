@@ -77,6 +77,8 @@ DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
 CMD_APP := $(BUILD_DIR)/apps/cmd/cmd.exe
 TASKMGR_APP := $(BUILD_DIR)/apps/taskmgr/taskmgr.exe
 TASKMGR_SRCS := $(filter %.c,$(wildcard apps/taskmgr/*.c))
+NOTEPAD_APP := $(BUILD_DIR)/apps/notepad/notepad.exe
+NOTEPAD_SRCS := apps/notepad/main.c apps/notepad/dialog.c
 DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
 SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
 VGA_SYS := $(BUILD_DIR)/drivers/vga/vga.sys
@@ -95,7 +97,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(W32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
 
 $(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
@@ -182,6 +184,13 @@ $(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c
 		-o $@ \
 		$(TASKMGR_SRCS) kernel/util.c
 
+$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,-e,WinMain \
+		-o $@ \
+		$(NOTEPAD_SRCS) kernel/util.c
+
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
@@ -224,7 +233,7 @@ $(FB_SYS): drivers/fb/fb.c drivers/module_entry.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@rm -rf $(ISO_DIR)/APPS
@@ -253,6 +262,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_A
 	fi
 	@if [ -f "$(TASKMGR_APP)" ]; then \
 		cp "$(TASKMGR_APP)" "$(SYSTEM32_DIR)/TASKMGR.EXE"; \
+	fi
+	@if [ -f "$(NOTEPAD_APP)" ]; then \
+		cp "$(NOTEPAD_APP)" "$(SYSTEM32_DIR)/NOTEPAD.EXE"; \
 	fi
 	@for sys in $(DRIVER_SYS_FILES); do \
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \

@@ -734,7 +734,8 @@ void *PeResolveExternalSymbol(const char *func_name) {
         "USER32.DLL",
         "SHELL32.DLL",
         "SHLWAPI.DLL",
-        "COMCTL32.DLL"
+        "COMCTL32.DLL",
+        "COMDLG32.DLL"
     };
     void *addr;
 

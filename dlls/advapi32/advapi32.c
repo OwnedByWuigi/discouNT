@@ -16,6 +16,10 @@ __attribute__((stdcall)) int RegOpenKeyExW(void *hKey, const uint16_t *lpSubKey,
     return 2;
 }
 
+__attribute__((stdcall)) int RegOpenKeyW(void *hKey, const uint16_t *lpSubKey, void **phkResult) {
+    return RegOpenKeyExW(hKey, lpSubKey, 0, 0, phkResult);
+}
+
 __attribute__((stdcall)) int RegCreateKeyExW(void *hKey, const uint16_t *lpSubKey, uint32_t Reserved, uint16_t *lpClass,
                                              uint32_t dwOptions, uint32_t samDesired, void *lpSecurityAttributes,
                                              void **phkResult, uint32_t *lpdwDisposition) {

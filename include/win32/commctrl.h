@@ -3,6 +3,8 @@
 
 #include "winuser.h"
 
+typedef LRESULT (CALLBACK *SUBCLASSPROC)(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
 typedef struct tagINITCOMMONCONTROLSEX {
     DWORD dwSize;
     DWORD dwICC;
@@ -118,6 +120,7 @@ typedef NMLVDISPINFOW LV_DISPINFOW;
 #define HDI_ORDER             0x0080
 
 #define SBT_NOBORDERS         0x0100
+#define STATUSCLASSNAMEW      L"msctls_statusbar32"
 
 #define SB_SETPARTS           (WM_USER + 4)
 #define SB_SETTEXTW           (WM_USER + 11)
@@ -188,5 +191,7 @@ int WINAPI ListView_InsertColumnW(HWND hwnd, int iCol, const LVCOLUMNW *pcol);
 BOOL WINAPI ListView_SetItemTextW(HWND hwnd, int i, int iSubItem, LPWSTR pszText);
 void WINAPI ListView_GetItemTextW(HWND hwnd, int i, int iSubItem, LPWSTR pszText, int cchTextMax);
 void WINAPI ListView_GetItemTextA(HWND hwnd, int i, int iSubItem, LPSTR pszText, int cchTextMax);
+BOOL WINAPI SetWindowSubclass(HWND hWnd, SUBCLASSPROC pfnSubclass, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT WINAPI DefSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 #endif

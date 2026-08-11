@@ -16,6 +16,7 @@ __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpRes
 }
 
 extern uint32_t SendMessageW(void *hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam);
+extern intptr_t DefWindowProcW(void *hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam);
 
 __attribute__((stdcall)) void InitCommonControls(void) {
 }
@@ -91,4 +92,13 @@ __attribute__((stdcall)) void ListView_GetItemTextA(void *hwnd, int i, int iSubI
     (void)hwnd; (void)i; (void)iSubItem;
     if (!pszText || cchTextMax <= 0) return;
     pszText[0] = 0;
+}
+
+__attribute__((stdcall)) int SetWindowSubclass(void *hWnd, void *pfnSubclass, uintptr_t uIdSubclass, uintptr_t dwRefData) {
+    (void)hWnd; (void)pfnSubclass; (void)uIdSubclass; (void)dwRefData;
+    return 1;
+}
+
+__attribute__((stdcall)) intptr_t DefSubclassProc(void *hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam) {
+    return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }

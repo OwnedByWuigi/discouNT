@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdarg.h>
 #include "windows.h"
 #include "commctrl.h"
 
@@ -9,6 +10,7 @@ extern void *memcpy(void *dest, const void *src, uint32_t n);
 extern uint32_t strlen(const char *s);
 extern void KeYield(void);
 extern uint32_t GetTickCount(void);
+extern uint32_t GetCurrentProcessId(void);
 extern void SerialPutString(const char *str);
 extern void *Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(void *, uint32_t, uint32_t, uint32_t));
 extern void *Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
@@ -27,6 +29,7 @@ extern void GdiDestroyScreenDC(HDC hdc);
 #define MAX_U32_WINDOWS 256
 #define MAX_U32_TIMERS 64
 #define MAX_U32_MENUS 64
+#define MAX_U32_MESSAGES 256
 #define MAX_LV_COLUMNS 32
 #define MAX_LV_ITEMS 256
 #define MAX_TAB_ITEMS 16
@@ -89,9 +92,16 @@ typedef struct _U32_WINDOW {
     int ctrl_type;
     int invalidated;
     int painting;
+    int edit_limit;
+    int edit_len;
+    int edit_sel_start;
+    int edit_sel_end;
+    int edit_modified;
     int status_part_right[8];
     WCHAR status_text[8][64];
     void *listview_data;
+    WCHAR *edit_text;
+    DWORD owner_pid;
 } U32_WINDOW;
 
 typedef struct _U32_LISTVIEW_DATA {
@@ -107,14 +117,25 @@ typedef struct _U32_TIMER {
     uint32_t tick;
 } U32_TIMER;
 
+typedef struct _U32_MESSAGE {
+    int used;
+    MSG msg;
+    DWORD owner_pid;
+} U32_MESSAGE;
+
 static U32_CLASS g_classes[MAX_U32_CLASSES];
 static U32_WINDOW g_windows[MAX_U32_WINDOWS];
 static U32_TIMER g_timers[MAX_U32_TIMERS];
 static U32_MENU g_menus[MAX_U32_MENUS];
+static U32_MESSAGE g_messages[MAX_U32_MESSAGES];
 static HWND g_focus = NULL;
+static HWND g_active_window = NULL;
 static int g_message_loop_exit = 0;
+static int g_quit_exit_code = 0;
 
 static void u32_paint_children(HWND hwnd);
+static void u32_mark_invalid(HWND hwnd);
+BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 
 #define U32_CTRL_GENERIC   0
 #define U32_CTRL_DIALOG    1
@@ -166,6 +187,12 @@ static void u32_wstrcpy(WCHAR *dst, LPCWSTR src, int max_chars) {
     dst[i] = 0;
 }
 
+static void u32_wmemcpy(WCHAR *dst, const WCHAR *src, int count) {
+    int i;
+    if (!dst || !src || count <= 0) return;
+    for (i = 0; i < count; i++) dst[i] = src[i];
+}
+
 static int u32_wstrcmp(LPCWSTR a, LPCWSTR b) {
     int i = 0;
     if (a == b) return 0;
@@ -177,6 +204,95 @@ static int u32_wstrcmp(LPCWSTR a, LPCWSTR b) {
     }
     if (a[i] == b[i]) return 0;
     return a[i] ? 1 : -1;
+}
+
+static WCHAR *u32_ensure_edit_buffer(U32_WINDOW *win, int min_chars) {
+    WCHAR *newbuf;
+    int alloc_chars;
+    if (!win) return NULL;
+    if (win->edit_limit <= 0) win->edit_limit = 65535;
+    if (min_chars < 64) min_chars = 64;
+    alloc_chars = win->edit_limit + 1;
+    if (alloc_chars < min_chars) alloc_chars = min_chars;
+    if (alloc_chars > 65536) alloc_chars = 65536;
+    if (win->edit_text && alloc_chars <= win->edit_limit + 1) return win->edit_text;
+    newbuf = (WCHAR*)kmalloc((uint32_t)(alloc_chars * sizeof(WCHAR)));
+    if (!newbuf) return win->edit_text;
+    memset(newbuf, 0, (uint32_t)(alloc_chars * sizeof(WCHAR)));
+    if (win->edit_text && win->edit_len > 0) {
+        u32_wmemcpy(newbuf, win->edit_text, win->edit_len);
+        kfree(win->edit_text);
+    }
+    win->edit_text = newbuf;
+    return win->edit_text;
+}
+
+static void u32_edit_sync_title(U32_WINDOW *win) {
+    int copy_len;
+    if (!win || !win->edit_text) return;
+    copy_len = win->edit_len;
+    if (copy_len > 127) copy_len = 127;
+    if (copy_len > 0) u32_wmemcpy(win->title, win->edit_text, copy_len);
+    win->title[copy_len] = 0;
+}
+
+static void u32_edit_set_text(U32_WINDOW *win, LPCWSTR text) {
+    int len;
+    if (!win) return;
+    len = u32_wstrlen(text);
+    if (win->edit_limit > 0 && len > win->edit_limit) len = win->edit_limit;
+    if (!u32_ensure_edit_buffer(win, len + 1)) return;
+    if (len > 0) u32_wmemcpy(win->edit_text, text, len);
+    win->edit_text[len] = 0;
+    win->edit_len = len;
+    win->edit_sel_start = len;
+    win->edit_sel_end = len;
+    win->edit_modified = 0;
+    u32_edit_sync_title(win);
+}
+
+static void u32_edit_replace_sel(U32_WINDOW *win, LPCWSTR repl) {
+    int start, end, repl_len, new_len, tail_len;
+    if (!win) return;
+    if (win->ctrl_type != U32_CTRL_EDIT) return;
+    if (!repl) repl = L"";
+    if (!u32_ensure_edit_buffer(win, 64)) return;
+    start = win->edit_sel_start;
+    end = win->edit_sel_end;
+    if (start < 0) start = 0;
+    if (end < start) end = start;
+    if (end > win->edit_len) end = win->edit_len;
+    repl_len = u32_wstrlen(repl);
+    new_len = start + repl_len + (win->edit_len - end);
+    if (win->edit_limit > 0 && new_len > win->edit_limit) {
+        repl_len -= (new_len - win->edit_limit);
+        if (repl_len < 0) repl_len = 0;
+        new_len = start + repl_len + (win->edit_len - end);
+    }
+    if (!u32_ensure_edit_buffer(win, new_len + 1)) return;
+    tail_len = win->edit_len - end;
+    if (tail_len > 0 && start + repl_len != end) {
+        int i;
+        if (start + repl_len < end) {
+            for (i = 0; i <= tail_len; i++) {
+                win->edit_text[start + repl_len + i] = win->edit_text[end + i];
+            }
+        } else {
+            for (i = tail_len; i >= 0; i--) {
+                win->edit_text[start + repl_len + i] = win->edit_text[end + i];
+            }
+        }
+    } else {
+        win->edit_text[new_len] = 0;
+    }
+    if (repl_len > 0) u32_wmemcpy(win->edit_text + start, repl, repl_len);
+    win->edit_len = new_len;
+    win->edit_text[new_len] = 0;
+    win->edit_sel_start = start + repl_len;
+    win->edit_sel_end = start + repl_len;
+    win->edit_modified = 1;
+    u32_edit_sync_title(win);
+    u32_mark_invalid(win->hwnd);
 }
 
 static void u32_wide_to_ansi(LPCWSTR src, char *dst, int max_chars) {
@@ -192,6 +308,83 @@ static void u32_wide_to_ansi(LPCWSTR src, char *dst, int max_chars) {
         i++;
     }
     dst[i] = 0;
+}
+
+static WCHAR u32_towupper(WCHAR ch) {
+    if (ch >= L'a' && ch <= L'z') return ch - (L'a' - L'A');
+    return ch;
+}
+
+static int u32_append_number(WCHAR *dst, int pos, int max, int value, int unsig) {
+    WCHAR temp[16];
+    unsigned v;
+    int count = 0;
+    if (!dst || max <= 0) return pos;
+    if (!unsig && value < 0) {
+        if (pos < max - 1) dst[pos++] = L'-';
+        v = (unsigned)(-value);
+    } else {
+        v = (unsigned)value;
+    }
+    if (v == 0) {
+        if (pos < max - 1) dst[pos++] = L'0';
+        return pos;
+    }
+    while (v && count < (int)ARRAY_SIZE(temp)) {
+        temp[count++] = (WCHAR)(L'0' + (v % 10));
+        v /= 10;
+    }
+    while (count--) {
+        if (pos < max - 1) dst[pos++] = temp[count];
+    }
+    return pos;
+}
+
+static int u32_vsnprintfw(LPWSTR out, int max, LPCWSTR fmt, va_list ap) {
+    int pos = 0;
+    int i = 0;
+    if (!out || max <= 0) return 0;
+    if (!fmt) {
+        out[0] = 0;
+        return 0;
+    }
+    while (fmt[i] && pos < max - 1) {
+        if (fmt[i] != L'%') {
+            out[pos++] = fmt[i++];
+            continue;
+        }
+        i++;
+        if (fmt[i] == L'%') {
+            out[pos++] = fmt[i++];
+            continue;
+        }
+        while (fmt[i] >= L'0' && fmt[i] <= L'9') i++;
+        switch (fmt[i]) {
+        case L'd':
+        case L'i':
+            pos = u32_append_number(out, pos, max, va_arg(ap, int), 0);
+            i++;
+            break;
+        case L'u':
+            pos = u32_append_number(out, pos, max, (int)va_arg(ap, unsigned), 1);
+            i++;
+            break;
+        case L's':
+            {
+                LPCWSTR s = va_arg(ap, LPCWSTR);
+                if (!s) s = L"";
+                while (*s && pos < max - 1) out[pos++] = *s++;
+                i++;
+            }
+            break;
+        default:
+            out[pos++] = L'%';
+            if (fmt[i] && pos < max - 1) out[pos++] = fmt[i++];
+            break;
+        }
+    }
+    out[pos] = 0;
+    return pos;
 }
 
 static U32_CLASS *u32_find_class(LPCWSTR name) {
@@ -291,6 +484,34 @@ static HWND u32_get_root_window(HWND hwnd) {
     return win ? win->hwnd : hwnd;
 }
 
+static int u32_is_descendant(HWND parent, HWND child) {
+    U32_WINDOW *win = u32_lookup_window(child);
+    while (win) {
+        if (win->hwnd == parent) return 1;
+        if (!win->parent) break;
+        win = u32_lookup_window(win->parent);
+    }
+    return 0;
+}
+
+static HWND u32_hit_test_child(HWND parent, int x, int y) {
+    int i;
+    for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+        U32_WINDOW *child = &g_windows[i];
+        int cx, cy, cw, ch;
+        if (!child->used || child->parent != parent || !child->visible) continue;
+        cx = child->rect.left;
+        cy = child->rect.top;
+        cw = child->rect.right - child->rect.left;
+        ch = child->rect.bottom - child->rect.top;
+        if (x >= cx && x < cx + cw && y >= cy && y < cy + ch) {
+            HWND deeper = u32_hit_test_child(child->hwnd, x - cx, y - cy);
+            return deeper ? deeper : child->hwnd;
+        }
+    }
+    return NULL;
+}
+
 static void u32_get_absolute_rect(U32_WINDOW *win, RECT *out) {
     RECT rc;
     if (!win || !out) return;
@@ -374,6 +595,7 @@ static HWND u32_create_placeholder_child(HWND parent, UINT id) {
     win->visible = 1;
     win->enabled = 1;
     win->id = id;
+    win->owner_pid = pwin ? pwin->owner_pid : GetCurrentProcessId();
     win->style = WS_CHILD | WS_VISIBLE;
     win->ctrl_type = U32_CTRL_GENERIC;
     if (pwin) u32_set_rect(win, 8, 8, 160, 24);
@@ -402,6 +624,7 @@ static HWND u32_create_child_control(HWND parent, LPCWSTR class_name, LPCWSTR ti
     win->visible = (style & WS_VISIBLE) ? 1 : 0;
     win->enabled = (style & WS_DISABLED) ? 0 : 1;
     win->id = id;
+    win->owner_pid = pwin->owner_pid;
     win->style = style | WS_CHILD;
     win->exstyle = exstyle;
     win->klass = u32_find_class(class_name);
@@ -495,6 +718,72 @@ static void u32_paint_children(HWND hwnd) {
     }
 }
 
+static int u32_message_matches(const MSG *msg, HWND hWnd, UINT min_msg, UINT max_msg) {
+    if (!msg) return 0;
+    if (hWnd && msg->hwnd != hWnd) return 0;
+    if (min_msg || max_msg) {
+        if (msg->message < min_msg) return 0;
+        if (max_msg && msg->message > max_msg) return 0;
+    }
+    return 1;
+}
+
+static int u32_enqueue_message(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    int i;
+    DWORD owner_pid = GetCurrentProcessId();
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    if (win && win->owner_pid) owner_pid = win->owner_pid;
+    for (i = 0; i < MAX_U32_MESSAGES; i++) {
+        if (!g_messages[i].used) {
+            g_messages[i].used = 1;
+            g_messages[i].msg.hwnd = hWnd;
+            g_messages[i].msg.message = Msg;
+            g_messages[i].msg.wParam = wParam;
+            g_messages[i].msg.lParam = lParam;
+            g_messages[i].msg.time = GetTickCount();
+            g_messages[i].msg.pt.x = 0;
+            g_messages[i].msg.pt.y = 0;
+            g_messages[i].owner_pid = owner_pid;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static int u32_dequeue_message(LPMSG lpMsg, HWND hWnd, UINT min_msg, UINT max_msg, int remove) {
+    int i;
+    DWORD current_pid = GetCurrentProcessId();
+    if (!lpMsg) return FALSE;
+    for (i = 0; i < MAX_U32_MESSAGES; i++) {
+        if (g_messages[i].used &&
+            g_messages[i].owner_pid == current_pid &&
+            u32_message_matches(&g_messages[i].msg, hWnd, min_msg, max_msg)) {
+            *lpMsg = g_messages[i].msg;
+            if (remove) {
+                int j;
+                for (j = i; j < MAX_U32_MESSAGES - 1; j++) {
+                    g_messages[j] = g_messages[j + 1];
+                }
+                memset(&g_messages[MAX_U32_MESSAGES - 1], 0, sizeof(g_messages[MAX_U32_MESSAGES - 1]));
+            }
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static int u32_find_invalid_window(HWND filter) {
+    int i;
+    DWORD current_pid = GetCurrentProcessId();
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].visible && g_windows[i].invalidated &&
+            g_windows[i].owner_pid == current_pid) {
+            if (!filter || g_windows[i].hwnd == filter) return (int)i;
+        }
+    }
+    return -1;
+}
+
 static void u32_mark_invalid(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
     while (win) {
@@ -559,7 +848,7 @@ static void u32_pump_timers(HWND modal_hwnd) {
         if (g_timers[i].used && (!modal_hwnd || g_timers[i].hwnd == modal_hwnd)) {
             if (now >= g_timers[i].tick) {
                 g_timers[i].tick = now + (g_timers[i].elapse ? g_timers[i].elapse : 1);
-                SendMessageW(g_timers[i].hwnd, WM_TIMER, (WPARAM)g_timers[i].id, 0);
+                PostMessageW(g_timers[i].hwnd, WM_TIMER, (WPARAM)g_timers[i].id, 0);
             }
         }
     }
@@ -789,12 +1078,42 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
 }
 
 BOOL GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax) {
-    (void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax;
     if (!lpMsg) return FALSE;
-    if (g_message_loop_exit) return FALSE;
-    memset(lpMsg, 0, sizeof(*lpMsg));
-    KeYield();
-    return TRUE;
+    for (;;) {
+        int invalid_index;
+
+        if (u32_dequeue_message(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, TRUE)) {
+            if (lpMsg->message == WM_QUIT) return FALSE;
+            return TRUE;
+        }
+
+        u32_pump_timers(NULL);
+
+        invalid_index = u32_find_invalid_window(hWnd);
+        if (invalid_index >= 0) {
+            lpMsg->hwnd = g_windows[invalid_index].hwnd;
+            lpMsg->message = WM_PAINT;
+            lpMsg->wParam = 0;
+            lpMsg->lParam = 0;
+            lpMsg->time = GetTickCount();
+            lpMsg->pt.x = 0;
+            lpMsg->pt.y = 0;
+            return TRUE;
+        }
+
+        if (g_message_loop_exit) {
+            lpMsg->hwnd = NULL;
+            lpMsg->message = WM_QUIT;
+            lpMsg->wParam = (WPARAM)g_quit_exit_code;
+            lpMsg->lParam = 0;
+            lpMsg->time = GetTickCount();
+            lpMsg->pt.x = 0;
+            lpMsg->pt.y = 0;
+            return FALSE;
+        }
+
+        KeYield();
+    }
 }
 
 LRESULT DispatchMessageW(const MSG *lpMsg) {
@@ -803,7 +1122,13 @@ LRESULT DispatchMessageW(const MSG *lpMsg) {
 }
 
 BOOL TranslateMessage(const MSG *lpMsg) {
-    (void)lpMsg;
+    if (!lpMsg) return FALSE;
+    if (lpMsg->message == WM_KEYDOWN) {
+        WPARAM ch = lpMsg->wParam;
+        if (ch == 8 || ch == 9 || ch == 13 || ch >= 32) {
+            PostMessageW(lpMsg->hwnd, WM_CHAR, ch, lpMsg->lParam);
+        }
+    }
     return TRUE;
 }
 
@@ -840,8 +1165,9 @@ BOOL UpdateWindow(HWND hWnd) {
 }
 
 void PostQuitMessage(int nExitCode) {
-    (void)nExitCode;
     g_message_loop_exit = 1;
+    g_quit_exit_code = nExitCode;
+    u32_enqueue_message(NULL, WM_QUIT, (WPARAM)nExitCode, 0);
 }
 
 int MessageBoxW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType) {
@@ -884,6 +1210,8 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     win->menu = hMenu;
     win->enabled = TRUE;
     win->visible = (dwStyle & WS_VISIBLE) ? TRUE : FALSE;
+    win->owner_pid = hWndParent ? (u32_lookup_window(hWndParent) ? u32_lookup_window(hWndParent)->owner_pid : GetCurrentProcessId())
+                                : GetCurrentProcessId();
     win->klass = cls;
     win->proc = cls->proc;
     win->dialog = FALSE;
@@ -990,7 +1318,74 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     U32_LISTVIEW_DATA *lv;
     if (!win) return 0;
 
+    if ((Msg == WM_KEYDOWN || Msg == WM_KEYUP || Msg == WM_CHAR) &&
+        g_focus && g_focus != hWnd && u32_is_descendant(hWnd, g_focus)) {
+        return SendMessageW(g_focus, Msg, wParam, lParam);
+    }
+
+    if ((Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP) && win->top_level) {
+        int x = (short)(lParam & 0xFFFF);
+        int y = (short)((lParam >> 16) & 0xFFFF);
+        HWND child = u32_hit_test_child(hWnd, x, y);
+        if (child && child != hWnd) {
+            U32_WINDOW *child_win = u32_lookup_window(child);
+            if (Msg == WM_LBUTTONDOWN) {
+                SetFocus(child);
+            }
+            if (child_win) {
+                int child_x = x - child_win->rect.left;
+                int child_y = y - child_win->rect.top;
+                return SendMessageW(child, Msg, wParam, MAKELPARAM(child_x, child_y));
+            }
+        }
+    }
+
+    if (Msg == WM_PAINT) {
+        u32_clear_invalid_subtree(hWnd);
+    }
+
     switch (Msg) {
+    case WM_SETTEXT:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            u32_edit_set_text(win, (LPCWSTR)lParam);
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+        if ((LPCWSTR)lParam) u32_wstrcpy(win->title, (LPCWSTR)lParam, 128);
+        else win->title[0] = 0;
+        u32_mark_invalid(hWnd);
+        return TRUE;
+    case WM_GETTEXT:
+        {
+            LPWSTR out = (LPWSTR)lParam;
+            int max = (int)wParam;
+            if (!out || max <= 0) return 0;
+            if (win->ctrl_type == U32_CTRL_EDIT && win->edit_text) {
+                u32_wstrcpy(out, win->edit_text, max);
+            } else {
+                u32_wstrcpy(out, win->title, max);
+            }
+            return u32_wstrlen(out);
+        }
+    case WM_GETTEXTLENGTH:
+        if (win->ctrl_type == U32_CTRL_EDIT) return (LRESULT)win->edit_len;
+        return (LRESULT)u32_wstrlen(win->title);
+    case WM_CHAR:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            WCHAR chbuf[2];
+            if ((WCHAR)wParam == 8) {
+                if (win->edit_sel_start == win->edit_sel_end && win->edit_sel_start > 0) {
+                    win->edit_sel_start--;
+                }
+                u32_edit_replace_sel(win, L"");
+                return 0;
+            }
+            chbuf[0] = (WCHAR)wParam;
+            chbuf[1] = 0;
+            u32_edit_replace_sel(win, chbuf);
+            return 0;
+        }
+        break;
     case WM_SETICON:
     case DM_SETDEFID:
     case WM_SETREDRAW:
@@ -1107,6 +1502,66 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             u32_mark_invalid(hWnd);
             return TRUE;
         }
+    case EM_GETSEL:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            if (wParam) *(DWORD*)wParam = (DWORD)win->edit_sel_start;
+            if (lParam) *(DWORD*)lParam = (DWORD)win->edit_sel_end;
+            return MAKELPARAM(win->edit_sel_start, win->edit_sel_end);
+        }
+        return 0;
+    case EM_SETSEL:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            int start = (int)wParam;
+            int end = (int)lParam;
+            if (start < 0) start = 0;
+            if (end < 0 || end > win->edit_len) end = win->edit_len;
+            if (start > win->edit_len) start = win->edit_len;
+            if (end < start) end = start;
+            win->edit_sel_start = start;
+            win->edit_sel_end = end;
+            return 0;
+        }
+        return 0;
+    case EM_GETMODIFY:
+        if (win->ctrl_type == U32_CTRL_EDIT) return (LRESULT)win->edit_modified;
+        return 0;
+    case EM_SETMODIFY:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            win->edit_modified = wParam ? 1 : 0;
+            return 0;
+        }
+        return 0;
+    case EM_LINEINDEX:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            int line = (int)wParam;
+            int pos = 0;
+            int current = 0;
+            if (line < 0) return win->edit_sel_start;
+            while (pos < win->edit_len && current < line) {
+                if (win->edit_text[pos] == L'\n') current++;
+                pos++;
+            }
+            return pos;
+        }
+        return 0;
+    case EM_REPLACESEL:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            u32_edit_replace_sel(win, (LPCWSTR)lParam);
+            return TRUE;
+        }
+        return FALSE;
+    case EM_LIMITTEXT:
+        if (win->ctrl_type == U32_CTRL_EDIT) {
+            win->edit_limit = wParam ? (int)wParam : 65535;
+            return 0;
+        }
+        return 0;
+    case EM_CANUNDO:
+        if (win->ctrl_type == U32_CTRL_EDIT) return FALSE;
+        return FALSE;
+    case EM_UNDO:
+    case EM_EMPTYUNDOBUFFER:
+        return FALSE;
     case LVM_GETITEMW:
         {
             LVITEMW *item = (LVITEMW*)lParam;
@@ -1166,6 +1621,10 @@ BOOL DestroyWindow(HWND hWnd) {
     if (win->listview_data) {
         kfree(win->listview_data);
         win->listview_data = NULL;
+    }
+    if (win->edit_text) {
+        kfree(win->edit_text);
+        win->edit_text = NULL;
     }
     memset(win, 0, sizeof(*win));
     return TRUE;
@@ -1287,8 +1746,16 @@ BOOL GetWindowRect(HWND hWnd, LPRECT lpRect) {
 int GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win || !lpString || nMaxCount <= 0) return 0;
-    u32_lv_copy_out(lpString, nMaxCount, win->title);
+    if (win->ctrl_type == U32_CTRL_EDIT && win->edit_text) u32_lv_copy_out(lpString, nMaxCount, win->edit_text);
+    else u32_lv_copy_out(lpString, nMaxCount, win->title);
     return u32_wstrlen(lpString);
+}
+
+int GetWindowTextLengthW(HWND hWnd) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    if (!win) return 0;
+    if (win->ctrl_type == U32_CTRL_EDIT) return win->edit_len;
+    return u32_wstrlen(win->title);
 }
 
 HWND GetDlgItem(HWND hDlg, int nIDDlgItem) {
@@ -1297,6 +1764,46 @@ HWND GetDlgItem(HWND hDlg, int nIDDlgItem) {
         if (g_windows[i].used && g_windows[i].parent == hDlg && g_windows[i].id == (UINT)nIDDlgItem) return g_windows[i].hwnd;
     }
     return u32_create_placeholder_child(hDlg, (UINT)nIDDlgItem);
+}
+
+UINT GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax) {
+    HWND child = GetDlgItem(hDlg, nIDDlgItem);
+    if (!child || !lpString || cchMax <= 0) return 0;
+    return (UINT)GetWindowTextW(child, lpString, cchMax);
+}
+
+BOOL SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString) {
+    HWND child = GetDlgItem(hDlg, nIDDlgItem);
+    if (!child) return FALSE;
+    return SetWindowTextW(child, lpString);
+}
+
+UINT GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned) {
+    WCHAR buf[64];
+    UINT value = 0;
+    int i = 0;
+    int neg = 0;
+    if (lpTranslated) *lpTranslated = FALSE;
+    if (!GetDlgItemTextW(hDlg, nIDDlgItem, buf, ARRAY_SIZE(buf))) return 0;
+    if (bSigned && buf[0] == L'-') {
+        neg = 1;
+        i++;
+    }
+    while (buf[i] >= L'0' && buf[i] <= L'9') {
+        value = value * 10 + (UINT)(buf[i] - L'0');
+        i++;
+    }
+    if (lpTranslated) *lpTranslated = TRUE;
+    return neg ? (UINT)(-(int)value) : value;
+}
+
+BOOL SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned) {
+    WCHAR buf[32];
+    int pos = 0;
+    if (bSigned) pos = u32_append_number(buf, pos, ARRAY_SIZE(buf), (int)uValue, 0);
+    else pos = u32_append_number(buf, pos, ARRAY_SIZE(buf), (int)uValue, 1);
+    buf[pos] = 0;
+    return SetDlgItemTextW(hDlg, nIDDlgItem, buf);
 }
 
 BOOL SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {
@@ -1310,12 +1817,21 @@ BOOL SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {
 
 int GetSystemMetrics(int nIndex) {
     switch (nIndex) {
+    case SM_CXSCREEN:
+        return 800;
+    case SM_CYSCREEN:
+        return 600;
     case SM_CXSMICON:
     case SM_CYSMICON:
         return 16;
     default:
         return 0;
     }
+}
+
+UINT GetDpiForWindow(HWND hWnd) {
+    (void)hWnd;
+    return 96;
 }
 
 BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
@@ -1457,7 +1973,21 @@ BOOL BringWindowToTop(HWND hWnd) {
     }
     return TRUE;
 }
-HWND SetFocus(HWND hWnd) { HWND old = g_focus; g_focus = hWnd; return old; }
+HWND SetFocus(HWND hWnd) {
+    HWND old = g_focus;
+    if (old == hWnd) return old;
+    g_focus = hWnd;
+    if (old) SendMessageW(old, WM_KILLFOCUS, (WPARAM)hWnd, 0);
+    if (hWnd) SendMessageW(hWnd, WM_SETFOCUS, (WPARAM)old, 0);
+    return old;
+}
+HWND SetActiveWindow(HWND hWnd) {
+    HWND old = g_active_window;
+    g_active_window = hWnd;
+    if (hWnd) BringWindowToTop(hWnd);
+    return old;
+}
+HWND GetDesktopWindow(void) { return (HWND)1; }
 HMENU CreatePopupMenu(void) { U32_MENU *menu = u32_alloc_menu(); return menu ? menu->handle : NULL; }
 DWORD FormatMessageW(DWORD dwFlags, LPCVOID lpSource, DWORD dwMessageId, DWORD dwLanguageId,
                      LPWSTR lpBuffer, DWORD nSize, void *Arguments) {
@@ -1476,7 +2006,9 @@ BOOL EndDialog(HWND hDlg, INT_PTR nResult) {
     win->dialog_result = nResult;
     return TRUE;
 }
-BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) { return SendMessageW(hWnd, Msg, wParam, lParam); }
+BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    return u32_enqueue_message(hWnd, Msg, wParam, lParam);
+}
 BOOL WinHelpW(HWND hWndMain, LPCWSTR lpszHelp, UINT uCommand, ULONG_PTR dwData) { (void)hWndMain; (void)lpszHelp; (void)uCommand; (void)dwData; return TRUE; }
 BOOL GetCursorPos(LPPOINT lpPoint) { if (!lpPoint) return FALSE; lpPoint->x = 0; lpPoint->y = 0; return TRUE; }
 LONG_PTR GetWindowLongW(HWND hWnd, int nIndex) {
@@ -1554,8 +2086,11 @@ BOOL EndPaint(HWND hWnd, const PAINTSTRUCT *lpPaint) {
 }
 BOOL OpenIcon(HWND hWnd) { return ShowWindow(hWnd, SW_RESTORE); }
 BOOL SetForegroundWindow(HWND hWnd) { BringWindowToTop(hWnd); return TRUE; }
-int wsprintfW(LPWSTR lpOut, LPCWSTR lpFmt, ...) { (void)lpFmt; if (lpOut) lpOut[0] = 0; return 0; }
+int wsprintfW(LPWSTR lpOut, LPCWSTR lpFmt, ...) { int r; va_list ap; va_start(ap, lpFmt); r = u32_vsnprintfw(lpOut, 1024, lpFmt, ap); va_end(ap); return r; }
+int wnsprintfW(LPWSTR buffer, int count, LPCWSTR format, ...) { int r; va_list ap; va_start(ap, format); r = u32_vsnprintfw(buffer, count, format, ap); va_end(ap); return r; }
+int swprintf(WCHAR *buffer, size_t count, const WCHAR *format, ...) { int r; va_list ap; va_start(ap, format); r = u32_vsnprintfw(buffer, (int)count, format, ap); va_end(ap); return r; }
 BOOL EnableWindow(HWND hWnd, BOOL bEnable) { U32_WINDOW *win = u32_lookup_window(hWnd); if (!win) return FALSE; win->enabled = bEnable; return TRUE; }
+BOOL IsClipboardFormatAvailable(UINT format) { (void)format; return FALSE; }
 BOOL CopyRect(LPRECT lprcDst, const RECT *lprcSrc) { if (!lprcDst || !lprcSrc) return FALSE; *lprcDst = *lprcSrc; return TRUE; }
 int DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format) {
     int len = cchText;
@@ -1603,7 +2138,11 @@ int MapWindowPoints(HWND hWndFrom, HWND hWndTo, LPPOINT lpPoints, UINT cPoints) 
 BOOL SetWindowTextW(HWND hWnd, LPCWSTR lpString) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win) return FALSE;
-    u32_wstrcpy(win->title, lpString, 128);
+    if (win->ctrl_type == U32_CTRL_EDIT) {
+        u32_edit_set_text(win, lpString ? lpString : L"");
+    } else {
+        u32_wstrcpy(win->title, lpString, 128);
+    }
     u32_mark_invalid(hWnd);
     return TRUE;
 }
@@ -1615,4 +2154,28 @@ BOOL DestroyIcon(HICON hIcon) { (void)hIcon; return TRUE; }
 WORD TileWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 WORD CascadeWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 void SwitchToThisWindow(HWND hWnd, BOOL fAltTab) { (void)fAltTab; BringWindowToTop(hWnd); }
-DWORD GetWindowThreadProcessId(HWND hWnd, DWORD *lpdwProcessId) { if (lpdwProcessId) *lpdwProcessId = 1; (void)hWnd; return 1; }
+DWORD GetWindowThreadProcessId(HWND hWnd, DWORD *lpdwProcessId) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    DWORD pid = win ? win->owner_pid : 0;
+    if (lpdwProcessId) *lpdwProcessId = pid;
+    return pid;
+}
+HCURSOR LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName) { (void)hInstance; (void)lpCursorName; return (HCURSOR)1; }
+UINT RegisterWindowMessageW(LPCWSTR lpString) { static UINT next = 0xC000; (void)lpString; return next++; }
+BOOL IsDialogMessageW(HWND hDlg, LPMSG lpMsg) { (void)hDlg; (void)lpMsg; return FALSE; }
+HACCEL LoadAcceleratorsW(HINSTANCE hInstance, LPCWSTR lpTableName) { (void)hInstance; (void)lpTableName; return (HACCEL)1; }
+int TranslateAcceleratorW(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg) { (void)hWnd; (void)hAccTable; (void)lpMsg; return 0; }
+BOOL DragAcceptFiles(HWND hWnd, BOOL fAccept) { (void)hWnd; (void)fAccept; return TRUE; }
+UINT DragQueryFileW(HANDLE hDrop, UINT iFile, LPWSTR lpszFile, UINT cch) {
+    (void)hDrop;
+    if (iFile == 0xFFFFFFFFu) return 0;
+    if (lpszFile && cch) lpszFile[0] = 0;
+    return 0;
+}
+void DragFinish(HANDLE hDrop) { (void)hDrop; }
+HWND CreateWindowW(LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle,
+                   int X, int Y, int nWidth, int nHeight, HWND hWndParent,
+                   HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam) {
+    return CreateWindowExW(0, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
+                           hWndParent, hMenu, hInstance, lpParam);
+}

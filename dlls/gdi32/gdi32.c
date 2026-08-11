@@ -20,6 +20,7 @@ extern void SerialPutString(const char *str);
 #define GDI_OBJ_BRUSH  1
 #define GDI_OBJ_PEN    2
 #define GDI_OBJ_BITMAP 3
+#define GDI_OBJ_FONT   4
 
 typedef struct _GDIHDR {
     uint32_t kind;
@@ -44,6 +45,11 @@ typedef struct _GDIBITMAP {
     COLORREF *pixels;
 } GDIBITMAP;
 
+typedef struct _GDIFONT {
+    GDIHDR hdr;
+    LOGFONTW lf;
+} GDIFONT;
+
 typedef struct _GDISAVEDC {
     int used;
     RECT clip;
@@ -55,6 +61,7 @@ typedef struct _GDISAVEDC {
     HGDIOBJ selected_pen;
     HGDIOBJ selected_brush;
     HGDIOBJ selected_bitmap;
+    HGDIOBJ selected_font;
 } GDISAVEDC;
 
 typedef struct _GDIDC {
@@ -72,6 +79,7 @@ typedef struct _GDIDC {
     HGDIOBJ selected_pen;
     HGDIOBJ selected_brush;
     HGDIOBJ selected_bitmap;
+    HGDIOBJ selected_font;
     GDISAVEDC saved[8];
 } GDIDC;
 
@@ -79,6 +87,10 @@ static GDIBRUSH g_stock_white_brush = {{GDI_OBJ_BRUSH}, RGB(255,255,255)};
 static GDIBRUSH g_stock_ltgray_brush = {{GDI_OBJ_BRUSH}, RGB(192,192,192)};
 static GDIBRUSH g_stock_black_brush = {{GDI_OBJ_BRUSH}, RGB(0,0,0)};
 static GDIPEN g_stock_black_pen = {{GDI_OBJ_PEN}, PS_SOLID, 1, RGB(0,0,0)};
+
+static GDIFONT g_stock_font = {{GDI_OBJ_FONT}, {16, 0, 0, 0, FW_REGULAR, 0, 0, 0, DEFAULT_CHARSET,
+                                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+                                               FIXED_PITCH | FF_DONTCARE, {L'S',L'y',L's',L't',L'e',L'm',0}}};
 
 static GDIDC *gdi_alloc_dc(void);
 
@@ -136,6 +148,7 @@ static GDIDC *gdi_alloc_dc(void) {
     dc->bk_mode = OPAQUE;
     dc->selected_pen = (HGDIOBJ)&g_stock_black_pen;
     dc->selected_brush = (HGDIOBJ)&g_stock_ltgray_brush;
+    dc->selected_font = (HGDIOBJ)&g_stock_font;
     return dc;
 }
 
@@ -399,6 +412,15 @@ HBRUSH CreateSolidBrush(COLORREF color) {
     return (HBRUSH)brush;
 }
 
+HFONT CreateFontIndirectW(const LOGFONTW *lplf) {
+    GDIFONT *font = (GDIFONT*)kmalloc(sizeof(GDIFONT));
+    if (!font) return 0;
+    font->hdr.kind = GDI_OBJ_FONT;
+    if (lplf) memcpy(&font->lf, lplf, sizeof(LOGFONTW));
+    else memset(&font->lf, 0, sizeof(LOGFONTW));
+    return (HFONT)font;
+}
+
 HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hgdiobj) {
     GDIDC *dc = (GDIDC*)hdc;
     GDIHDR *hdr = (GDIHDR*)hgdiobj;
@@ -417,6 +439,10 @@ HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hgdiobj) {
         old = dc->selected_bitmap;
         dc->selected_bitmap = hgdiobj;
         return old;
+    case GDI_OBJ_FONT:
+        old = dc->selected_font;
+        dc->selected_font = hgdiobj;
+        return old;
     default:
         return 0;
     }
@@ -426,7 +452,8 @@ BOOL DeleteObject(HGDIOBJ ho) {
     GDIHDR *hdr = (GDIHDR*)ho;
     if (!hdr) return FALSE;
     if (ho == (HGDIOBJ)&g_stock_white_brush || ho == (HGDIOBJ)&g_stock_ltgray_brush ||
-        ho == (HGDIOBJ)&g_stock_black_brush || ho == (HGDIOBJ)&g_stock_black_pen) {
+        ho == (HGDIOBJ)&g_stock_black_brush || ho == (HGDIOBJ)&g_stock_black_pen ||
+        ho == (HGDIOBJ)&g_stock_font) {
         return TRUE;
     }
     if (hdr->kind == GDI_OBJ_BITMAP) {
@@ -589,8 +616,130 @@ BOOL RestoreDC(HDC hdc, int nSavedDC) {
     dc->selected_pen = dc->saved[i].selected_pen;
     dc->selected_brush = dc->saved[i].selected_brush;
     dc->selected_bitmap = dc->saved[i].selected_bitmap;
+    dc->selected_font = dc->saved[i].selected_font;
     dc->saved[i].used = 0;
     return TRUE;
+}
+
+BOOL GetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm) {
+    GDIDC *dc = (GDIDC*)hdc;
+    GDIFONT *font;
+    int height = 16;
+    if (!dc || !lptm) return FALSE;
+    memset(lptm, 0, sizeof(*lptm));
+    font = (GDIFONT*)dc->selected_font;
+    if (font && ((GDIHDR*)font)->kind == GDI_OBJ_FONT && font->lf.lfHeight != 0) {
+        height = font->lf.lfHeight;
+        if (height < 0) height = -height;
+        if (height < 8) height = 8;
+    }
+    lptm->tmHeight = height;
+    lptm->tmAscent = (height * 3) / 4;
+    lptm->tmDescent = height - lptm->tmAscent;
+    lptm->tmInternalLeading = 0;
+    lptm->tmExternalLeading = 0;
+    lptm->tmAveCharWidth = 8;
+    lptm->tmMaxCharWidth = 8;
+    lptm->tmWeight = FW_REGULAR;
+    lptm->tmOverhang = 0;
+    lptm->tmDigitizedAspectX = 96;
+    lptm->tmDigitizedAspectY = 96;
+    lptm->tmFirstChar = 32;
+    lptm->tmLastChar = 126;
+    lptm->tmDefaultChar = '?';
+    lptm->tmBreakChar = ' ';
+    lptm->tmItalic = 0;
+    lptm->tmUnderlined = 0;
+    lptm->tmStruckOut = 0;
+    lptm->tmPitchAndFamily = FIXED_PITCH | FF_DONTCARE;
+    lptm->tmCharSet = DEFAULT_CHARSET;
+    return TRUE;
+}
+
+BOOL GetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl) {
+    TEXTMETRICW tm;
+    int len = c;
+    (void)hdc;
+    if (!psizl) return FALSE;
+    if (len < 0) {
+        len = 0;
+        if (lpString) while (lpString[len]) len++;
+    }
+    if (!GetTextMetricsW(hdc, &tm)) return FALSE;
+    psizl->cx = len * tm.tmAveCharWidth;
+    psizl->cy = tm.tmHeight;
+    return TRUE;
+}
+
+BOOL GetTextExtentExPointW(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent,
+                           LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize) {
+    TEXTMETRICW tm;
+    int len = cchString;
+    int i;
+    (void)lpszStr;
+    if (!GetTextMetricsW(hdc, &tm)) return FALSE;
+    if (len < 0) {
+        len = 0;
+        if (lpszStr) while (lpszStr[len]) len++;
+    }
+    if (lpnDx) {
+        for (i = 0; i < len; i++) lpnDx[i] = (i + 1) * tm.tmAveCharWidth;
+    }
+    if (lpnFit) {
+        if (nMaxExtent <= 0) *lpnFit = 0;
+        else *lpnFit = nMaxExtent / tm.tmAveCharWidth;
+        if (*lpnFit > len) *lpnFit = len;
+    }
+    if (lpSize) {
+        lpSize->cx = len * tm.tmAveCharWidth;
+        lpSize->cy = tm.tmHeight;
+    }
+    return TRUE;
+}
+
+int SetMapMode(HDC hdc, int mode) {
+    (void)hdc;
+    (void)mode;
+    return MM_TEXT;
+}
+
+int StartDocW(HDC hdc, const DOCINFOW *lpdi) {
+    (void)hdc;
+    (void)lpdi;
+    return 1;
+}
+
+int StartPage(HDC hdc) {
+    (void)hdc;
+    return 1;
+}
+
+int EndPage(HDC hdc) {
+    (void)hdc;
+    return 1;
+}
+
+int EndDoc(HDC hdc) {
+    (void)hdc;
+    return 1;
+}
+
+int GetDeviceCaps(HDC hdc, int index) {
+    (void)hdc;
+    switch (index) {
+    case LOGPIXELSX:
+    case LOGPIXELSY:
+        return 96;
+    case PHYSICALWIDTH:
+        return 800;
+    case PHYSICALHEIGHT:
+        return 600;
+    case PHYSICALOFFSETX:
+    case PHYSICALOFFSETY:
+        return 0;
+    default:
+        return 0;
+    }
 }
 
 int ExcludeClipRect(HDC hdc, int left, int top, int right, int bottom) {

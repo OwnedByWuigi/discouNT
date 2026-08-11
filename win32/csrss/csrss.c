@@ -24,6 +24,7 @@ typedef int (*GuiAppShouldExitFn)(void);
 typedef void (*GuiAppResetExitFn)(void);
 typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLine, int nCmdShow);
 typedef int (*GuiMainFn)(void);
+typedef int (*User32PostMessageWFn)(GUI_HANDLE hWnd, uint32_t Msg, uint32_t wParam, uint32_t lParam);
 
 typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
@@ -33,6 +34,7 @@ typedef enum _GUI_APP_KIND {
 
 typedef struct _GUI_APP_INSTANCE {
     uint32_t pid;
+    char path[256];
     void *image;
     GUI_HANDLE window;
     HANDLE thread;
@@ -66,6 +68,16 @@ static char g_pending_error_app[96];
 static char g_pending_error_text[256];
 static int g_pending_launch = 0;
 static char g_pending_launch_path[256];
+static User32PostMessageWFn g_user32_post_message = 0;
+
+#define WM_KEYDOWN      0x0100
+#define WM_KEYUP        0x0101
+#define WM_CHAR         0x0102
+#define WM_MOUSEMOVE    0x0200
+#define WM_LBUTTONDOWN  0x0201
+#define WM_LBUTTONUP    0x0202
+#define MK_LBUTTON      0x0001
+#define MAKELPARAM(l,h) ((uint32_t)(((uint16_t)(l)) | (((uint32_t)(uint16_t)(h)) << 16)))
 
 static void uppercase_copy(char *dst, const char *src, int max_len) {
     int i = 0;
@@ -75,6 +87,32 @@ static void uppercase_copy(char *dst, const char *src, int max_len) {
         dst[i++] = c;
     }
     dst[i] = 0;
+}
+
+static GUI_APP_INSTANCE *csrss_find_app_by_window(GUI_HANDLE hwnd) {
+    for (int i = 0; i < g_gui_app_count; i++) {
+        if (g_gui_apps[i].window == hwnd) return &g_gui_apps[i];
+    }
+    return 0;
+}
+
+static uint32_t csrss_translate_key_wparam(const KEYBOARD_EVENT *event) {
+    if (!event) return 0;
+    if (event->ascii) return (uint8_t)event->ascii;
+
+    switch (event->scancode) {
+    case 0x0E: return 0x08;
+    case 0x0F: return 0x09;
+    case 0x1C: return 0x0D;
+    case 0x01: return 0x1B;
+    case 0x39: return 0x20;
+    default:   return 0;
+    }
+}
+
+static void csrss_post_standard_message(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
+    if (!g_user32_post_message || hwnd == INVALID_HANDLE) return;
+    g_user32_post_message(hwnd, msg, wParam, lParam);
 }
 
 static void csrss_error_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
@@ -220,6 +258,8 @@ static void csrss_gui_thread_main(void *arg) {
 
     SerialPutString("[CSRSS] Standard GUI thread start pid=");
     SerialPrintDec(ctx->app->pid);
+    SerialPutString(" path=");
+    SerialPutString(ctx->app->path);
     SerialPutString("\r\n");
 
     exe_stack = (uint8_t*)kmalloc(65536);
@@ -234,6 +274,7 @@ static void csrss_gui_thread_main(void *arg) {
     exe_esp = (uint32_t)(exe_stack + 65536 - 256);
     if (ctx->kind == GUI_APP_KIND_WINMAIN) {
         GuiWinMainFn fn = (GuiWinMainFn)ctx->entry;
+        SerialPutString("[CSRSS] GUI thread dispatch WinMain\r\n");
         __asm__ volatile(
             "movl %%esp, %[oldsp]\n"
             "movl %[newsp], %%esp\n"
@@ -252,6 +293,7 @@ static void csrss_gui_thread_main(void *arg) {
         );
     } else {
         GuiMainFn fn = (GuiMainFn)ctx->entry;
+        SerialPutString("[CSRSS] GUI thread dispatch main\r\n");
         __asm__ volatile(
             "movl %%esp, %[oldsp]\n"
             "movl %[newsp], %%esp\n"
@@ -341,9 +383,15 @@ static int csrss_spawn_gui_instance(const char *path) {
     app = &g_gui_apps[g_gui_app_count];
     memset(app, 0, sizeof(*app));
     app->pid = g_next_gui_pid++;
+    strcpy(app->path, path);
     app->window = INVALID_HANDLE;
     app->thread = INVALID_HANDLE;
     app->kind = GUI_APP_KIND_CUSTOM;
+    SerialPutString("[CSRSS] Spawn GUI pid=");
+    SerialPrintDec(app->pid);
+    SerialPutString(" path=");
+    SerialPutString(path);
+    SerialPutString("\r\n");
     previous_active = Win32kGetActiveWindow();
 
     if (!csrss_load_gui_instance(path, app)) return -1;
@@ -528,6 +576,12 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
             return 0;
         }
 
+        SerialPutString("[CSRSS] Standard app path selected pid=");
+        SerialPrintDec(app->pid);
+        SerialPutString(" mode=");
+        SerialPutString(winmain_fn ? "WinMain" : "main");
+        SerialPutString("\r\n");
+
         thread_ctx = (GUI_APP_THREAD_CTX*)kmalloc(sizeof(GUI_APP_THREAD_CTX));
         if (!thread_ctx) {
             PeFreeImage(app->image);
@@ -549,6 +603,10 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         }
         return 1;
     }
+
+    SerialPutString("[CSRSS] Custom GUI app path selected pid=");
+    SerialPrintDec(app->pid);
+    SerialPutString("\r\n");
 
     g_current_gui_pid = app->pid;
     if (!init_fn(&gui_api)) {
@@ -648,12 +706,18 @@ void CsrssSessionRun(void *mb_info) {
     PeLoadDll("KERNEL32.DLL");
     PeLoadDll("ADVAPI32.DLL");
     PeLoadDll("GDI32.DLL");
-    PeLoadDll("USER32.DLL");
+    {
+        void *user32_image = PeLoadDll("USER32.DLL");
+        if (user32_image) {
+            g_user32_post_message = (User32PostMessageWFn)PeGetProcAddress(user32_image, "PostMessageW");
+        }
+    }
     PeLoadDll("SHELL32.DLL");
     PeLoadDll("SHLWAPI.DLL");
     PeLoadDll("COMCTL32.DLL");
+    PeLoadDll("COMDLG32.DLL");
 
-    if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") != 0) {
+    if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") < 0) {
         restore_text_mode();
         HalInitialize();
         HalClearScreen(0x1F);
@@ -677,6 +741,23 @@ void CsrssSessionRun(void *mb_info) {
 
                 if (mouse_state.x != last_x || mouse_state.y != last_y) {
                     Win32kHandleMouseMove(mouse_state.x, mouse_state.y);
+                    active_hwnd = Win32kGetActiveWindow();
+                    {
+                        GUI_APP_INSTANCE *app = csrss_find_app_by_window(active_hwnd);
+                        if (app && app->kind != GUI_APP_KIND_CUSTOM) {
+                            WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
+                            if (win) {
+                                int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                                int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                                if (!win->minimized) {
+                                    csrss_post_standard_message(active_hwnd, WM_MOUSEMOVE,
+                                                                (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
+                                                                MAKELPARAM(mouse_state.x - client_left, mouse_state.y - client_top));
+                                }
+                                ObDereferenceObject(active_hwnd);
+                            }
+                        }
+                    }
                     last_x = mouse_state.x;
                     last_y = mouse_state.y;
                     if (!Win32kIsDragging() && !Win32kIsResizing()) {
@@ -688,7 +769,7 @@ void CsrssSessionRun(void *mb_info) {
                     Win32kHandleMouseDown(mouse_state.x, mouse_state.y, 1);
                     active_hwnd = Win32kGetActiveWindow();
                     for (int i = 0; i < g_gui_app_count; i++) {
-                        if (g_gui_apps[i].window == active_hwnd && g_gui_apps[i].handle_mouse) {
+                        if (g_gui_apps[i].window == active_hwnd) {
                             WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
                             if (win) {
                                 int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
@@ -699,12 +780,18 @@ void CsrssSessionRun(void *mb_info) {
                                 if (!win->minimized &&
                                     mouse_state.x >= client_left && mouse_state.x < client_right &&
                                     mouse_state.y >= client_top && mouse_state.y < client_bottom) {
-                                    g_current_gui_pid = g_gui_apps[i].pid;
-                                    g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
-                                                               mouse_state.y - client_top,
-                                                               mouse_state.buttons,
-                                                               GUI_MOUSE_LDOWN);
-                                    g_current_gui_pid = 0;
+                                    if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM && g_gui_apps[i].handle_mouse) {
+                                        g_current_gui_pid = g_gui_apps[i].pid;
+                                        g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
+                                                                   mouse_state.y - client_top,
+                                                                   mouse_state.buttons,
+                                                                   GUI_MOUSE_LDOWN);
+                                        g_current_gui_pid = 0;
+                                    } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
+                                        csrss_post_standard_message(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
+                                                                    MAKELPARAM(mouse_state.x - client_left,
+                                                                               mouse_state.y - client_top));
+                                    }
                                 }
                                 ObDereferenceObject(active_hwnd);
                             }
@@ -717,7 +804,7 @@ void CsrssSessionRun(void *mb_info) {
                     Win32kHandleMouseUp(mouse_state.x, mouse_state.y, 1);
                     active_hwnd = Win32kGetActiveWindow();
                     for (int i = 0; i < g_gui_app_count; i++) {
-                        if (g_gui_apps[i].window == active_hwnd && g_gui_apps[i].handle_mouse) {
+                        if (g_gui_apps[i].window == active_hwnd) {
                             WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
                             if (win) {
                                 int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
@@ -728,12 +815,18 @@ void CsrssSessionRun(void *mb_info) {
                                 if (!win->minimized &&
                                     mouse_state.x >= client_left && mouse_state.x < client_right &&
                                     mouse_state.y >= client_top && mouse_state.y < client_bottom) {
-                                    g_current_gui_pid = g_gui_apps[i].pid;
-                                    g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
-                                                               mouse_state.y - client_top,
-                                                               mouse_state.buttons,
-                                                               GUI_MOUSE_LUP);
-                                    g_current_gui_pid = 0;
+                                    if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM && g_gui_apps[i].handle_mouse) {
+                                        g_current_gui_pid = g_gui_apps[i].pid;
+                                        g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
+                                                                   mouse_state.y - client_top,
+                                                                   mouse_state.buttons,
+                                                                   GUI_MOUSE_LUP);
+                                        g_current_gui_pid = 0;
+                                    } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
+                                        csrss_post_standard_message(active_hwnd, WM_LBUTTONUP, 0,
+                                                                    MAKELPARAM(mouse_state.x - client_left,
+                                                                               mouse_state.y - client_top));
+                                    }
                                 }
                                 ObDereferenceObject(active_hwnd);
                             }
@@ -747,13 +840,21 @@ void CsrssSessionRun(void *mb_info) {
             } else {
                 KeyboardHandleData(data);
                 while (KeyboardPollEvent(&key_event)) {
+                    uint32_t key_wparam = csrss_translate_key_wparam(&key_event);
                     if (key_event.pressed && key_event.scancode == 0x01) running = 0;
                     active_hwnd = Win32kGetActiveWindow();
                     for (int i = 0; i < g_gui_app_count; i++) {
-                        if (g_gui_apps[i].window == active_hwnd && g_gui_apps[i].handle_key) {
-                            g_current_gui_pid = g_gui_apps[i].pid;
-                            g_gui_apps[i].handle_key(key_event.scancode, key_event.ascii, key_event.pressed);
-                            g_current_gui_pid = 0;
+                        if (g_gui_apps[i].window == active_hwnd) {
+                            if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM && g_gui_apps[i].handle_key) {
+                                g_current_gui_pid = g_gui_apps[i].pid;
+                                g_gui_apps[i].handle_key(key_event.scancode, key_event.ascii, key_event.pressed);
+                                g_current_gui_pid = 0;
+                            } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM && key_wparam) {
+                                csrss_post_standard_message(active_hwnd,
+                                                            key_event.pressed ? WM_KEYDOWN : WM_KEYUP,
+                                                            key_wparam,
+                                                            key_event.scancode);
+                            }
                             break;
                         }
                     }

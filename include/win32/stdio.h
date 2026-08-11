@@ -5,5 +5,6 @@
 #include "windef.h"
 
 int swprintf(WCHAR *buffer, size_t count, const WCHAR *format, ...);
+int wnsprintfW(WCHAR *buffer, int count, const WCHAR *format, ...);
 
 #endif

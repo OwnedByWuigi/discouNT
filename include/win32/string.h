@@ -6,8 +6,11 @@
 
 void *memset(void *s, int c, uint32_t n);
 void *memcpy(void *d, const void *s, uint32_t n);
+int memcmp(const void *a, const void *b, uint32_t n);
 int strcmp(const char *a, const char *b);
 void strcpy(char *d, const char *s);
+
+#define ZeroMemory(dst,len) memset((dst), 0, (len))
 
 static inline WCHAR *wcscat(WCHAR *dst, const WCHAR *src) {
     WCHAR *out = dst;
@@ -31,6 +34,15 @@ static inline WCHAR *wcsstr(const WCHAR *haystack, const WCHAR *needle) {
         haystack++;
     }
     return 0;
+}
+
+static inline WCHAR *wcschr(const WCHAR *s, WCHAR ch) {
+    if (!s) return 0;
+    while (*s) {
+        if (*s == ch) return (WCHAR*)s;
+        s++;
+    }
+    return ch == 0 ? (WCHAR*)s : 0;
 }
 
 #endif
