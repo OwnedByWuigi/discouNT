@@ -116,6 +116,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"KeSetEvent", KeSetEvent},
     {"KeResetEvent", KeResetEvent},
     {"KeWaitEvent", KeWaitEvent},
+    {"PeGetLoadedModuleHandle", PeGetLoadedModuleHandle},
+    {"PeGetImagePath", PeGetImagePath},
     {"PeGetProcAddress", PeGetProcAddress},
 };
 

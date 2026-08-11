@@ -44,11 +44,15 @@ BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent) {
 }
 
 HICON LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
-    (void)hInstance;
+    HICON icon = 0;
     if (u32_is_int_resource(lpIconName)) {
-        return u32_create_icon(u32_resource_id(lpIconName), 32, 32);
+        icon = u32_try_load_module_sidecar_icon(hInstance, 32, 32);
+        if (icon) return icon;
+        return u32_alloc_icon(u32_resource_id(lpIconName), 32, 32);
     }
-    return u32_create_icon(0, 32, 32);
+    icon = u32_try_load_icon_by_name(lpIconName, 32, 32);
+    if (icon) return icon;
+    return u32_alloc_icon(0, 32, 32);
 }
 
 HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT fuLoad) {
@@ -60,9 +64,15 @@ HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT
     width = cx > 0 ? cx : 32;
     height = cy > 0 ? cy : 32;
     if (u32_is_int_resource(name)) {
-        return (HANDLE)u32_create_icon(u32_resource_id(name), width, height);
+        HANDLE icon = (HANDLE)u32_try_load_module_sidecar_icon(hinst, width, height);
+        if (icon) return icon;
+        return (HANDLE)u32_alloc_icon(u32_resource_id(name), width, height);
     }
-    return (HANDLE)u32_create_icon(0, width, height);
+    {
+        HANDLE icon = (HANDLE)u32_try_load_icon_by_name(name, width, height);
+        if (icon) return icon;
+    }
+    return (HANDLE)u32_alloc_icon(0, width, height);
 }
 
 int LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax) {

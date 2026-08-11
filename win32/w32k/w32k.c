@@ -5,6 +5,7 @@
 #include "util.h"
 #include "mouse.h"
 #include "serial.h"
+#include "icon.h"
 
 #define MAX_WINDOWS 32
 #define DESKTOP_COLOR        COLOR_BLUE
@@ -88,6 +89,23 @@ static int client_right(const WINDOW *win) {
 static int client_bottom(const WINDOW *win) {
     if (win->minimized) return win->height;
     return win->height - FRAME_THICKNESS - EDGE_THICKNESS;
+}
+
+static uint8_t win32k_rgb_to_index(uint32_t color) {
+    int r = color & 0xFF;
+    int g = (color >> 8) & 0xFF;
+    int b = (color >> 16) & 0xFF;
+    if (r > 220 && g > 220 && b > 220) return 15;
+    if (r < 40 && g < 40 && b < 40) return 0;
+    if (r > 180 && g < 100 && b < 100) return 4;
+    if (r < 100 && g > 180 && b < 100) return 2;
+    if (r > 180 && g > 180 && b < 100) return 14;
+    if (r < 100 && g < 100 && b > 180) return 1;
+    if (r > 150 && g > 150 && b > 150) return 7;
+    if (g > r && g > b) return 10;
+    if (r > g && r > b) return 12;
+    if (b > r && b > g) return 9;
+    return 8;
 }
 
 static void draw_hline(int x, int y, int w, uint8_t color) {
@@ -177,9 +195,26 @@ static void draw_sys_icon(WINDOW *win, int x, int y) {
     char glyph = 0;
     uint8_t fill = ACTIVE_CAPTION;
     uintptr_t icon_key = (uintptr_t)(win ? (win->small_icon ? win->small_icon : win->big_icon) : 0);
+    DISCOUNT_ICON *icon = (DISCOUNT_ICON*)icon_key;
 
     FbFillRect(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, FACE_COLOR);
     draw_bevel(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, HILIGHT_COLOR, SHADOW_COLOR);
+
+    if (icon && icon->magic == DISCOUNT_ICON_MAGIC && icon->pixels && icon->width > 0 && icon->height > 0) {
+        int dst_w = ICON_BOX_SIZE - 2;
+        int dst_h = ICON_BOX_SIZE - 2;
+        for (int dy = 0; dy < dst_h; dy++) {
+            int sy = (dy * icon->height) / dst_h;
+            for (int dx = 0; dx < dst_w; dx++) {
+                int sx = (dx * icon->width) / dst_w;
+                uint32_t pixel = icon->pixels[(sy * icon->width) + sx];
+                uint8_t alpha = (uint8_t)(pixel >> 24);
+                if (!alpha) continue;
+                FbPutPixel(x + 1 + dx, y + 1 + dy, win32k_rgb_to_index(pixel & 0x00FFFFFFU));
+            }
+        }
+        return;
+    }
 
     if (icon_key) {
         int i = 0;

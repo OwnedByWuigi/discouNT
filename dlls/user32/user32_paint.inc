@@ -93,6 +93,10 @@ BOOL SetWindowTextW(HWND hWnd, LPCWSTR lpString) {
 BOOL DestroyIcon(HICON hIcon) {
     U32_ICON *icon = u32_lookup_icon(hIcon);
     if (icon) {
+        if (icon->icon.pixels) {
+            kfree(icon->icon.pixels);
+            icon->icon.pixels = 0;
+        }
         memset(icon, 0, sizeof(*icon));
     }
     return TRUE;

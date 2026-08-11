@@ -7,6 +7,7 @@
 static WCHAR g_about_caption[128];
 static WCHAR g_about_other[256];
 static int g_about_result = IDOK;
+static HICON g_about_icon = 0;
 
 static int sh_wstrlen(const WCHAR *s) {
     int n = 0;
@@ -199,6 +200,11 @@ static int sh_run_about_window(const WCHAR *caption, const WCHAR *other) {
                            120, 90, 480, 244, NULL, NULL, NULL, NULL);
     if (!hwnd) return 0;
 
+    if (g_about_icon) {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g_about_icon);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g_about_icon);
+    }
+
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
@@ -226,7 +232,7 @@ __attribute__((stdcall)) int ShellAboutA(void *hWnd, const char *szApp, const ch
     WCHAR caption[128];
     WCHAR other[256];
     (void)hWnd;
-    (void)hIcon;
+    g_about_icon = (HICON)hIcon;
     sh_ansi_to_wide(caption, szApp ? szApp : "About Windows", 128);
     sh_ansi_to_wide(other, szOtherStuff ? szOtherStuff : "", 256);
     return sh_run_about_window(caption, other);
@@ -234,6 +240,6 @@ __attribute__((stdcall)) int ShellAboutA(void *hWnd, const char *szApp, const ch
 
 __attribute__((stdcall)) int ShellAboutW(void *hWnd, const uint16_t *szApp, const uint16_t *szOtherStuff, void *hIcon) {
     (void)hWnd;
-    (void)hIcon;
+    g_about_icon = (HICON)hIcon;
     return sh_run_about_window((const WCHAR*)szApp, (const WCHAR*)szOtherStuff);
 }

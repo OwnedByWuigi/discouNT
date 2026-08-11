@@ -13,6 +13,7 @@ static const char *pe_current_loading_dll = 0;
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
 static void *PeFindLoadedDllSymbol(const char *func_name);
+static int pe_name_equals_ignore_case(const char *a, const char *b);
 
 #define PE_RUNTIME_MAGIC 0x544E4C44U
 
@@ -23,6 +24,7 @@ typedef struct {
     uint32_t elf_base_vaddr;
     void *source_image;
     uint32_t source_size;
+    char image_path[128];
 } PE_RUNTIME_HEADER;
 
 #define PE_RUNTIME_FLAG_ELF 0x00000001U
@@ -166,6 +168,50 @@ static PE_RUNTIME_HEADER *PeGetRuntimeHeader(void *image_base) {
     return hdr;
 }
 
+static int pe_name_equals_ignore_case(const char *a, const char *b) {
+    int i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i]) {
+        char ca = a[i];
+        char cb = b[i];
+        if (ca >= 'a' && ca <= 'z') ca -= 32;
+        if (cb >= 'a' && cb <= 'z') cb -= 32;
+        if (ca != cb) return 0;
+        i++;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+void PeSetImagePath(void *image_base, const char *path) {
+    PE_RUNTIME_HEADER *runtime = PeGetRuntimeHeader(image_base);
+    int i = 0;
+    if (!runtime) return;
+    if (!path) {
+        runtime->image_path[0] = 0;
+        return;
+    }
+    while (path[i] && i < (int)sizeof(runtime->image_path) - 1) {
+        runtime->image_path[i] = path[i];
+        i++;
+    }
+    runtime->image_path[i] = 0;
+}
+
+const char *PeGetImagePath(void *image_base) {
+    PE_RUNTIME_HEADER *runtime = PeGetRuntimeHeader(image_base);
+    if (!runtime || !runtime->image_path[0]) return 0;
+    return runtime->image_path;
+}
+
+void *PeGetLoadedModuleHandle(const char *name) {
+    LOADED_DLL *dll;
+    if (!name || !*name) return 0;
+    for (dll = dll_list; dll; dll = dll->next) {
+        if (pe_name_equals_ignore_case(dll->name, name)) return dll->image_base;
+    }
+    return 0;
+}
+
 static uint32_t PeGetELFLoadBase(ELF32_HEADER *elf) {
     ELF32_PHDR *ph = (ELF32_PHDR*)((uint8_t*)elf + elf->phoff);
     uint32_t base = 0xFFFFFFFF;
@@ -271,6 +317,7 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
     runtime->elf_base_vaddr = base;
     runtime->source_image = source_copy;
     runtime->source_size = size;
+    runtime->image_path[0] = 0;
 
     memset(image_base, 0, image_size);
     
@@ -491,6 +538,7 @@ void *PeLoadImage(void *image_data, uint32_t size) {
     runtime->elf_base_vaddr = 0;
     runtime->source_image = 0;
     runtime->source_size = 0;
+    runtime->image_path[0] = 0;
 
     image_base = alloc_base + sizeof(PE_RUNTIME_HEADER);
     memset(image_base, 0, image_size);
@@ -1029,10 +1077,12 @@ void *PeLoadDll(const char *dll_name) {
         return 0;
     }
     strcpy(new_dll->name, dll_name);
+    strcpy(new_dll->path, path);
     new_dll->image_base = image;
     new_dll->entry_point = 0;
     new_dll->next = dll_list;
     dll_list = new_dll;
+    PeSetImagePath(image, path);
     
     // Resolve the DLL's own imports
     SerialPutString("[PE] Resolving DLL imports...\r\n");

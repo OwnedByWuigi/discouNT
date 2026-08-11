@@ -26,6 +26,7 @@ typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLin
 typedef int (*GuiMainFn)(void);
 typedef int (*User32PostMessageWFn)(GUI_HANDLE hWnd, uint32_t Msg, uint32_t wParam, uint32_t lParam);
 typedef GUI_HANDLE (*User32FindTopLevelWindowForProcessIdFn)(uint32_t pid);
+typedef void (*Kernel32SetProcessImageBaseFn)(void *image_base);
 
 typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
@@ -71,6 +72,7 @@ static int g_pending_launch = 0;
 static char g_pending_launch_path[256];
 static User32PostMessageWFn g_user32_post_message = 0;
 static User32FindTopLevelWindowForProcessIdFn g_user32_find_top_level_window = 0;
+static Kernel32SetProcessImageBaseFn g_kernel32_set_process_image_base = 0;
 
 #define WM_KEYDOWN      0x0100
 #define WM_KEYUP        0x0101
@@ -273,6 +275,7 @@ static void csrss_gui_thread_main(void *arg) {
     }
 
     g_current_gui_pid = ctx->app->pid;
+    if (g_kernel32_set_process_image_base) g_kernel32_set_process_image_base(ctx->app->image);
     exe_esp = (uint32_t)(exe_stack + 65536 - 256);
     if (ctx->kind == GUI_APP_KIND_WINMAIN) {
         GuiWinMainFn fn = (GuiWinMainFn)ctx->entry;
@@ -283,13 +286,14 @@ static void csrss_gui_thread_main(void *arg) {
             "push $1\n"
             "push $0\n"
             "push $0\n"
-            "push $0\n"
+            "push %[hinst]\n"
             "call *%[fn]\n"
             "movl %%eax, %[retval]\n"
             "movl %[oldsp], %%esp\n"
             : [oldsp] "=&r"(saved_esp),
-              [retval] "=r"(ret)
+              [retval] "=m"(ret)
             : [newsp] "r"(exe_esp),
+              [hinst] "g"(ctx->app->image),
               [fn] "r"(fn)
             : "eax", "ecx", "edx", "memory"
         );
@@ -555,6 +559,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         csrss_show_launch_error(path, "The application image could not be mapped.");
         return 0;
     }
+    PeSetImagePath(app->image, path);
 
     if (!PeResolveImports(app->image)) {
         csrss_show_launch_error(path, PeGetLastError());
@@ -711,7 +716,13 @@ void CsrssSessionRun(void *mb_info) {
     MouseInit();
     KeyboardInit();
     PeLoadDll("NTDLL.DLL");
-    PeLoadDll("KERNEL32.DLL");
+    {
+        void *kernel32_image = PeLoadDll("KERNEL32.DLL");
+        if (kernel32_image) {
+            g_kernel32_set_process_image_base =
+                (Kernel32SetProcessImageBaseFn)PeGetProcAddress(kernel32_image, "Kernel32SetProcessImageBase");
+        }
+    }
     PeLoadDll("ADVAPI32.DLL");
     PeLoadDll("GDI32.DLL");
     {

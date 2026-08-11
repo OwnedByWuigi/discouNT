@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "windows.h"
+#include "icon.h"
 
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);
@@ -754,8 +755,38 @@ int ExcludeClipRect(HDC hdc, int left, int top, int right, int bottom) {
 }
 
 HICON CreateIconIndirect(PICONINFO piconinfo) {
+    GDIBITMAP *color_bmp;
+    GDIBITMAP *mask_bmp;
+    DISCOUNT_ICON *icon;
+    int x, y;
     if (!piconinfo) return 0;
-    return (HICON)piconinfo->hbmColor;
+    color_bmp = gdi_get_bitmap((HGDIOBJ)piconinfo->hbmColor);
+    if (!color_bmp) return 0;
+    mask_bmp = gdi_get_bitmap((HGDIOBJ)piconinfo->hbmMask);
+
+    icon = (DISCOUNT_ICON*)kmalloc(sizeof(DISCOUNT_ICON));
+    if (!icon) return 0;
+    memset(icon, 0, sizeof(*icon));
+    icon->magic = DISCOUNT_ICON_MAGIC;
+    icon->width = color_bmp->width;
+    icon->height = color_bmp->height;
+    icon->pixels = (uint32_t*)kmalloc((uint32_t)(icon->width * icon->height * sizeof(uint32_t)));
+    if (!icon->pixels) {
+        kfree(icon);
+        return 0;
+    }
+
+    for (y = 0; y < icon->height; y++) {
+        for (x = 0; x < icon->width; x++) {
+            uint32_t color = color_bmp->pixels[(y * icon->width) + x] & 0x00FFFFFFU;
+            uint32_t alpha = 0xFF000000U;
+            if (mask_bmp && x < mask_bmp->width && y < mask_bmp->height) {
+                if ((mask_bmp->pixels[(y * mask_bmp->width) + x] & 0x00FFFFFFU) != 0) alpha = 0;
+            }
+            icon->pixels[(y * icon->width) + x] = color | alpha;
+        }
+    }
+    return (HICON)icon;
 }
 
 BOOL Rectangle(HDC hdc, int left, int top, int right, int bottom) {

@@ -81,6 +81,7 @@ NOTEPAD_APP := $(BUILD_DIR)/apps/notepad/notepad.exe
 NOTEPAD_SRCS := apps/notepad/main.c apps/notepad/dialog.c
 WINVER_APP := $(BUILD_DIR)/apps/winver/winver.exe
 WINVER_SRCS := apps/winver/winver.c
+ICON_SIDE_CARS := apps/notepad/notepad.ico apps/taskmgr/taskmgr.ico
 DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
 SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
 VGA_SYS := $(BUILD_DIR)/drivers/vga/vga.sys
@@ -272,8 +273,14 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_A
 	@if [ -f "$(TASKMGR_APP)" ]; then \
 		cp "$(TASKMGR_APP)" "$(SYSTEM32_DIR)/TASKMGR.EXE"; \
 	fi
+	@if [ -f "apps/taskmgr/taskmgr.ico" ]; then \
+		cp "apps/taskmgr/taskmgr.ico" "$(SYSTEM32_DIR)/TASKMGR.ICO"; \
+	fi
 	@if [ -f "$(NOTEPAD_APP)" ]; then \
 		cp "$(NOTEPAD_APP)" "$(SYSTEM32_DIR)/NOTEPAD.EXE"; \
+	fi
+	@if [ -f "apps/notepad/notepad.ico" ]; then \
+		cp "apps/notepad/notepad.ico" "$(SYSTEM32_DIR)/NOTEPAD.ICO"; \
 	fi
 	@if [ -f "$(WINVER_APP)" ]; then \
 		cp "$(WINVER_APP)" "$(SYSTEM32_DIR)/WINVER.EXE"; \

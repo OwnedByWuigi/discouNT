@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include "windows.h"
 #include "commctrl.h"
+#include "icon.h"
 
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);
@@ -12,6 +13,8 @@ extern void KeYield(void);
 extern uint32_t GetTickCount(void);
 extern uint32_t GetCurrentProcessId(void);
 extern void SerialPutString(const char *str);
+extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
+extern const char *PeGetImagePath(void *image_base);
 extern void *Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(void *, uint32_t, uint32_t, uint32_t));
 extern void *Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
 extern void Win32kShowWindow(void *hwnd);
@@ -139,6 +142,7 @@ typedef struct _U32_ICON {
     UINT resource_id;
     int width;
     int height;
+    DISCOUNT_ICON icon;
 } U32_ICON;
 
 typedef struct _U32_QUIT_STATE {
@@ -163,6 +167,8 @@ static void u32_mark_invalid(HWND hwnd);
 static void u32_mark_invalid_descendants(HWND hwnd);
 static void u32_clear_invalid(HWND hwnd);
 BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+static int u32_is_int_resource(LPCWSTR ptr);
+static UINT u32_resource_id(LPCWSTR ptr);
 
 #ifndef BN_CLICKED
 #define BN_CLICKED 0
@@ -344,6 +350,24 @@ static void u32_wide_to_ansi(LPCWSTR src, char *dst, int max_chars) {
 static WCHAR u32_towupper(WCHAR ch) {
     if (ch >= L'a' && ch <= L'z') return ch - (L'a' - L'A');
     return ch;
+}
+
+static char u32_toupper_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') ? (ch - ('a' - 'A')) : ch;
+}
+
+static void u32_uppercase_copy(char *dst, const char *src, int max_chars) {
+    int i = 0;
+    if (!dst || max_chars <= 0) return;
+    if (!src) {
+        dst[0] = 0;
+        return;
+    }
+    while (src[i] && i < max_chars - 1) {
+        dst[i] = u32_toupper_char(src[i]);
+        i++;
+    }
+    dst[i] = 0;
 }
 
 static int u32_append_number(WCHAR *dst, int pos, int max, int value, int unsig) {
@@ -702,7 +726,7 @@ static U32_ICON *u32_lookup_icon(HICON hicon) {
     return NULL;
 }
 
-static HICON u32_create_icon(UINT resource_id, int width, int height) {
+static HICON u32_alloc_icon(UINT resource_id, int width, int height) {
     int i;
     for (i = 0; i < MAX_U32_ICONS; i++) {
         if (!g_icons[i].used) {
@@ -711,10 +735,191 @@ static HICON u32_create_icon(UINT resource_id, int width, int height) {
             g_icons[i].resource_id = resource_id;
             g_icons[i].width = width;
             g_icons[i].height = height;
+            g_icons[i].icon.magic = DISCOUNT_ICON_MAGIC;
+            g_icons[i].icon.width = width;
+            g_icons[i].icon.height = height;
+            g_icons[i].icon.pixels = 0;
             return (HICON)&g_icons[i];
         }
     }
     return 0;
+}
+
+static uint32_t u32_pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint32_t)r | ((uint32_t)g << 8) | ((uint32_t)b << 16);
+}
+
+static int u32_ico_row_bytes(int width, int bpp) {
+    int bits = width * bpp;
+    return ((bits + 31) / 32) * 4;
+}
+
+static int u32_ico_decode_bitmap(DISCOUNT_ICON *icon, const uint8_t *data, uint32_t size) {
+    uint32_t dib_size;
+    int width;
+    int height;
+    int xor_bpp;
+    int palette_entries;
+    const uint8_t *palette;
+    const uint8_t *xor_bits;
+    const uint8_t *and_bits;
+    int xor_stride;
+    int and_stride;
+
+    if (!icon || !data || size < 40) return 0;
+    dib_size = *(const uint32_t*)(data + 0);
+    if (dib_size < 40 || size < dib_size) return 0;
+
+    width = *(const int32_t*)(data + 4);
+    height = *(const int32_t*)(data + 8) / 2;
+    xor_bpp = *(const uint16_t*)(data + 14);
+    if (width <= 0 || height <= 0) return 0;
+    if (!(xor_bpp == 4 || xor_bpp == 8 || xor_bpp == 32)) return 0;
+
+    palette_entries = 0;
+    if (xor_bpp <= 8) palette_entries = 1 << xor_bpp;
+    palette = data + dib_size;
+    xor_bits = palette + (palette_entries * 4);
+    xor_stride = u32_ico_row_bytes(width, xor_bpp);
+    and_stride = u32_ico_row_bytes(width, 1);
+    and_bits = xor_bits + (xor_stride * height);
+
+    if ((uint32_t)(and_bits - data) > size) return 0;
+    if ((uint32_t)(and_bits - data) + (uint32_t)(and_stride * height) > size) return 0;
+
+    icon->width = width;
+    icon->height = height;
+    icon->pixels = (uint32_t*)kmalloc((uint32_t)(width * height * sizeof(uint32_t)));
+    if (!icon->pixels) return 0;
+    memset(icon->pixels, 0, (uint32_t)(width * height * sizeof(uint32_t)));
+
+    for (int y = 0; y < height; y++) {
+        int src_y = height - 1 - y;
+        const uint8_t *xor_row = xor_bits + (src_y * xor_stride);
+        const uint8_t *and_row = and_bits + (src_y * and_stride);
+        for (int x = 0; x < width; x++) {
+            uint8_t mask = (uint8_t)((and_row[x >> 3] >> (7 - (x & 7))) & 1);
+            uint32_t color = 0;
+            uint8_t alpha = 0xFF;
+
+            if (xor_bpp == 32) {
+                const uint8_t *px = xor_row + (x * 4);
+                uint8_t b = px[0];
+                uint8_t g = px[1];
+                uint8_t r = px[2];
+                alpha = px[3];
+                color = u32_pack_rgb(r, g, b);
+                if (alpha == 0 && !mask) alpha = 0xFF;
+            } else if (xor_bpp == 8) {
+                uint8_t idx = xor_row[x];
+                const uint8_t *ent = palette + (idx * 4);
+                color = u32_pack_rgb(ent[2], ent[1], ent[0]);
+            } else if (xor_bpp == 4) {
+                uint8_t nyb = xor_row[x >> 1];
+                uint8_t idx = (x & 1) ? (nyb & 0x0F) : (nyb >> 4);
+                const uint8_t *ent = palette + (idx * 4);
+                color = u32_pack_rgb(ent[2], ent[1], ent[0]);
+            }
+
+            if (mask) alpha = 0;
+            icon->pixels[(y * width) + x] = color | ((uint32_t)alpha << 24);
+        }
+    }
+
+    return 1;
+}
+
+static HICON u32_create_icon_from_ico_buffer(const uint8_t *data, uint32_t size, int desired_w, int desired_h) {
+    uint16_t count;
+    const uint8_t *best_entry = 0;
+    int best_score = 0x7FFFFFFF;
+    HICON handle;
+    U32_ICON *slot;
+
+    if (!data || size < 6) return 0;
+    if (*(const uint16_t*)(data + 0) != 0 || *(const uint16_t*)(data + 2) != 1) return 0;
+    count = *(const uint16_t*)(data + 4);
+    if (size < 6 + (count * 16)) return 0;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *entry = data + 6 + (i * 16);
+        int w = entry[0] ? entry[0] : 256;
+        int h = entry[1] ? entry[1] : 256;
+        int score = 0;
+        if (desired_w > 0) score += (w > desired_w) ? (w - desired_w) : (desired_w - w);
+        if (desired_h > 0) score += (h > desired_h) ? (h - desired_h) : (desired_h - h);
+        if (score < best_score) {
+            best_score = score;
+            best_entry = entry;
+        }
+    }
+
+    if (!best_entry) return 0;
+
+    {
+        uint32_t bytes = *(const uint32_t*)(best_entry + 8);
+        uint32_t offset = *(const uint32_t*)(best_entry + 12);
+        if (offset >= size || bytes > size || offset + bytes > size) return 0;
+        handle = u32_alloc_icon(0, desired_w > 0 ? desired_w : (best_entry[0] ? best_entry[0] : 256),
+                                desired_h > 0 ? desired_h : (best_entry[1] ? best_entry[1] : 256));
+        if (!handle) return 0;
+        slot = u32_lookup_icon(handle);
+        if (!slot) return 0;
+        if (!u32_ico_decode_bitmap(&slot->icon, data + offset, bytes)) {
+            memset(slot, 0, sizeof(*slot));
+            return 0;
+        }
+        slot->width = slot->icon.width;
+        slot->height = slot->icon.height;
+        return handle;
+    }
+}
+
+static HICON u32_load_icon_file(const char *path, int desired_w, int desired_h) {
+    uint8_t *file_buf = 0;
+    uint32_t file_size = 0;
+    HICON icon = 0;
+    if (!path || !*path) return 0;
+    if (!CdfsReadFile(path, &file_buf, &file_size)) return 0;
+    icon = u32_create_icon_from_ico_buffer(file_buf, file_size, desired_w, desired_h);
+    kfree(file_buf);
+    return icon;
+}
+
+static HICON u32_try_load_module_sidecar_icon(HINSTANCE hInstance, int width, int height) {
+    const char *image_path;
+    char path[160];
+    int i;
+    int dot = -1;
+
+    if (!hInstance) return 0;
+    image_path = PeGetImagePath((void*)hInstance);
+    if (!image_path || !*image_path) return 0;
+
+    for (i = 0; image_path[i] && i < (int)sizeof(path) - 1; i++) {
+        path[i] = u32_toupper_char(image_path[i]);
+        if (path[i] == '.') dot = i;
+    }
+    path[i] = 0;
+    if (dot < 0 || dot > (int)sizeof(path) - 5) return 0;
+    path[dot + 0] = '.';
+    path[dot + 1] = 'I';
+    path[dot + 2] = 'C';
+    path[dot + 3] = 'O';
+    path[dot + 4] = 0;
+    return u32_load_icon_file(path, width, height);
+}
+
+static HICON u32_try_load_icon_by_name(LPCWSTR name, int width, int height) {
+    char path[160];
+    int i = 0;
+    if (!name || u32_is_int_resource(name)) return 0;
+    while (name[i] && i < (int)sizeof(path) - 1) {
+        path[i] = u32_toupper_char((char)name[i]);
+        i++;
+    }
+    path[i] = 0;
+    return u32_load_icon_file(path, width, height);
 }
 
 static LRESULT u32_dispatch(U32_WINDOW *win, UINT msg, WPARAM wParam, LPARAM lParam) {

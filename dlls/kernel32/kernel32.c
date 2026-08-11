@@ -13,6 +13,7 @@ extern void KeResetEvent(uint32_t event_handle);
 extern void KeWaitEvent(uint32_t event_handle);
 extern uint32_t KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size);
 extern void *PeGetProcAddress(void *dll_base, const char *func_name);
+extern void *PeGetLoadedModuleHandle(const char *name);
 extern uint32_t strlen(const char *s);
 extern void *memset(void *dest, int c, uint32_t n);
 extern void *memcpy(void *dest, const void *src, uint32_t n);
@@ -100,6 +101,39 @@ static ULONGLONG k32_udivmod64(ULONGLONG num, ULONGLONG den, ULONGLONG *rem_out)
 }
 
 static DWORD g_last_error = 0;
+static void *g_process_image_base = 0;
+
+static char k32_toupper_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') ? (ch - ('a' - 'A')) : ch;
+}
+
+static void k32_uppercase_copy(const char *src, char *dst, int max_chars) {
+    int i = 0;
+    if (!dst || max_chars <= 0) return;
+    if (!src) {
+        dst[0] = 0;
+        return;
+    }
+    while (src[i] && i < max_chars - 1) {
+        dst[i] = k32_toupper_char(src[i]);
+        i++;
+    }
+    dst[i] = 0;
+}
+
+static void k32_wide_to_ansi_name(LPCWSTR src, char *dst, int max_chars) {
+    int i = 0;
+    if (!dst || max_chars <= 0) return;
+    if (!src) {
+        dst[0] = 0;
+        return;
+    }
+    while (src[i] && i < max_chars - 1) {
+        dst[i] = k32_toupper_char((char)src[i]);
+        i++;
+    }
+    dst[i] = 0;
+}
 
 #define K32_HANDLE_FILE  0x4B333246u
 
@@ -209,13 +243,21 @@ void *GetProcessHeap(void) {
 }
 
 void *GetModuleHandleA(const char *name) {
-    (void)name;
-    return (void*)0x400000;
+    char upper_name[128];
+    if (!name) return g_process_image_base ? g_process_image_base : (void*)0x400000;
+    k32_uppercase_copy(name, upper_name, sizeof(upper_name));
+    return PeGetLoadedModuleHandle(upper_name);
 }
 
 void *GetModuleHandleW(LPCWSTR name) {
-    (void)name;
-    return (void*)0x400000;
+    char upper_name[128];
+    if (!name) return g_process_image_base ? g_process_image_base : (void*)0x400000;
+    k32_wide_to_ansi_name(name, upper_name, sizeof(upper_name));
+    return PeGetLoadedModuleHandle(upper_name);
+}
+
+__attribute__((stdcall)) void Kernel32SetProcessImageBase(void *image_base) {
+    g_process_image_base = image_base;
 }
 
 void *GetProcAddress(void *hModule, const char *name) {
