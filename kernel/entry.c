@@ -15,7 +15,29 @@ typedef struct _MULTIBOOT_INFO {
     uint32_t flags;
     uint32_t mem_lower;
     uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
 } MULTIBOOT_INFO;
+
+static int BootDebugRequested(void *mb_info_ptr) {
+    MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
+    const char *cmdline;
+
+    if (!mbi || !(mbi->flags & (1U << 2)) || !mbi->cmdline) return 0;
+    cmdline = (const char*)(uintptr_t)mbi->cmdline;
+
+    while (*cmdline) {
+        while (*cmdline == ' ' || *cmdline == '\t') cmdline++;
+        if (cmdline[0] == 'd' && cmdline[1] == 'e' &&
+            cmdline[2] == 'b' && cmdline[3] == 'u' &&
+            cmdline[4] == 'g' &&
+            (cmdline[5] == 0 || cmdline[5] == ' ' || cmdline[5] == '\t')) {
+            return 1;
+        }
+        while (*cmdline && *cmdline != ' ' && *cmdline != '\t') cmdline++;
+    }
+    return 0;
+}
 
 static void BootPutAt(int col, int row, const char *text, uint8_t color) {
     HalSetCursor(col, row);
@@ -100,6 +122,7 @@ static void ShowBootScreen(void *mb_info_ptr) {
 void kmain(uint32_t magic, void *mb_info_ptr) {
     (void)magic;
     
+    SerialSetDebugEnabled(BootDebugRequested(mb_info_ptr));
     SerialInit();
     SerialPutString("\r\n========================================\r\n");
     SerialPutString("  " DISCOUNT_NAME "\r\n");

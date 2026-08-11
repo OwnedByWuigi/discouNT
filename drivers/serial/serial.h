@@ -5,6 +5,8 @@
 #define COM1_PORT 0x3F8
 
 void SerialInit(void);
+void SerialSetDebugEnabled(int enabled);
+int SerialIsDebugEnabled(void);
 void SerialPutChar(char c);
 void SerialPutString(const char *str);
 void SerialPrintHex(uint32_t val);
