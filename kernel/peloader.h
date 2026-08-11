@@ -132,6 +132,7 @@ typedef struct _LOADED_DLL {
 void PeInit(void);
 void *PeLoadDll(const char *dll_name);
 void *PeGetProcAddress(void *dll_base, const char *func_name);
+void *PeResolveExternalSymbol(const char *func_name);
 void *PeLoadImage(void *image_data, uint32_t size);
 void *PeGetEntryPoint(void *image_base);
 int PeResolveImports(void *image_base);

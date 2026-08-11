@@ -9,8 +9,10 @@
 // DLL list
 static LOADED_DLL *dll_list = 0;
 static char pe_last_error[256];
+static const char *pe_current_loading_dll = 0;
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
+static void *PeFindLoadedDllSymbol(const char *func_name);
 
 #define PE_RUNTIME_MAGIC 0x544E4C44U
 
@@ -87,6 +89,7 @@ typedef struct {
 #define ELF32_R_TYPE(info) ((uint8_t)((info) & 0xFF))
 
 #define R_386_32       1
+#define R_386_PC32     2
 #define R_386_GLOB_DAT 6
 #define R_386_JMP_SLOT 7
 #define R_386_RELATIVE 8
@@ -136,6 +139,20 @@ static void PeSetImportMissingProcError(const char *dll_name, const char *func_n
     while (*middle && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *middle++;
     if (dll_name) {
         while (*dll_name && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *dll_name++;
+    }
+    while (*suffix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *suffix++;
+    pe_last_error[i] = 0;
+}
+
+static void PeSetELFImportMissingProcError(const char *func_name) {
+    int i = 0;
+    const char *prefix = "The procedure entry point ";
+    const char *suffix = " could not be located.";
+
+    pe_last_error[0] = 0;
+    while (*prefix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *prefix++;
+    if (func_name) {
+        while (*func_name && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *func_name++;
     }
     while (*suffix && i < (int)sizeof(pe_last_error) - 1) pe_last_error[i++] = *suffix++;
     pe_last_error[i] = 0;
@@ -333,9 +350,13 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
                         if (resolved) {
                             sym_value = (uint32_t)resolved;
                         } else {
+                            PeSetELFImportMissingProcError(sym_name);
                             SerialPutString("[ELF] Unresolved external symbol: ");
                             SerialPutString(sym_name);
                             SerialPutString("\r\n");
+                            kfree(source_copy);
+                            kfree(alloc_base);
+                            return 0;
                         }
                     }
                 }
@@ -343,6 +364,11 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
                 switch (r_type) {
                     case R_386_RELATIVE:
                         *patch = (uint32_t)image_base + addend;
+                        break;
+                    case R_386_PC32:
+                        if (sym_value != 0) {
+                            *patch = sym_value + addend - (uint32_t)patch;
+                        }
                         break;
                     case R_386_GLOB_DAT:
                     case R_386_JMP_SLOT:
@@ -689,6 +715,45 @@ int PeResolveImports(void *image_base) {
     return (missing == 0) ? 1 : 0;
 }
 
+static void *PeFindLoadedDllSymbol(const char *func_name) {
+    LOADED_DLL *dll = dll_list;
+    while (dll) {
+        void *addr = PeGetProcAddress(dll->image_base, func_name);
+        if (addr) return addr;
+        dll = dll->next;
+    }
+    return 0;
+}
+
+void *PeResolveExternalSymbol(const char *func_name) {
+    static const char *core_dlls[] = {
+        "NTDLL.DLL",
+        "KERNEL32.DLL",
+        "ADVAPI32.DLL",
+        "GDI32.DLL",
+        "USER32.DLL",
+        "SHELL32.DLL",
+        "SHLWAPI.DLL",
+        "COMCTL32.DLL"
+    };
+    void *addr;
+
+    if (!func_name || !*func_name) return 0;
+
+    addr = PeFindLoadedDllSymbol(func_name);
+    if (addr) return addr;
+
+    if (pe_current_loading_dll) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < (sizeof(core_dlls) / sizeof(core_dlls[0])); i++) {
+        PeLoadDll(core_dlls[i]);
+    }
+
+    return PeFindLoadedDllSymbol(func_name);
+}
+
 const char *PeGetLastError(void) {
     return pe_last_error[0] ? pe_last_error : 0;
 }
@@ -698,13 +763,19 @@ void PeClearLastError(void) {
 }
 
 void *PeGetProcAddress(void *dll_base, const char *func_name) {
+    PE_RUNTIME_HEADER *runtime;
+
     if (!dll_base || !func_name) return 0;
-    
-    // Check if it's an ELF DLL
+
+    runtime = PeGetRuntimeHeader(dll_base);
+    if (runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)) {
+        return PeGetELFProcAddress(dll_base, func_name);
+    }
+
     if (*(uint32_t*)dll_base == 0x464C457F) {
         return PeGetELFProcAddress(dll_base, func_name);
     }
-    
+
     // PE DLL
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)dll_base;
     IMAGE_FILE_HEADER *file = (IMAGE_FILE_HEADER*)((uint8_t*)dll_base + dos->e_lfanew);
@@ -935,7 +1006,9 @@ void *PeLoadDll(const char *dll_name) {
     SerialPutString(" bytes\r\n");
     
     // Load the DLL
+    pe_current_loading_dll = dll_name;
     void *image = PeLoadImage(file_buf, file_size);
+    pe_current_loading_dll = 0;
     kfree(file_buf);
     
     if (!image) {
@@ -946,10 +1019,29 @@ void *PeLoadDll(const char *dll_name) {
     SerialPutString("[PE] DLL image loaded at 0x");
     SerialPrintHex((uint32_t)image);
     SerialPutString("\r\n");
+
+    // Register immediately to prevent recursive self-load loops while resolving imports/relocations.
+    LOADED_DLL *new_dll = (LOADED_DLL*)kmalloc(sizeof(LOADED_DLL));
+    if (!new_dll) {
+        PeFreeImage(image);
+        SerialPutString("[PE] Failed to allocate LOADED_DLL record\r\n");
+        return 0;
+    }
+    strcpy(new_dll->name, dll_name);
+    new_dll->image_base = image;
+    new_dll->entry_point = 0;
+    new_dll->next = dll_list;
+    dll_list = new_dll;
     
     // Resolve the DLL's own imports
     SerialPutString("[PE] Resolving DLL imports...\r\n");
-    PeResolveImports(image);
+    if (!PeResolveImports(image)) {
+        SerialPutString("[PE] DLL import resolution failed\r\n");
+        dll_list = new_dll->next;
+        kfree(new_dll);
+        PeFreeImage(image);
+        return 0;
+    }
     
     SerialPutString("[PE] Applying DLL relocations...\r\n");
     PePerformRelocations(image);
@@ -962,14 +1054,8 @@ void *PeLoadDll(const char *dll_name) {
         DllMain_t dllmain = (DllMain_t)entry;
         dllmain(image, 1, 0); // DLL_PROCESS_ATTACH
     }
-    
-    // Add to list
-    LOADED_DLL *new_dll = (LOADED_DLL*)kmalloc(sizeof(LOADED_DLL));
-    strcpy(new_dll->name, dll_name);
-    new_dll->image_base = image;
+
     new_dll->entry_point = entry;
-    new_dll->next = dll_list;
-    dll_list = new_dll;
     
     SerialPutString("[PE] DLL loaded successfully!\r\n");
     return image;

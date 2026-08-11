@@ -110,6 +110,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     
     ObInit();
     KeInit();
+    KeAttachCurrentThread("KernelMain");
     CdfsInit();
     DriverLoadAll(mb_info_ptr);
     KeyboardInit();

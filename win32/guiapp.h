@@ -9,20 +9,22 @@ typedef struct _GUI_RECT {
     int left, top, right, bottom;
 } GUI_RECT;
 
-#define GUI_WM_CREATE   1
-#define GUI_WM_PAINT    2
-#define GUI_WM_DESTROY  3
-#define GUI_WM_CLOSE    4
+#define GUI_WM_CREATE   0x0001
+#define GUI_WM_PAINT    0x000F
+#define GUI_WM_DESTROY  0x0002
+#define GUI_WM_CLOSE    0x0010
 
 #define GUI_MOUSE_MOVE      1
 #define GUI_MOUSE_LDOWN     2
 #define GUI_MOUSE_LUP       3
 
-#define GUI_WS_VISIBLE           0x00000001
-#define GUI_WS_CAPTION           0x00000002
-#define GUI_WS_SYSMENU           0x00000004
-#define GUI_WS_THICKFRAME        0x00000008
-#define GUI_WS_OVERLAPPEDWINDOW  (GUI_WS_VISIBLE | GUI_WS_CAPTION | GUI_WS_SYSMENU | GUI_WS_THICKFRAME)
+#define GUI_WS_VISIBLE           0x10000000L
+#define GUI_WS_CAPTION           0x00C00000L
+#define GUI_WS_SYSMENU           0x00080000L
+#define GUI_WS_THICKFRAME        0x00040000L
+#define GUI_WS_MINIMIZEBOX       0x00020000L
+#define GUI_WS_MAXIMIZEBOX       0x00010000L
+#define GUI_WS_OVERLAPPEDWINDOW  (GUI_WS_CAPTION | GUI_WS_SYSMENU | GUI_WS_THICKFRAME | GUI_WS_MINIMIZEBOX | GUI_WS_MAXIMIZEBOX)
 
 typedef struct _GUI_APP_API {
     GUI_HANDLE (*RegisterClass)(const char *className, uint32_t style, void (*wndProc)(GUI_HANDLE, uint32_t, uint32_t, uint32_t));

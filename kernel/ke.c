@@ -13,10 +13,56 @@ static uint32_t scheduler_ticks = 0;
 
 // Note: kmalloc and kfree are now in mm.c - include mm.h instead
 
+static void KeThreadBootstrap(void) {
+    if (current_thread) {
+        void (*entry)(void*) = (void (*)(void*))current_thread->entry_point;
+        void *arg = (void*)current_thread->entry_arg;
+        if (entry) entry(arg);
+        current_thread->state = THREAD_TERMINATED;
+    }
+    for (;;) KeYield();
+}
+
+static void KeAppendReadyThread(THREAD *thread) {
+    THREAD *tail;
+    if (!thread) return;
+    thread->next = 0;
+    if (!ready_queue) {
+        ready_queue = thread;
+        return;
+    }
+    tail = ready_queue;
+    while (tail->next) tail = tail->next;
+    tail->next = thread;
+}
+
 void KeInit(void) {
     thread_count = 0;
     scheduler_ticks = 0;
     // Don't print anything here - HAL may not be initialized
+}
+
+void KeAttachCurrentThread(const char *name) {
+    THREAD *thread = (THREAD*)kmalloc(sizeof(THREAD));
+    HANDLE handle;
+
+    if (!thread || current_thread) return;
+    memset(thread, 0, sizeof(THREAD));
+    thread->priority = 8;
+    thread->state = THREAD_RUNNING;
+    thread->stack = 0;
+    thread->stack_size = 0;
+    thread->entry_point = 0;
+    thread->entry_arg = 0;
+    thread->context_esp = 0;
+    thread->context_ebx = 0;
+    thread->context_esi = 0;
+    thread->context_edi = 0;
+    thread->context_ebp = 0;
+    handle = ObCreateObject(OBJ_TYPE_THREAD, name ? name : "MainThread", thread, sizeof(THREAD));
+    thread->handle = handle;
+    current_thread = thread;
+    ready_queue = thread;
 }
 
 HANDLE KeCreateProcess(const char *name) {
@@ -35,7 +81,7 @@ HANDLE KeCreateProcess(const char *name) {
     return ObCreateObject(OBJ_TYPE_PROCESS, name, proc, sizeof(PROCESS));
 }
 
-HANDLE KeCreateThread(void (*entry)(void), uint32_t stack_size) {
+HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     THREAD *thread = (THREAD*)kmalloc(sizeof(THREAD));
     if (!thread) return INVALID_HANDLE;
     
@@ -45,17 +91,19 @@ HANDLE KeCreateThread(void (*entry)(void), uint32_t stack_size) {
     thread->stack_size = stack_size ? stack_size : 4096;
     thread->stack = kmalloc(thread->stack_size);
     thread->entry_point = (uint32_t)entry;
+    thread->entry_arg = (uint32_t)arg;
+    thread->context_ebx = 0;
+    thread->context_esi = 0;
+    thread->context_edi = 0;
+    thread->context_ebp = 0;
     
-    // Set up initial stack for context switch
+    // Cooperative switch: after KeYield restores ESP and returns, execution enters bootstrap.
     uint32_t *stack = (uint32_t*)((uint8_t*)thread->stack + thread->stack_size);
-    *(--stack) = 0x202;         // EFLAGS
-    *(--stack) = 0x08;          // CS
-    *(--stack) = (uint32_t)entry; // EIP
+    *(--stack) = (uint32_t)KeThreadBootstrap;
     thread->context_esp = (uint32_t)stack;
     
     // Add to ready queue
-    thread->next = ready_queue;
-    ready_queue = thread;
+    KeAppendReadyThread(thread);
     
     char name[32];
     // Simple number to string
@@ -83,28 +131,56 @@ void KeTerminateThread(HANDLE thread_handle) {
     }
 }
 
-void KeYield(void) {
-    if (!current_thread) return;
-    
-    // Save current thread context
-    __asm__ volatile("movl %%esp, %0" : "=m"(current_thread->context_esp));
-    
-    // Find next ready thread
-    THREAD *next = current_thread->next;
-    while (next && (next == current_thread || next->state != THREAD_READY)) {
-        next = next->next;
+static THREAD *KeSelectNextThread(void) {
+    THREAD *next;
+    THREAD *scan;
+
+    if (!current_thread) return 0;
+
+    next = 0;
+    scan = current_thread->next ? current_thread->next : ready_queue;
+    while (scan) {
+        if (scan != current_thread && scan->state == THREAD_READY) {
+            next = scan;
+            break;
+        }
+        scan = scan->next;
+        if (!scan && current_thread != ready_queue) scan = ready_queue;
+        if (scan == current_thread) break;
     }
-    if (!next) next = ready_queue;
-    
-    if (next && next->state == THREAD_READY) {
-        current_thread = next;
-        current_thread->state = THREAD_RUNNING;
-        
-        // Switch to new thread
-        __asm__ volatile("movl %0, %%esp\n\t" : : "m"(current_thread->context_esp));
-    }
-    
+
+    if (!next) return 0;
+
+    if (current_thread->state == THREAD_RUNNING) current_thread->state = THREAD_READY;
+    current_thread = next;
+    current_thread->state = THREAD_RUNNING;
+
     scheduler_ticks++;
+    return current_thread;
+}
+
+__attribute__((naked)) void KeYield(void) {
+    __asm__ volatile(
+        "movl current_thread, %eax\n\t"
+        "test %eax, %eax\n\t"
+        "jz 2f\n\t"
+        "movl %esp, 28(%eax)\n\t"
+        "movl %ebx, 32(%eax)\n\t"
+        "movl %esi, 36(%eax)\n\t"
+        "movl %edi, 40(%eax)\n\t"
+        "movl %ebp, 44(%eax)\n\t"
+        "call KeSelectNextThread\n\t"
+        "test %eax, %eax\n\t"
+        "jz 2f\n\t"
+        "movl 32(%eax), %ebx\n\t"
+        "movl 36(%eax), %esi\n\t"
+        "movl 40(%eax), %edi\n\t"
+        "movl 44(%eax), %ebp\n\t"
+        "movl 28(%eax), %esp\n\t"
+        "ret\n\t"
+        "2:\n\t"
+        "ret\n\t"
+    );
 }
 
 void KeStartScheduler(void) {
@@ -166,6 +242,14 @@ void KeSetEvent(HANDLE event_handle) {
     }
 }
 
+void KeResetEvent(HANDLE event_handle) {
+    EVENT *event = (EVENT*)ObReferenceObject(event_handle);
+    if (event) {
+        event->signaled = 0;
+        ObDereferenceObject(event_handle);
+    }
+}
+
 void KeWaitEvent(HANDLE event_handle) {
     EVENT *event = (EVENT*)ObReferenceObject(event_handle);
     if (!event) return;
@@ -178,4 +262,8 @@ void KeWaitEvent(HANDLE event_handle) {
         event->signaled = 0;
     }
     ObDereferenceObject(event_handle);
+}
+
+uint32_t KeGetSchedulerTicks(void) {
+    return scheduler_ticks;
 }

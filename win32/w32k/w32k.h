@@ -3,18 +3,20 @@
 #include <stdint.h>
 #include "object.h"
 
-#define WM_CREATE   1
-#define WM_PAINT    2
-#define WM_DESTROY  3
-#define WM_CLOSE    4
+#define WM_CREATE   0x0001
+#define WM_PAINT    0x000F
+#define WM_DESTROY  0x0002
+#define WM_CLOSE    0x0010
 
-#define WS_OVERLAPPED   0x00000000
-#define WS_VISIBLE      0x00000001
-#define WS_CAPTION      0x00000002
-#define WS_SYSMENU      0x00000004
-#define WS_THICKFRAME   0x00000008
+#define WS_OVERLAPPED       0x00000000L
+#define WS_VISIBLE          0x10000000L
+#define WS_CAPTION          0x00C00000L
+#define WS_SYSMENU          0x00080000L
+#define WS_THICKFRAME       0x00040000L
+#define WS_MINIMIZEBOX      0x00020000L
+#define WS_MAXIMIZEBOX      0x00010000L
 
-#define WS_OVERLAPPEDWINDOW (WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
+#define WS_OVERLAPPEDWINDOW (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
 
 typedef struct _WNDCLASS {
     char     className[64];

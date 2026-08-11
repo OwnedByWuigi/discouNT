@@ -1,5 +1,6 @@
 // ntdll.c - NT Native API for NT-like OS
 #include <stdint.h>
+#include "version.h"
 
 // DLL entry
 __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
@@ -11,8 +12,6 @@ __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpRes
 }
 
 // Kernel imports
-extern void HalPutString(const char *str, uint8_t color);
-extern void HalPutChar(char c, uint8_t color);
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);
 extern void SerialPutString(const char *str);
@@ -22,6 +21,183 @@ extern uint32_t strlen(const char *s);
 extern void *memset(void *s, int c, uint32_t n);
 extern void *memcpy(void *d, const void *s, uint32_t n);
 extern int strcmp(const char *a, const char *b);
+extern uint32_t KeCreateEvent(uint32_t manual_reset);
+extern void KeSetEvent(uint32_t event_handle);
+extern void KeResetEvent(uint32_t event_handle);
+extern void KeWaitEvent(uint32_t event_handle);
+extern uint32_t KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size);
+extern uint32_t KeGetSchedulerTicks(void);
+extern void KeYield(void);
+extern int FbGetWidth(void);
+extern int FbGetHeight(void);
+
+typedef struct {
+    uint16_t Length;
+    uint16_t MaximumLength;
+    uint16_t *Buffer;
+} UNICODE_STRING32;
+
+typedef struct {
+    uint32_t PeakVirtualSize;
+    uint32_t VirtualSize;
+    uint32_t PageFaultCount;
+    uint32_t PeakWorkingSetSize;
+    uint32_t WorkingSetSize;
+    uint32_t QuotaPeakPagedPoolUsage;
+    uint32_t QuotaPagedPoolUsage;
+    uint32_t QuotaPeakNonPagedPoolUsage;
+    uint32_t QuotaNonPagedPoolUsage;
+    uint32_t PagefileUsage;
+    uint32_t PeakPagefileUsage;
+} VM_COUNTERS32;
+
+typedef struct {
+    uint64_t ReadOperationCount;
+    uint64_t WriteOperationCount;
+    uint64_t OtherOperationCount;
+    uint64_t ReadTransferCount;
+    uint64_t WriteTransferCount;
+    uint64_t OtherTransferCount;
+} IO_COUNTERS32;
+
+typedef struct {
+    uint32_t NextEntryOffset;
+    uint32_t NumberOfThreads;
+    uint64_t Reserved[3];
+    uint64_t CreateTime;
+    uint64_t UserTime;
+    uint64_t KernelTime;
+    UNICODE_STRING32 ProcessName;
+    int32_t BasePriority;
+    void *UniqueProcessId;
+    void *InheritedFromUniqueProcessId;
+    uint32_t HandleCount;
+    uint32_t SessionId;
+    uint32_t UniqueProcessKey;
+    VM_COUNTERS32 vmCounters;
+    uint32_t PrivatePageCount;
+    IO_COUNTERS32 IoCounters;
+    uint32_t dwThreadCount;
+    int32_t dwBasePriority;
+} SYSTEM_PROCESS_INFORMATION32;
+
+typedef struct {
+    uint32_t Reserved;
+    uint32_t TimerResolution;
+    uint32_t MmPageSize;
+    uint32_t MmNumberOfPhysicalPages;
+    uint32_t LowestPhysicalPageNumber;
+    uint32_t HighestPhysicalPageNumber;
+    uint32_t AllocationGranularity;
+    uint32_t MinimumUserModeAddress;
+    uint32_t MaximumUserModeAddress;
+    uint32_t ActiveProcessorsAffinityMask;
+    uint8_t NumberOfProcessors;
+} SYSTEM_BASIC_INFORMATION32;
+
+typedef struct {
+    uint64_t BootTime;
+    uint64_t SystemTime;
+    uint64_t TimeZoneBias;
+    uint32_t CurrentTimeZoneId;
+    uint32_t Reserved;
+} SYSTEM_TIMEOFDAY_INFORMATION32;
+
+typedef struct {
+    uint64_t IdleProcessTime;
+    uint64_t IdleTime;
+    uint64_t IoReadTransferCount;
+    uint64_t IoWriteTransferCount;
+    uint64_t IoOtherTransferCount;
+    uint32_t AvailablePages;
+    uint32_t TotalCommittedPages;
+    uint32_t TotalCommitLimit;
+    uint32_t PeakCommitment;
+    uint32_t PagedPoolUsage;
+    uint32_t NonPagedPoolUsage;
+} SYSTEM_PERFORMANCE_INFORMATION32;
+
+typedef struct {
+    uint64_t IdleTime;
+    uint64_t KernelTime;
+    uint64_t UserTime;
+    uint64_t DpcTime;
+    uint64_t InterruptTime;
+    uint32_t InterruptCount;
+    uint64_t Reserved1[2];
+} SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32;
+
+typedef struct {
+    uint32_t Count;
+    struct {
+        uint16_t UniqueProcessId;
+        uint16_t CreatorBackTraceIndex;
+        uint8_t ObjectTypeIndex;
+        uint8_t HandleAttributes;
+        uint16_t HandleValue;
+        void *Object;
+        uint32_t GrantedAccess;
+    } Handles[1];
+} SYSTEM_HANDLE_INFORMATION32;
+
+typedef struct {
+    uint32_t CurrentSize;
+    uint32_t PeakSize;
+    uint32_t PageFaultCount;
+} SYSTEM_FILECACHE_INFORMATION32;
+
+typedef struct {
+    int32_t ExitStatus;
+    void *PebBaseAddress;
+    uint32_t AffinityMask;
+    int32_t BasePriority;
+    uint32_t UniqueProcessId;
+    uint32_t InheritedFromUniqueProcessId;
+} PROCESS_BASIC_INFORMATION32;
+
+typedef struct {
+    uint8_t Reserved1[2];
+    uint8_t BeingDebugged;
+    uint8_t Reserved2[1];
+    void *Reserved3[2];
+    void *Ldr;
+    void *ProcessParameters;
+    uint8_t Reserved4[104];
+    void *Reserved5[52];
+    void *PostProcessInitRoutine;
+    uint8_t Reserved6[128];
+    uint32_t SessionId;
+    uint8_t NumberOfProcessors;
+} PEB32;
+
+typedef struct {
+    void *Reserved1[12];
+    PEB32 *Peb;
+} TEB32;
+
+typedef struct {
+    uint32_t dwOSVersionInfoSize;
+    uint32_t dwMajorVersion;
+    uint32_t dwMinorVersion;
+    uint32_t dwBuildNumber;
+    uint32_t dwPlatformId;
+    uint16_t szCSDVersion[128];
+} RTL_OSVERSIONINFOW32;
+
+static PEB32 g_peb = { {0}, 0, {0}, {0}, 0, 0, {0}, {0}, 0, {0}, 0, 1 };
+static TEB32 g_teb = { {0}, &g_peb };
+static uint64_t g_fake_ticks = 0;
+static uint16_t g_proc_idle_name[] = {0};
+static uint16_t g_proc_taskmgr_name[] = {'T','A','S','K','M','G','R','.','E','X','E',0};
+static uint16_t g_proc_cmd_name[] = {'C','M','D','.','E','X','E',0};
+
+static void ntdll_thread_boot(void *arg) {
+    uint32_t (*fn)(void*) = ((uint32_t (**)(void*))arg)[0];
+    void *param = ((void**)arg)[1];
+    if (fn) fn(param);
+    kfree(arg);
+    for (;;) KeYield();
+}
 
 // Forward declarations
 __attribute__((stdcall)) int NtDisplayString(const char *text);
@@ -31,7 +207,13 @@ __attribute__((stdcall)) int NtTerminateProcess(void *process, int status);
 // === NT Object Manager API ===
 
 __attribute__((stdcall)) int NtCreateEvent(void **event, uint32_t access, void *attr, int type, int state) {
-    if (event) *event = (void*)0x1000;
+    uint32_t h;
+    (void)access;
+    (void)attr;
+    h = KeCreateEvent(type ? 1 : 0);
+    if (state) KeSetEvent(h);
+    else KeResetEvent(h);
+    if (event) *event = (void*)(uintptr_t)h;
     return 0; // STATUS_SUCCESS
 }
 
@@ -41,11 +223,13 @@ __attribute__((stdcall)) int NtOpenEvent(void **event, uint32_t access, void *at
 }
 
 __attribute__((stdcall)) int NtSetEvent(void *event, int *previous) {
+    if (event) KeSetEvent((uint32_t)(uintptr_t)event);
     if (previous) *previous = 0;
     return 0;
 }
 
 __attribute__((stdcall)) int NtResetEvent(void *event, int *previous) {
+    if (event) KeResetEvent((uint32_t)(uintptr_t)event);
     if (previous) *previous = 0;
     return 0;
 }
@@ -100,7 +284,15 @@ __attribute__((stdcall)) int NtCancelTimer(void *timer, int *previous) {
 __attribute__((stdcall)) int NtCreateThread(void **thread, uint32_t access, void *attr, 
                                               void *process, void *client_id, void *context,
                                               void *stack, int suspended) {
-    if (thread) *thread = (void*)0x7000;
+    void **ctx;
+    uint32_t h;
+    (void)access; (void)attr; (void)process; (void)client_id; (void)suspended;
+    ctx = (void**)kmalloc(sizeof(void*) * 2);
+    if (!ctx) return 0xC0000017;
+    ctx[0] = context;
+    ctx[1] = stack;
+    h = KeCreateThread(ntdll_thread_boot, ctx, 16384);
+    if (thread) *thread = (void*)(uintptr_t)h;
     return 0;
 }
 
@@ -154,6 +346,15 @@ __attribute__((stdcall)) int NtTerminateProcess(void *process, int status) {
 
 __attribute__((stdcall)) int NtQueryInformationProcess(void *process, uint32_t class_, void *info,
                                                           uint32_t len, uint32_t *needed) {
+    PROCESS_BASIC_INFORMATION32 *pbi = (PROCESS_BASIC_INFORMATION32*)info;
+    (void)process;
+    if (needed) *needed = sizeof(PROCESS_BASIC_INFORMATION32);
+    if (class_ != 0 || !info || len < sizeof(PROCESS_BASIC_INFORMATION32)) return 0xC0000004;
+    memset(pbi, 0, sizeof(*pbi));
+    pbi->PebBaseAddress = &g_peb;
+    pbi->AffinityMask = 1;
+    pbi->BasePriority = 8;
+    pbi->UniqueProcessId = 1;
     if (needed) *needed = len;
     return 0;
 }
@@ -178,8 +379,9 @@ __attribute__((stdcall)) int NtDelayExecution(int alertable, void *interval) {
 // === NT Wait API ===
 
 __attribute__((stdcall)) int NtWaitForSingleObject(void *handle, int alertable, void *timeout) {
-    (void)handle; (void)alertable; (void)timeout;
-    return 0; // STATUS_SUCCESS (pretend object is signaled)
+    (void)alertable; (void)timeout;
+    if (handle) KeWaitEvent((uint32_t)(uintptr_t)handle);
+    return 0;
 }
 
 __attribute__((stdcall)) int NtWaitForMultipleObjects(uint32_t count, void **handles, int wait_type,
@@ -424,9 +626,136 @@ __attribute__((stdcall)) int NtNotifyChangeKey(void *key, void *event, void *apc
 // === NT System API ===
 
 __attribute__((stdcall)) int NtQuerySystemInformation(uint32_t class_, void *info, uint32_t len, uint32_t *needed) {
+    SerialPutString("[NTDLL] NtQuerySystemInformation class=");
+    SerialPrintDec(class_);
+    SerialPutString("\r\n");
+    g_fake_ticks += 100000;
+    if (class_ == 0 && info && len >= sizeof(SYSTEM_BASIC_INFORMATION32)) {
+        SYSTEM_BASIC_INFORMATION32 *sbi = (SYSTEM_BASIC_INFORMATION32*)info;
+        memset(sbi, 0, sizeof(*sbi));
+        sbi->TimerResolution = 10000;
+        sbi->MmPageSize = 4096;
+        sbi->MmNumberOfPhysicalPages = 16384;
+        sbi->HighestPhysicalPageNumber = 16383;
+        sbi->AllocationGranularity = 4096;
+        sbi->MinimumUserModeAddress = 0x1000;
+        sbi->MaximumUserModeAddress = 0x7FFFFFFF;
+        sbi->ActiveProcessorsAffinityMask = 1;
+        sbi->NumberOfProcessors = 1;
+        if (needed) *needed = sizeof(*sbi);
+        SerialPutString("[NTDLL] NtQuerySystemInformation basic ok\r\n");
+        return 0;
+    }
+    if (class_ == 3 && info && len >= sizeof(SYSTEM_TIMEOFDAY_INFORMATION32)) {
+        SYSTEM_TIMEOFDAY_INFORMATION32 *tod = (SYSTEM_TIMEOFDAY_INFORMATION32*)info;
+        memset(tod, 0, sizeof(*tod));
+        tod->SystemTime = g_fake_ticks;
+        if (needed) *needed = sizeof(*tod);
+        return 0;
+    }
+    if (class_ == 2 && info && len >= sizeof(SYSTEM_PERFORMANCE_INFORMATION32)) {
+        SYSTEM_PERFORMANCE_INFORMATION32 *spi = (SYSTEM_PERFORMANCE_INFORMATION32*)info;
+        memset(spi, 0, sizeof(*spi));
+        spi->IdleTime = g_fake_ticks / 2;
+        spi->IdleProcessTime = g_fake_ticks / 2;
+        spi->AvailablePages = 8192;
+        spi->TotalCommittedPages = 1024;
+        spi->TotalCommitLimit = 16384;
+        spi->PeakCommitment = 2048;
+        spi->PagedPoolUsage = 64;
+        spi->NonPagedPoolUsage = 32;
+        if (needed) *needed = sizeof(*spi);
+        return 0;
+    }
+    if (class_ == 21 && info && len >= sizeof(SYSTEM_FILECACHE_INFORMATION32)) {
+        SYSTEM_FILECACHE_INFORMATION32 *fc = (SYSTEM_FILECACHE_INFORMATION32*)info;
+        memset(fc, 0, sizeof(*fc));
+        fc->CurrentSize = 256;
+        fc->PeakSize = 512;
+        if (needed) *needed = sizeof(*fc);
+        return 0;
+    }
+    if (class_ == 8 && info && len >= sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32)) {
+        SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32 *pp = (SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32*)info;
+        memset(pp, 0, sizeof(*pp));
+        pp->IdleTime = g_fake_ticks / 2;
+        pp->KernelTime = g_fake_ticks / 4;
+        pp->UserTime = g_fake_ticks / 4;
+        if (needed) *needed = sizeof(*pp);
+        return 0;
+    }
+    if (class_ == 16 && info && len >= sizeof(SYSTEM_HANDLE_INFORMATION32)) {
+        SYSTEM_HANDLE_INFORMATION32 *hi = (SYSTEM_HANDLE_INFORMATION32*)info;
+        memset(hi, 0, sizeof(*hi));
+        hi->Count = 1;
+        hi->Handles[0].UniqueProcessId = 1;
+        hi->Handles[0].HandleValue = 1;
+        if (needed) *needed = sizeof(*hi);
+        return 0;
+    }
+    if (class_ == 5 && info && len >= (sizeof(SYSTEM_PROCESS_INFORMATION32) * 3)) {
+        SYSTEM_PROCESS_INFORMATION32 *p = (SYSTEM_PROCESS_INFORMATION32*)info;
+        SYSTEM_PROCESS_INFORMATION32 *p2 = (SYSTEM_PROCESS_INFORMATION32*)((uint8_t*)info + sizeof(SYSTEM_PROCESS_INFORMATION32));
+        SYSTEM_PROCESS_INFORMATION32 *p3 = (SYSTEM_PROCESS_INFORMATION32*)((uint8_t*)info + (sizeof(SYSTEM_PROCESS_INFORMATION32) * 2));
+        memset(info, 0, sizeof(SYSTEM_PROCESS_INFORMATION32) * 3);
+        p->NextEntryOffset = sizeof(SYSTEM_PROCESS_INFORMATION32);
+        p->ProcessName.Buffer = g_proc_idle_name;
+        p->ProcessName.Length = 0;
+        p->ProcessName.MaximumLength = 0;
+        p->UniqueProcessId = 0;
+        p->HandleCount = 0;
+        p->dwThreadCount = p->NumberOfThreads = 1;
+        p->dwBasePriority = p->BasePriority = 0;
+        p->KernelTime = g_fake_ticks / 2;
+
+        p2->NextEntryOffset = sizeof(SYSTEM_PROCESS_INFORMATION32);
+        p2->ProcessName.Buffer = g_proc_cmd_name;
+        p2->ProcessName.Length = 7 * 2;
+        p2->ProcessName.MaximumLength = 8 * 2;
+        p2->UniqueProcessId = (void*)2;
+        p2->HandleCount = 8;
+        p2->dwThreadCount = p2->NumberOfThreads = 1;
+        p2->dwBasePriority = p2->BasePriority = 8;
+        p2->vmCounters.WorkingSetSize = 256 * 1024;
+        p2->vmCounters.PeakWorkingSetSize = 512 * 1024;
+        p2->vmCounters.VirtualSize = 1024 * 1024;
+        p2->KernelTime = g_fake_ticks / 4;
+        p2->UserTime = g_fake_ticks / 4;
+
+        p3->NextEntryOffset = 0;
+        p3->ProcessName.Buffer = g_proc_taskmgr_name;
+        p3->ProcessName.Length = 11 * 2;
+        p3->ProcessName.MaximumLength = 12 * 2;
+        p3->UniqueProcessId = (void*)3;
+        p3->HandleCount = 12;
+        p3->dwThreadCount = p3->NumberOfThreads = 4;
+        p3->dwBasePriority = p3->BasePriority = 8;
+        p3->vmCounters.WorkingSetSize = 1024 * 1024;
+        p3->vmCounters.PeakWorkingSetSize = 2 * 1024 * 1024;
+        p3->vmCounters.VirtualSize = 4 * 1024 * 1024;
+        p3->KernelTime = g_fake_ticks / 3;
+        p3->UserTime = g_fake_ticks / 3;
+        if (needed) *needed = sizeof(SYSTEM_PROCESS_INFORMATION32) * 3;
+        return 0;
+    }
     if (needed) *needed = 0;
-    if (info && len > 0) memset(info, 0, len);
-    return 0xC0000002; // STATUS_NOT_IMPLEMENTED
+    if (info && len) memset(info, 0, len);
+    return 0xC0000002;
+}
+
+__attribute__((stdcall)) int RtlGetVersion(void *info) {
+    RTL_OSVERSIONINFOW32 *ver = (RTL_OSVERSIONINFOW32*)info;
+    uint32_t i;
+
+    if (!ver) return 0xC000000D;
+    ver->dwMajorVersion = DISCOUNT_WIN32_MAJOR;
+    ver->dwMinorVersion = DISCOUNT_WIN32_MINOR;
+    ver->dwBuildNumber = DISCOUNT_WIN32_BUILD;
+    ver->dwPlatformId = 2;
+    for (i = 0; i < (sizeof(ver->szCSDVersion) / sizeof(ver->szCSDVersion[0])); i++) {
+        ver->szCSDVersion[i] = 0;
+    }
+    return 0;
 }
 
 __attribute__((stdcall)) int NtSetSystemInformation(uint32_t class_, void *info, uint32_t len) {
@@ -449,7 +778,7 @@ __attribute__((stdcall)) int NtQueryPerformanceCounter(uint64_t *counter, uint64
 }
 
 __attribute__((stdcall)) int NtGetTickCount(uint64_t *count) {
-    if (count) *count = 0;
+    if (count) *count = (uint64_t)KeGetSchedulerTicks() * 16ULL;
     return 0;
 }
 
@@ -459,7 +788,7 @@ __attribute__((stdcall)) int NtShutdownSystem(uint32_t action) {
 }
 
 __attribute__((stdcall)) int NtDisplayString(const char *text) {
-    HalPutString(text, 0x0F);
+    if (text) SerialPutString(text);
     return 0;
 }
 
@@ -517,6 +846,10 @@ __attribute__((stdcall)) int NtQuerySecurityObject(void *handle, uint32_t info_c
 __attribute__((stdcall)) int NtClose(void *handle) {
     (void)handle;
     return 0;
+}
+
+__attribute__((stdcall)) void *NtCurrentTeb(void) {
+    return &g_teb;
 }
 
 __attribute__((stdcall)) int NtDuplicateObject(void *source_process, void *source_handle,

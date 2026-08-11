@@ -3,6 +3,7 @@
 #include "mm.h"
 #include "hal.h"
 #include "util.h"
+#include "serial.h"
 
 static HANDLE_TABLE global_table;
 
@@ -34,6 +35,7 @@ HANDLE ObCreateObject(OBJECT_TYPE type, const char *name, void *body, uint32_t b
             return (HANDLE)i;
         }
     }
+    SerialPutString("[OBJ] ObCreateObject exhausted handle table\r\n");
     return INVALID_HANDLE;
 }
 

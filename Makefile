@@ -15,6 +15,7 @@ GRUB_MKRESCUE := grub-mkrescue
 MINGW_CC := i686-w64-mingw32-gcc
 
 CPPFLAGS := \
+	-Iinclude/win32 \
 	-Ikernel \
 	-Iwin32 \
 	-Idrivers/cdfs \
@@ -67,12 +68,15 @@ DLL_NAMES := $(sort $(notdir $(basename $(DLL_SRCS))))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 W32K_DLL := $(BUILD_DIR)/win32/w32k/w32k.dll
 
-APP_SRC_FILES := $(wildcard apps/*.c) $(wildcard apps/*/*.c)
+APP_SRC_FILES := $(wildcard apps/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
 SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
 CSRSS_APP := $(BUILD_DIR)/win32/csrss/csrss.exe
 CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
 DESK_CPL := $(BUILD_DIR)/apps/control/desk/desk.cpl
+CMD_APP := $(BUILD_DIR)/apps/cmd/cmd.exe
+TASKMGR_APP := $(BUILD_DIR)/apps/taskmgr/taskmgr.exe
+TASKMGR_SRCS := $(filter %.c,$(wildcard apps/taskmgr/*.c))
 DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
 SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
 VGA_SYS := $(BUILD_DIR)/drivers/vga/vga.sys
@@ -91,9 +95,9 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(W32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(DRIVER_SYS_FILES) $(W32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
 
-$(ISO_NAME): $(KERNEL_ELF) $(DLL_OUTPUTS) $(GRUB_DIR)/grub.cfg
+$(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
 
 $(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS)
@@ -115,12 +119,13 @@ $(BOOT_CDFS_OBJ): drivers/cdfs/cdfs.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCdfsInit=BootCdfsInit -DCdfsReadSector=BootCdfsReadSector -DCdfsFindFile=BootCdfsFindFile -DCdfsReadFile=BootCdfsReadFile -c $< -o $@
 
-$(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
-	@mkdir -p $(@D)
+define BUILD_DLL_template
+$(BUILD_DIR)/dlls/$(1).dll: dlls/$(1)/$(1).c $(KERNEL_ELF)
+	@mkdir -p $$(@D)
 	@if command -v $(MINGW_CC) >/dev/null 2>&1; then \
 		$(MINGW_CC) -shared \
-			-o $@ \
-			dlls/$*/$*.c \
+			-o $$@ \
+			$$< \
 			-nostdlib -nostartfiles \
 			-Wl,--subsystem,windows \
 			-Wl,--image-base,0x10000000 \
@@ -130,10 +135,13 @@ $(BUILD_DIR)/dlls/%.dll: $(KERNEL_ELF)
 			-L$(BUILD_DIR) \
 			-l:kernel.elf; \
 	else \
-		$(CC) $(CPPFLAGS) -ffreestanding -nostdlib -fno-builtin -m32 -shared -fno-pic \
-			-o $@ \
-			dlls/$*/$*.c; \
+		$(CC) $(CPPFLAGS) -ffreestanding -nostdlib -fno-builtin -m32 -fPIC -shared -Wl,-Bsymbolic \
+			-o $$@ \
+			$$<; \
 	fi
+endef
+
+$(foreach name,$(DLL_NAMES),$(eval $(call BUILD_DLL_template,$(name))))
 
 $(W32K_DLL): win32/w32k/w32k.c
 	@mkdir -p $(@D)
@@ -141,21 +149,21 @@ $(W32K_DLL): win32/w32k/w32k.c
 
 $(BUILD_DIR)/apps/%.exe: apps/%.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c
 
-$(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c
+$(CMD_APP): apps/cmd/cmd.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c
 
 $(CONTROL_APP): apps/control/control.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c
@@ -167,16 +175,23 @@ $(DESK_CPL): apps/control/desk/desk.c
 		-o $@ \
 		$< kernel/util.c
 
+$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,-e,WinMain \
+		-o $@ \
+		$(TASKMGR_SRCS) kernel/util.c
+
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c
 
 $(CSRSS_APP): win32/csrss/csrss_app.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iwin32 \
+	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/util.c
@@ -209,7 +224,7 @@ $(FB_SYS): drivers/fb/fb.c drivers/module_entry.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@rm -rf $(ISO_DIR)/APPS
@@ -227,8 +242,8 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_AP
 	@if [ -f "$(CSRSS_APP)" ]; then \
 		cp "$(CSRSS_APP)" "$(SYSTEM32_DIR)/CSRSS.EXE"; \
 	fi
-	@if [ -f "$(BUILD_DIR)/apps/cmd/cmd.exe" ]; then \
-		cp "$(BUILD_DIR)/apps/cmd/cmd.exe" "$(SYSTEM32_DIR)/CMD.EXE"; \
+	@if [ -f "$(CMD_APP)" ]; then \
+		cp "$(CMD_APP)" "$(SYSTEM32_DIR)/CMD.EXE"; \
 	fi
 	@if [ -f "$(CONTROL_APP)" ]; then \
 		cp "$(CONTROL_APP)" "$(SYSTEM32_DIR)/CONTROL.EXE"; \
@@ -236,12 +251,15 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(SMSS_APP) $(CSRSS_AP
 	@if [ -f "$(DESK_CPL)" ]; then \
 		cp "$(DESK_CPL)" "$(SYSTEM32_DIR)/DESK.CPL"; \
 	fi
+	@if [ -f "$(TASKMGR_APP)" ]; then \
+		cp "$(TASKMGR_APP)" "$(SYSTEM32_DIR)/TASKMGR.EXE"; \
+	fi
 	@for sys in $(DRIVER_SYS_FILES); do \
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@touch $@
 
-$(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg | $(SYSTEM32_DIR)/.stamp
+$(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(SYSTEM32_DIR)/.stamp
 	@mkdir -p $(GRUB_DIR) $(ISO_DIR)/boot
 	cp $< $@
 

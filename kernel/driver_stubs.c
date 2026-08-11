@@ -160,15 +160,24 @@ uint8_t FbGetPixel(int x, int y) { return pFbGetPixel ? pFbGetPixel(x, y) : 0; }
 void FbCapture(uint8_t *dst, int dst_stride) { if (pFbCapture) pFbCapture(dst, dst_stride); }
 void FbBlitIndexed(int x, int y, int w, int h, const uint8_t *src, int src_stride) { if (pFbBlitIndexed) pFbBlitIndexed(x, y, w, h, src, src_stride); }
 
-void Win32kInit(void *mb_info) { if (pWin32kInit) pWin32kInit(mb_info); }
+void Win32kInit(void *mb_info) {
+    if (pWin32kInit) pWin32kInit(mb_info);
+    else SerialPutString("[STUB] Win32kInit unresolved\r\n");
+}
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t)) {
-    return pWin32kRegisterClass ? pWin32kRegisterClass(className, style, wndProc) : INVALID_HANDLE;
+    if (pWin32kRegisterClass) return pWin32kRegisterClass(className, style, wndProc);
+    SerialPutString("[STUB] Win32kRegisterClass unresolved\r\n");
+    return INVALID_HANDLE;
 }
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
-    return pWin32kCreateWindow ? pWin32kCreateWindow(className, title, x, y, w, h, style) : INVALID_HANDLE;
+    if (pWin32kCreateWindow) return pWin32kCreateWindow(className, title, x, y, w, h, style);
+    SerialPutString("[STUB] Win32kCreateWindow unresolved\r\n");
+    return INVALID_HANDLE;
 }
 HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style) {
-    return pWin32kCreateWindowByClass ? pWin32kCreateWindowByClass(hClass, title, x, y, w, h, style) : INVALID_HANDLE;
+    if (pWin32kCreateWindowByClass) return pWin32kCreateWindowByClass(hClass, title, x, y, w, h, style);
+    SerialPutString("[STUB] Win32kCreateWindowByClass unresolved\r\n");
+    return INVALID_HANDLE;
 }
 void Win32kShowWindow(HANDLE hwnd) { if (pWin32kShowWindow) pWin32kShowWindow(hwnd); }
 void Win32kUpdateWindow(HANDLE hwnd) { if (pWin32kUpdateWindow) pWin32kUpdateWindow(hwnd); }
@@ -282,4 +291,9 @@ void DriverInstallWin32k(void *image) {
     RESOLVE(pWin32kIsDragging, image, "Win32kIsDragging");
     RESOLVE(pWin32kGetActiveWindow, image, "Win32kGetActiveWindow");
     RESOLVE(pWin32kActivateWindow, image, "Win32kActivateWindow");
+
+    if (!pWin32kInit) SerialPutString("[STUB] Missing Win32kInit export\r\n");
+    if (!pWin32kRegisterClass) SerialPutString("[STUB] Missing Win32kRegisterClass export\r\n");
+    if (!pWin32kCreateWindow) SerialPutString("[STUB] Missing Win32kCreateWindow export\r\n");
+    if (!pWin32kCreateWindowByClass) SerialPutString("[STUB] Missing Win32kCreateWindowByClass export\r\n");
 }

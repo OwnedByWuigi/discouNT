@@ -3,5 +3,8 @@
 
 #define DISCOUNT_NAME "discouNT"
 #define DISCOUNT_VERSION "0.0.3"
+#define DISCOUNT_WIN32_MAJOR 10
+#define DISCOUNT_WIN32_MINOR 0
+#define DISCOUNT_WIN32_BUILD 19041
 
 #endif

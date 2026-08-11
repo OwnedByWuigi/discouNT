@@ -516,6 +516,9 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
 
     if (cmd_class == 0xFFFFFFFFU) {
         cmd_class = g_api->RegisterClass("GuiCmdClass", 0, cmd_wndproc);
+        if (cmd_class == 0xFFFFFFFFU) {
+            return 0xFFFFFFFFU;
+        }
     }
 
     cmd_exit_requested = 0;
@@ -525,7 +528,8 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
     if (g_api->CreateWindowByClass) {
         cmd_window = g_api->CreateWindowByClass(cmd_class, "Command Prompt",
                                                 72, 52, 640, 320, GUI_WS_OVERLAPPEDWINDOW);
-    } else {
+    }
+    if (cmd_window == 0xFFFFFFFFU && g_api->CreateWindow) {
         cmd_window = g_api->CreateWindow("GuiCmdClass", "Command Prompt",
                                          72, 52, 640, 320, GUI_WS_OVERLAPPEDWINDOW);
     }
@@ -552,6 +556,13 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
         input_buf[input_len++] = ascii;
         input_buf[input_len] = 0;
     }
+}
+
+__attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint8_t buttons, uint8_t event_type) {
+    (void)x;
+    (void)y;
+    (void)buttons;
+    (void)event_type;
 }
 
 __attribute__((visibility("default"))) int CmdAppShouldExit(void) {

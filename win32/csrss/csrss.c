@@ -13,6 +13,7 @@
 #include "keyboard.h"
 #include "guiapp.h"
 #include "net.h"
+#include "ke.h"
 #include "version.h"
 
 typedef int (*GuiAppInitFn)(const GUI_APP_API *api);
@@ -21,16 +22,34 @@ typedef void (*GuiAppHandleKeyFn)(uint8_t scancode, char ascii, uint8_t pressed)
 typedef void (*GuiAppHandleMouseFn)(int x, int y, uint8_t buttons, uint8_t event_type);
 typedef int (*GuiAppShouldExitFn)(void);
 typedef void (*GuiAppResetExitFn)(void);
+typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLine, int nCmdShow);
+typedef int (*GuiMainFn)(void);
+
+typedef enum _GUI_APP_KIND {
+    GUI_APP_KIND_CUSTOM = 0,
+    GUI_APP_KIND_WINMAIN,
+    GUI_APP_KIND_MAIN
+} GUI_APP_KIND;
 
 typedef struct _GUI_APP_INSTANCE {
     uint32_t pid;
     void *image;
     GUI_HANDLE window;
+    HANDLE thread;
+    GUI_APP_KIND kind;
+    volatile int exited;
+    int exit_code;
     GuiAppHandleKeyFn handle_key;
     GuiAppHandleMouseFn handle_mouse;
     GuiAppShouldExitFn should_exit;
     GuiAppResetExitFn reset_exit;
 } GUI_APP_INSTANCE;
+
+typedef struct _GUI_APP_THREAD_CTX {
+    GUI_APP_INSTANCE *app;
+    void *entry;
+    GUI_APP_KIND kind;
+} GUI_APP_THREAD_CTX;
 
 #define MAX_GUI_APPS 8
 
@@ -42,6 +61,11 @@ static char g_error_app[96];
 static char g_error_text[256];
 static HANDLE g_error_class = INVALID_HANDLE;
 static HANDLE g_error_window = INVALID_HANDLE;
+static int g_pending_error = 0;
+static char g_pending_error_app[96];
+static char g_pending_error_text[256];
+static int g_pending_launch = 0;
+static char g_pending_launch_path[256];
 
 static void uppercase_copy(char *dst, const char *src, int max_len) {
     int i = 0;
@@ -59,11 +83,22 @@ static void csrss_error_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
 
     if (msg == WM_PAINT) {
         RECT rect;
+        WINDOW *win;
+        int client_left;
+        int client_top;
         Win32kGetClientRect(hwnd, &rect);
-        FbFillRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, COLOR_LIGHT_GRAY);
-        FbDrawString(rect.left + 10, rect.top + 12, g_error_app, COLOR_BLACK, COLOR_LIGHT_GRAY);
-        FbDrawString(rect.left + 10, rect.top + 30, g_error_text, COLOR_BLACK, COLOR_LIGHT_GRAY);
-        FbDrawString(rect.left + 10, rect.top + 54, "This program could not be started.", COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
+        client_left = 0;
+        client_top = 0;
+        win = (WINDOW*)ObReferenceObject(hwnd);
+        if (win) {
+            client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+            client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+            ObDereferenceObject(hwnd);
+        }
+        FbFillRect(client_left, client_top, rect.right - rect.left, rect.bottom - rect.top, COLOR_LIGHT_GRAY);
+        FbDrawString(client_left + 10, client_top + 12, g_error_app, COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(client_left + 10, client_top + 30, g_error_text, COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(client_left + 10, client_top + 54, "This program could not be started.", COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
     } else if (msg == WM_DESTROY) {
         g_error_window = INVALID_HANDLE;
     }
@@ -111,6 +146,33 @@ static void csrss_show_launch_error(const char *path, const char *detail) {
     }
 }
 
+static void csrss_queue_launch_error(const char *path, const char *detail) {
+    int i = 0;
+
+    if (path) {
+        while (path[i] && i < (int)sizeof(g_pending_error_app) - 1) {
+            g_pending_error_app[i] = path[i];
+            i++;
+        }
+        g_pending_error_app[i] = 0;
+    } else {
+        strcpy(g_pending_error_app, "Application Error");
+    }
+
+    i = 0;
+    if (detail) {
+        while (detail[i] && i < (int)sizeof(g_pending_error_text) - 1) {
+            g_pending_error_text[i] = detail[i];
+            i++;
+        }
+        g_pending_error_text[i] = 0;
+    } else {
+        strcpy(g_pending_error_text, "The application could not be started.");
+    }
+
+    g_pending_error = 1;
+}
+
 static GUI_HANDLE csrss_register_class(const char *className, uint32_t style, void (*wndProc)(GUI_HANDLE, uint32_t, uint32_t, uint32_t)) {
     return Win32kRegisterClass(className, style, (void (*)(HANDLE, uint32_t, uint32_t, uint32_t))wndProc);
 }
@@ -144,82 +206,91 @@ static int csrss_ping(const char *ip_text, char *out_text, int out_text_len) {
 
 static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app);
 
-static int csrss_spawn_gui_instance(const char *path) {
-    GUI_APP_INSTANCE app;
+static void csrss_gui_thread_main(void *arg) {
+    GUI_APP_THREAD_CTX *ctx = (GUI_APP_THREAD_CTX*)arg;
+    uint8_t *exe_stack;
+    uint32_t exe_esp;
+    uint32_t saved_esp;
+    int ret = 0;
 
-    if (g_gui_app_count >= MAX_GUI_APPS) return -5;
-
-    app.pid = g_next_gui_pid++;
-    app.image = 0;
-    app.window = 0xFFFFFFFFU;
-    app.handle_key = 0;
-    app.handle_mouse = 0;
-    app.should_exit = 0;
-    app.reset_exit = 0;
-
-    if (!csrss_load_gui_instance(path, &app)) return -1;
-
-    if (app.window != INVALID_HANDLE) {
-        WINDOW *win = (WINDOW*)ObReferenceObject(app.window);
-        if (win) {
-            int cascade = g_gui_app_count * 24;
-            int screen_w = FbGetWidth();
-            int screen_h = FbGetHeight();
-
-            if (screen_w <= 0) screen_w = 640;
-            if (screen_h <= 0) screen_h = 480;
-
-            win->x += cascade;
-            win->y += cascade;
-
-            if (win->x + win->width > screen_w) win->x = screen_w - win->width;
-            if (win->y + win->height > screen_h) win->y = screen_h - win->height;
-            if (win->x < 0) win->x = 0;
-            if (win->y < 0) win->y = 0;
-
-            ObDereferenceObject(app.window);
-        }
-
-        Win32kActivateWindow(app.window);
-        Win32kShowWindow(app.window);
+    if (!ctx || !ctx->app || !ctx->entry) {
+        if (ctx) kfree(ctx);
+        return;
     }
 
-    g_gui_apps[g_gui_app_count++] = app;
-    Win32kRedrawAll();
-    return 0;
+    SerialPutString("[CSRSS] Standard GUI thread start pid=");
+    SerialPrintDec(ctx->app->pid);
+    SerialPutString("\r\n");
+
+    exe_stack = (uint8_t*)kmalloc(65536);
+    if (!exe_stack) {
+        ctx->app->exited = 1;
+        ctx->app->exit_code = -1;
+        kfree(ctx);
+        return;
+    }
+
+    g_current_gui_pid = ctx->app->pid;
+    exe_esp = (uint32_t)(exe_stack + 65536 - 256);
+    if (ctx->kind == GUI_APP_KIND_WINMAIN) {
+        GuiWinMainFn fn = (GuiWinMainFn)ctx->entry;
+        __asm__ volatile(
+            "movl %%esp, %[oldsp]\n"
+            "movl %[newsp], %%esp\n"
+            "push $1\n"
+            "push $0\n"
+            "push $0\n"
+            "push $0\n"
+            "call *%[fn]\n"
+            "movl %%eax, %[retval]\n"
+            "movl %[oldsp], %%esp\n"
+            : [oldsp] "=&r"(saved_esp),
+              [retval] "=r"(ret)
+            : [newsp] "r"(exe_esp),
+              [fn] "r"(fn)
+            : "eax", "ecx", "edx", "memory"
+        );
+    } else {
+        GuiMainFn fn = (GuiMainFn)ctx->entry;
+        __asm__ volatile(
+            "movl %%esp, %[oldsp]\n"
+            "movl %[newsp], %%esp\n"
+            "call *%[fn]\n"
+            "movl %%eax, %[retval]\n"
+            "movl %[oldsp], %%esp\n"
+            : [oldsp] "=&r"(saved_esp),
+              [retval] "=r"(ret)
+            : [newsp] "r"(exe_esp),
+              [fn] "r"(fn)
+            : "eax", "ecx", "edx", "memory"
+        );
+    }
+    g_current_gui_pid = 0;
+
+    kfree(exe_stack);
+    ctx->app->exit_code = ret;
+    ctx->app->exited = 1;
+    SerialPutString("[CSRSS] Standard GUI thread exit pid=");
+    SerialPrintDec(ctx->app->pid);
+    SerialPutString(" code=");
+    SerialPrintDec((uint32_t)ret);
+    SerialPutString("\r\n");
+    kfree(ctx);
 }
 
-static int csrss_execute_image(const char *path) {
-    uint8_t *file_buf = 0;
-    uint32_t file_size = 0;
+static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_t file_size) {
     void *image;
     int ret;
-    char upper_path[256];
-
-    if (!path || !*path) return -1;
-
-    uppercase_copy(upper_path, path, sizeof(upper_path));
-    if (csrss_spawn_gui_instance(upper_path) == 0) {
-        return 0;
-    }
-
-    if (!CdfsReadFile(upper_path, &file_buf, &file_size)) return -1;
-    if (((file_size < 64 || file_buf[0] != 0x4D || file_buf[1] != 0x5A) &&
-         (file_size < 4 || *(uint32_t*)file_buf != 0x464C457F))) {
-        kfree(file_buf);
-        return -2;
-    }
 
     image = PeLoadImage(file_buf, file_size);
     if (!image) {
-        kfree(file_buf);
+        csrss_queue_launch_error(path, PeGetLastError() ? PeGetLastError() : "The application image could not be mapped.");
         return -3;
     }
 
     if (!PeResolveImports(image)) {
-        csrss_show_launch_error(upper_path, PeGetLastError());
+        csrss_queue_launch_error(path, PeGetLastError());
         PeFreeImage(image);
-        kfree(file_buf);
         return -5;
     }
     if (!(*(uint32_t*)file_buf == 0x464C457F)) {
@@ -235,8 +306,8 @@ static int csrss_execute_image(const char *path) {
 
         if (!func || !exe_stack) {
             if (exe_stack) kfree(exe_stack);
+            csrss_queue_launch_error(path, "The application entry point could not be started.");
             PeFreeImage(image);
-            kfree(file_buf);
             return -4;
         }
 
@@ -258,8 +329,78 @@ static int csrss_execute_image(const char *path) {
     }
 
     PeFreeImage(image);
-    kfree(file_buf);
     return ret;
+}
+
+static int csrss_spawn_gui_instance(const char *path) {
+    GUI_APP_INSTANCE *app;
+    GUI_HANDLE previous_active;
+
+    if (g_gui_app_count >= MAX_GUI_APPS) return -5;
+
+    app = &g_gui_apps[g_gui_app_count];
+    memset(app, 0, sizeof(*app));
+    app->pid = g_next_gui_pid++;
+    app->window = INVALID_HANDLE;
+    app->thread = INVALID_HANDLE;
+    app->kind = GUI_APP_KIND_CUSTOM;
+    previous_active = Win32kGetActiveWindow();
+
+    if (!csrss_load_gui_instance(path, app)) return -1;
+
+    if (app->kind != GUI_APP_KIND_CUSTOM) {
+        for (int tries = 0; tries < 8; tries++) KeYield();
+        if (app->window == INVALID_HANDLE) {
+            GUI_HANDLE active = Win32kGetActiveWindow();
+            if (active != INVALID_HANDLE && active != previous_active) {
+                app->window = active;
+            }
+        }
+    }
+
+    if (app->window != INVALID_HANDLE) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(app->window);
+        if (win) {
+            int cascade = g_gui_app_count * 24;
+            int screen_w = FbGetWidth();
+            int screen_h = FbGetHeight();
+
+            if (screen_w <= 0) screen_w = 640;
+            if (screen_h <= 0) screen_h = 480;
+
+            win->x += cascade;
+            win->y += cascade;
+
+            if (win->x + win->width > screen_w) win->x = screen_w - win->width;
+            if (win->y + win->height > screen_h) win->y = screen_h - win->height;
+            if (win->x < 0) win->x = 0;
+            if (win->y < 0) win->y = 0;
+
+            ObDereferenceObject(app->window);
+        }
+
+        Win32kActivateWindow(app->window);
+        Win32kShowWindow(app->window);
+    }
+
+    g_gui_app_count++;
+    Win32kRedrawAll();
+    return 0;
+}
+
+static int csrss_execute_image(const char *path) {
+    char upper_path[256];
+
+    if (!path || !*path) return -1;
+
+    uppercase_copy(upper_path, path, sizeof(upper_path));
+    if (csrss_spawn_gui_instance(upper_path) == 0) {
+        return 0;
+    }
+
+    strcpy(g_pending_launch_path, upper_path);
+    g_pending_launch = 1;
+    return 0;
 }
 
 static int csrss_set_screen_resolution(int width, int height) {
@@ -338,6 +479,9 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     uint32_t file_size = 0;
     GuiAppInitFn init_fn;
     GuiAppCreateMainWindowFn create_window_fn;
+    GuiWinMainFn winmain_fn;
+    GuiMainFn main_fn;
+    GUI_APP_THREAD_CTX *thread_ctx;
 
     if (!app || !path || !*path) return 0;
 
@@ -372,13 +516,38 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     app->handle_mouse = (GuiAppHandleMouseFn)PeGetProcAddress(app->image, "CmdAppHandleMouse");
     app->should_exit = (GuiAppShouldExitFn)PeGetProcAddress(app->image, "CmdAppShouldExit");
     app->reset_exit = (GuiAppResetExitFn)PeGetProcAddress(app->image, "CmdAppResetExit");
+    winmain_fn = (GuiWinMainFn)PeGetProcAddress(app->image, "WinMain");
+    main_fn = (GuiMainFn)PeGetProcAddress(app->image, "main");
 
     if (!init_fn || !create_window_fn || !app->handle_key || !app->should_exit || !app->reset_exit) {
-        SerialPutString("[CSRSS] GUI app missing required exports\r\n");
-        csrss_show_launch_error(path, "The application is not a valid Win32 program.");
-        PeFreeImage(app->image);
-        app->image = 0;
-        return 0;
+        if (!winmain_fn && !main_fn) {
+            SerialPutString("[CSRSS] GUI app missing required exports\r\n");
+            csrss_show_launch_error(path, "The application is not a valid Win32 program.");
+            PeFreeImage(app->image);
+            app->image = 0;
+            return 0;
+        }
+
+        thread_ctx = (GUI_APP_THREAD_CTX*)kmalloc(sizeof(GUI_APP_THREAD_CTX));
+        if (!thread_ctx) {
+            PeFreeImage(app->image);
+            app->image = 0;
+            return 0;
+        }
+        memset(thread_ctx, 0, sizeof(*thread_ctx));
+        thread_ctx->app = app;
+        thread_ctx->kind = winmain_fn ? GUI_APP_KIND_WINMAIN : GUI_APP_KIND_MAIN;
+        thread_ctx->entry = winmain_fn ? (void*)winmain_fn : (void*)main_fn;
+
+        app->kind = thread_ctx->kind;
+        app->thread = KeCreateThread(csrss_gui_thread_main, thread_ctx, 32768);
+        if (app->thread == INVALID_HANDLE) {
+            kfree(thread_ctx);
+            PeFreeImage(app->image);
+            app->image = 0;
+            return 0;
+        }
+        return 1;
     }
 
     g_current_gui_pid = app->pid;
@@ -394,6 +563,12 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     g_current_gui_pid = app->pid;
     app->window = create_window_fn();
     g_current_gui_pid = 0;
+    if (app->window == 0xFFFFFFFFU) {
+        SerialPutString("[CSRSS] GUI app failed to create main window\r\n");
+        PeFreeImage(app->image);
+        app->image = 0;
+        return 0;
+    }
     return (app->window != 0xFFFFFFFFU);
 }
 
@@ -463,10 +638,20 @@ void CsrssSessionRun(void *mb_info) {
     g_gui_app_count = 0;
     g_next_gui_pid = 1;
     g_current_gui_pid = 0;
+    g_pending_error = 0;
+    g_pending_launch = 0;
 
     Win32kInit(mb_info);
     MouseInit();
     KeyboardInit();
+    PeLoadDll("NTDLL.DLL");
+    PeLoadDll("KERNEL32.DLL");
+    PeLoadDll("ADVAPI32.DLL");
+    PeLoadDll("GDI32.DLL");
+    PeLoadDll("USER32.DLL");
+    PeLoadDll("SHELL32.DLL");
+    PeLoadDll("SHLWAPI.DLL");
+    PeLoadDll("COMCTL32.DLL");
 
     if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") != 0) {
         restore_text_mode();
@@ -475,6 +660,7 @@ void CsrssSessionRun(void *mb_info) {
         HalPutString("Failed to launch CMD.EXE from SYSTEM32.\n", 0x0C);
         return;
     }
+    csrss_spawn_gui_instance("/SYSTEM32/TASKMGR.EXE");
 
     MouseGetState(&mouse_state);
     last_x = mouse_state.x;
@@ -578,20 +764,37 @@ void CsrssSessionRun(void *mb_info) {
         for (int i = 0; i < g_gui_app_count; ) {
             int remove = 0;
 
-            if (!ObReferenceObject(g_gui_apps[i].window)) {
-                remove = 1;
-            } else {
-                ObDereferenceObject(g_gui_apps[i].window);
-                if (g_gui_apps[i].should_exit && g_gui_apps[i].should_exit()) {
-                    if (g_gui_apps[i].window != INVALID_HANDLE) {
-                        Win32kDestroyWindow(g_gui_apps[i].window);
-                    }
+            if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM) {
+                if (!ObReferenceObject(g_gui_apps[i].window)) {
                     remove = 1;
+                } else {
+                    ObDereferenceObject(g_gui_apps[i].window);
+                    if (g_gui_apps[i].should_exit && g_gui_apps[i].should_exit()) {
+                        if (g_gui_apps[i].window != INVALID_HANDLE) {
+                            Win32kDestroyWindow(g_gui_apps[i].window);
+                        }
+                        remove = 1;
+                    }
+                }
+            } else {
+                THREAD *thread = (THREAD*)ObReferenceObject(g_gui_apps[i].thread);
+                if (thread) {
+                    if (thread->state == THREAD_TERMINATED || g_gui_apps[i].exited) {
+                        if (g_gui_apps[i].window != INVALID_HANDLE) {
+                            WINDOW *win = (WINDOW*)ObReferenceObject(g_gui_apps[i].window);
+                            if (!win) {
+                                remove = 1;
+                            } else {
+                                ObDereferenceObject(g_gui_apps[i].window);
+                            }
+                        }
+                    }
+                    ObDereferenceObject(g_gui_apps[i].thread);
                 }
             }
 
             if (remove) {
-                if (g_gui_apps[i].image) {
+                if (g_gui_apps[i].image && g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM) {
                     PeFreeImage(g_gui_apps[i].image);
                 }
                 for (int j = i; j < g_gui_app_count - 1; j++) {
@@ -605,6 +808,30 @@ void CsrssSessionRun(void *mb_info) {
         }
 
         if (g_gui_app_count == 0) running = 0;
+
+        if (g_pending_launch) {
+            uint8_t *file_buf = 0;
+            uint32_t file_size = 0;
+            char launch_path[256];
+            g_pending_launch = 0;
+            strcpy(launch_path, g_pending_launch_path);
+
+            if (!CdfsReadFile(launch_path, &file_buf, &file_size)) {
+                csrss_queue_launch_error(launch_path, "The system cannot find the file specified.");
+            } else if (((file_size < 64 || file_buf[0] != 0x4D || file_buf[1] != 0x5A) &&
+                        (file_size < 4 || *(uint32_t*)file_buf != 0x464C457F))) {
+                csrss_queue_launch_error(launch_path, "The application is not a valid Win32 program.");
+                kfree(file_buf);
+            } else {
+                csrss_execute_image_sync(launch_path, file_buf, file_size);
+                kfree(file_buf);
+            }
+        }
+
+        if (g_pending_error) {
+            g_pending_error = 0;
+            csrss_show_launch_error(g_pending_error_app, g_pending_error_text);
+        }
 
         for (volatile int i = 0; i < 3000; i++);
     }

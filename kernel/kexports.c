@@ -12,6 +12,8 @@
 #include "fb.h"
 #include "vga.h"
 #include "w32k.h"
+#include "ke.h"
+#include "peloader.h"
 
 typedef struct _KERNEL_EXPORT {
     const char *name;
@@ -30,6 +32,10 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"strcpy", strcpy},
     {"strcat", strcat},
     {"itoa", itoa},
+    {"__udivdi3", __udivdi3},
+    {"__umoddi3", __umoddi3},
+    {"__divdi3", __divdi3},
+    {"__moddi3", __moddi3},
     {"ObCreateObject", ObCreateObject},
     {"ObReferenceObject", ObReferenceObject},
     {"ObDereferenceObject", ObDereferenceObject},
@@ -101,9 +107,20 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"Win32kIsDragging", Win32kIsDragging},
     {"Win32kGetActiveWindow", Win32kGetActiveWindow},
     {"Win32kActivateWindow", Win32kActivateWindow},
+    {"KeAttachCurrentThread", KeAttachCurrentThread},
+    {"KeCreateThread", KeCreateThread},
+    {"KeYield", KeYield},
+    {"KeGetSchedulerTicks", KeGetSchedulerTicks},
+    {"KeCreateEvent", KeCreateEvent},
+    {"KeSetEvent", KeSetEvent},
+    {"KeResetEvent", KeResetEvent},
+    {"KeWaitEvent", KeWaitEvent},
+    {"PeGetProcAddress", PeGetProcAddress},
 };
 
 void *KernelResolveSymbol(const char *name) {
+    void *resolved;
+
     if (!name || !*name) return 0;
 
     for (uint32_t i = 0; i < (sizeof(kernel_exports) / sizeof(kernel_exports[0])); i++) {
@@ -111,6 +128,9 @@ void *KernelResolveSymbol(const char *name) {
             return kernel_exports[i].addr;
         }
     }
+
+    resolved = PeResolveExternalSymbol(name);
+    if (resolved) return resolved;
 
     return DriverResolveSymbol(name);
 }

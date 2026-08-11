@@ -2,7 +2,7 @@
 #define OBJECT_H
 #include <stdint.h>
 
-#define MAX_OBJECTS 64
+#define MAX_OBJECTS 256
 #define MAX_NAME_LEN 32
 
 typedef enum {

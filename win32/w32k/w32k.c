@@ -520,30 +520,10 @@ static void begin_fast_drag(HANDLE hwnd) {
 }
 
 static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
-    int width = FbGetWidth();
-    int height = FbGetHeight();
-
-    if (!drag_background || !win) {
-        Win32kRedrawAll();
-        return;
-    }
-
-    if (width <= 0) width = 640;
-    if (height <= 0) height = 480;
-
-    FbBlitIndexed(old_x, old_y, win->width, win->height,
-                  drag_background + (old_y * drag_bg_width) + old_x, drag_bg_width);
-
-    if (!rects_intersect(old_x, old_y, win->width, win->height,
-                         win->x, win->y, win->width, win->height)) {
-        FbBlitIndexed(win->x, win->y, win->width, win->height,
-                      drag_background + (win->y * drag_bg_width) + win->x, drag_bg_width);
-    }
-
-    draw_window_frame(win);
-    if (win->wndProc && !win->minimized) win->wndProc(drag_window, WM_PAINT, 0, 0);
-    MouseDrawCursor();
-    FbSwapBuffers();
+    (void)win;
+    (void)old_x;
+    (void)old_y;
+    Win32kRedrawAll();
 }
 
 void Win32kInit(void *mb_info) {
@@ -565,22 +545,45 @@ void Win32kInit(void *mb_info) {
 
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t)) {
     WNDCLASS *wc = (WNDCLASS*)kmalloc(sizeof(WNDCLASS));
+    HANDLE hclass;
+    if (!wc) {
+        SerialPutString("[Win32k] RegisterClass kmalloc failed\r\n");
+        return INVALID_HANDLE;
+    }
     memset(wc, 0, sizeof(WNDCLASS));
     int len = strlen(className);
     if (len > 63) len = 63;
     memcpy(wc->className, className, len);
     wc->style = style;
     wc->wndProc = wndProc;
-    return ObCreateObject(OBJ_TYPE_WINDOW, className, wc, sizeof(WNDCLASS));
+    hclass = ObCreateObject(OBJ_TYPE_WINDOW, className, wc, sizeof(WNDCLASS));
+    if (hclass == INVALID_HANDLE) {
+        SerialPutString("[Win32k] RegisterClass ObCreateObject failed for ");
+        SerialPutString(className);
+        SerialPutString("\r\n");
+        kfree(wc);
+    }
+    return hclass;
 }
 
 HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style) {
-    if (hClass == INVALID_HANDLE) return INVALID_HANDLE;
+    if (hClass == INVALID_HANDLE) {
+        SerialPutString("[Win32k] CreateWindowByClass invalid class handle\r\n");
+        return INVALID_HANDLE;
+    }
 
     WNDCLASS *wc = (WNDCLASS*)ObReferenceObject(hClass);
-    if (!wc) return INVALID_HANDLE;
+    if (!wc) {
+        SerialPutString("[Win32k] CreateWindowByClass class reference failed\r\n");
+        return INVALID_HANDLE;
+    }
     
     WINDOW *win = (WINDOW*)kmalloc(sizeof(WINDOW));
+    if (!win) {
+        SerialPutString("[Win32k] CreateWindowByClass window kmalloc failed\r\n");
+        ObDereferenceObject(hClass);
+        return INVALID_HANDLE;
+    }
     memset(win, 0, sizeof(WINDOW));
     int len = strlen(title);
     if (len > 63) len = 63;
@@ -600,9 +603,19 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
     win->wndProc = wc->wndProc;
     
     HANDLE hwnd = ObCreateObject(OBJ_TYPE_WINDOW, title, win, sizeof(WINDOW));
+    if (hwnd == INVALID_HANDLE) {
+        SerialPutString("[Win32k] CreateWindowByClass ObCreateObject failed for ");
+        SerialPutString(title);
+        SerialPutString("\r\n");
+        kfree(win);
+        ObDereferenceObject(hClass);
+        return INVALID_HANDLE;
+    }
     
     if (window_count < MAX_WINDOWS) {
         window_list[window_count++] = hwnd;
+    } else {
+        SerialPutString("[Win32k] CreateWindowByClass window list full\r\n");
     }
 
     raise_window(hwnd);

@@ -391,7 +391,12 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
         
         while (off < (int)(sectors * CDFS_SECTOR_SIZE)) {
             uint8_t len = dir_buf[off];
-            if (len == 0) break;
+            if (len == 0) {
+                int next_sector_off = ((off / CDFS_SECTOR_SIZE) + 1) * CDFS_SECTOR_SIZE;
+                if (next_sector_off <= off) break;
+                off = next_sector_off;
+                continue;
+            }
             
             uint8_t flags = dir_buf[off + 25];
             uint8_t name_len = dir_buf[off + 32];

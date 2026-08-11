@@ -18,7 +18,12 @@ typedef struct _THREAD {
     void *stack;
     uint32_t stack_size;
     uint32_t entry_point;
+    uint32_t entry_arg;
     uint32_t context_esp;
+    uint32_t context_ebx;
+    uint32_t context_esi;
+    uint32_t context_edi;
+    uint32_t context_ebp;
     uint32_t wait_handle;
     struct _THREAD *next;
 } THREAD;
@@ -42,7 +47,8 @@ typedef struct _EVENT {
 } EVENT;
 
 void KeInit(void);
-HANDLE KeCreateThread(void (*entry)(void), uint32_t stack_size);
+void KeAttachCurrentThread(const char *name);
+HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size);
 HANDLE KeCreateProcess(const char *name);
 void KeTerminateThread(HANDLE thread_handle);
 void KeYield(void);
@@ -51,6 +57,8 @@ void KeWaitMutex(HANDLE mutex_handle);
 void KeReleaseMutex(HANDLE mutex_handle);
 HANDLE KeCreateEvent(uint32_t manual_reset);
 void KeSetEvent(HANDLE event_handle);
+void KeResetEvent(HANDLE event_handle);
 void KeWaitEvent(HANDLE event_handle);
+uint32_t KeGetSchedulerTicks(void);
 void KeStartScheduler(void);
 #endif
