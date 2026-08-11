@@ -20,6 +20,7 @@ typedef struct {
     uint8_t left_down;
     uint8_t right_down;
     uint8_t middle_down;
+    int8_t wheel_delta;
 } MOUSE_STATE;
 
 void MouseInit(void);

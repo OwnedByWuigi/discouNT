@@ -17,6 +17,7 @@ typedef struct _GUI_RECT {
 #define GUI_MOUSE_MOVE      1
 #define GUI_MOUSE_LDOWN     2
 #define GUI_MOUSE_LUP       3
+#define GUI_MOUSE_WHEEL     4
 
 #define GUI_WS_VISIBLE           0x10000000L
 #define GUI_WS_CAPTION           0x00C00000L

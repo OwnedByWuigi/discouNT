@@ -8,6 +8,7 @@
 static MOUSE_STATE mouse = {320, 240, 0, 0, 0, 0};
 static uint8_t mouse_cycle = 0;
 static int8_t mouse_byte[3];
+static uint8_t mouse_packet_size = 3;
 static int mouse_old_x = 320, mouse_old_y = 240;
 static MOUSE_CURSOR_TYPE mouse_cursor_type = MOUSE_CURSOR_ARROW;
 
@@ -159,13 +160,17 @@ void MouseInit(void) {
     mouse_write(0xF6);
     mouse_read();
     
-    // Set sample rate to 200
-    mouse_write(0xF3);
+    /* IntelliMouse negotiation: USB/QEMU and most modern PS/2 devices
+     * expose the wheel as a fourth packet byte. Keep a three-byte fallback. */
+    mouse_write(0xF3); mouse_read(); mouse_write(200); mouse_read();
+    mouse_write(0xF3); mouse_read(); mouse_write(100); mouse_read();
+    mouse_write(0xF3); mouse_read(); mouse_write(80); mouse_read();
+    mouse_write(0xF2);
     mouse_read();
-    mouse_write(200);
-    mouse_read();
-    
-    // Enable data reporting
+    if (mouse_read() == 0x03) mouse_packet_size = 4;
+    else mouse_packet_size = 3;
+
+    /* Enable reporting only after the packet format has been selected. */
     mouse_write(0xF4);
     mouse_read();
     
@@ -173,6 +178,7 @@ void MouseInit(void) {
     mouse.y = 240;
     mouse_old_x = 320;
     mouse_old_y = 240;
+    mouse.wheel_delta = 0;
     cursor_saved = 0;
     
     SerialPutString("[Mouse] Ready\r\n");
@@ -185,12 +191,14 @@ void MouseGetState(MOUSE_STATE *state) {
     state->left_down = mouse.left_down;
     state->right_down = mouse.right_down;
     state->middle_down = mouse.middle_down;
+    state->wheel_delta = mouse.wheel_delta;
 }
 
 void MouseHandleByte(uint8_t data) {
     switch (mouse_cycle) {
         case 0:
             if (!(data & 0x08)) break;
+            mouse.wheel_delta = 0;
             mouse_byte[0] = data;
             mouse_cycle++;
             break;
@@ -228,7 +236,15 @@ void MouseHandleByte(uint8_t data) {
                 if (mouse.y < 0) mouse.y = 0;
                 if (mouse.y > max_y) mouse.y = max_y;
             }
-            
+            if (mouse_packet_size == 3) mouse_cycle = 0;
+            else mouse_cycle++;
+            break;
+        case 3:
+            {
+                int8_t wheel = data & 0x0F;
+                if (wheel & 0x08) wheel -= 16;
+                mouse.wheel_delta = wheel;
+            }
             mouse_cycle = 0;
             break;
     }

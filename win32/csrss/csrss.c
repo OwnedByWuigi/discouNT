@@ -701,6 +701,7 @@ void CsrssSessionRun(void *mb_info) {
     int last_x = 320;
     int last_y = 240;
     uint8_t last_buttons = 0;
+    int8_t last_wheel = 0;
     KEYBOARD_EVENT key_event;
     int running = 1;
     HANDLE active_hwnd;
@@ -752,6 +753,7 @@ void CsrssSessionRun(void *mb_info) {
     last_x = mouse_state.x;
     last_y = mouse_state.y;
     last_buttons = mouse_state.buttons;
+    last_wheel = mouse_state.wheel_delta;
 
     while (running) {
         while (inb(0x64) & 1) {
@@ -801,6 +803,27 @@ void CsrssSessionRun(void *mb_info) {
                     if (!Win32kIsDragging() && !Win32kIsResizing()) {
                         Win32kRefreshCursor();
                     }
+                }
+
+                if (mouse_state.wheel_delta != last_wheel) {
+                    active_hwnd = g_mouse_capture != INVALID_HANDLE ?
+                                  g_mouse_capture : Win32kGetActiveWindow();
+                    {
+                        GUI_APP_INSTANCE *app = csrss_find_app_by_window(active_hwnd);
+                        WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
+                        if (app && win && !win->minimized && app->kind == GUI_APP_KIND_CUSTOM && app->handle_mouse) {
+                            int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                            int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                            g_current_gui_pid = app->pid;
+                            app->handle_mouse(mouse_state.x - client_left,
+                                              mouse_state.y - client_top,
+                                              (uint8_t)mouse_state.wheel_delta,
+                                              GUI_MOUSE_WHEEL);
+                            g_current_gui_pid = 0;
+                        }
+                        if (win) ObDereferenceObject(active_hwnd);
+                    }
+                    last_wheel = mouse_state.wheel_delta;
                 }
 
                 if ((mouse_state.buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT)) {

@@ -486,6 +486,13 @@ static void cmd_handle_scroll_mouse(int x, int y, uint8_t event_type) {
     int sx;
     if (!g_api || !g_api->GetClientRect) return;
     g_api->GetClientRect(cmd_window, &rc);
+    if (event_type == GUI_MOUSE_WHEEL) {
+        int delta = (int)(int8_t)x;
+        cmd_scroll += delta > 0 ? delta : delta;
+        cmd_clamp_scroll(rc.bottom);
+        cmd_redraw();
+        return;
+    }
     sx = rc.right - CMD_SCROLL_SIZE;
     if (sx < 0 || y < 0 || y >= rc.bottom) return;
     /* Once the thumb is grabbed, continue tracking even if the pointer
@@ -667,6 +674,9 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
 __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, char ascii, uint8_t pressed) {
     if (!pressed) return;
 
+    /* Typing always returns to the live prompt, like a real console. */
+    cmd_scroll = 0;
+
     switch (scancode) {
         case 0x0E:
             if (input_len > 0) {
@@ -687,7 +697,10 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
 }
 
 __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint8_t buttons, uint8_t event_type) {
-    (void)buttons;
+    if (event_type == GUI_MOUSE_WHEEL) {
+        cmd_handle_scroll_mouse((int)(int8_t)buttons, y, event_type);
+        return;
+    }
     cmd_handle_scroll_mouse(x, y, event_type);
 }
 
