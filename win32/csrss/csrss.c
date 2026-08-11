@@ -65,6 +65,7 @@ static char g_error_app[96];
 static char g_error_text[256];
 static HANDLE g_error_class = INVALID_HANDLE;
 static HANDLE g_error_window = INVALID_HANDLE;
+static HANDLE g_mouse_capture = INVALID_HANDLE;
 static int g_pending_error = 0;
 static char g_pending_error_app[96];
 static char g_pending_error_text[256];
@@ -711,6 +712,7 @@ void CsrssSessionRun(void *mb_info) {
     g_current_gui_pid = 0;
     g_pending_error = 0;
     g_pending_launch = 0;
+    g_mouse_capture = INVALID_HANDLE;
 
     Win32kInit(mb_info);
     MouseInit();
@@ -762,10 +764,25 @@ void CsrssSessionRun(void *mb_info) {
 
                 if (mouse_state.x != last_x || mouse_state.y != last_y) {
                     Win32kHandleMouseMove(mouse_state.x, mouse_state.y);
-                    active_hwnd = Win32kGetActiveWindow();
+                    active_hwnd = g_mouse_capture != INVALID_HANDLE ?
+                                  g_mouse_capture : Win32kGetActiveWindow();
                     {
                         GUI_APP_INSTANCE *app = csrss_find_app_by_window(active_hwnd);
-                        if (app && app->kind != GUI_APP_KIND_CUSTOM) {
+                        if (app && app->kind == GUI_APP_KIND_CUSTOM && app->handle_mouse) {
+                            WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
+                            if (win) {
+                                int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                                int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                                if (!win->minimized) {
+                                    g_current_gui_pid = app->pid;
+                                    app->handle_mouse(mouse_state.x - client_left,
+                                                      mouse_state.y - client_top,
+                                                      mouse_state.buttons, GUI_MOUSE_MOVE);
+                                    g_current_gui_pid = 0;
+                                }
+                                ObDereferenceObject(active_hwnd);
+                            }
+                        } else if (app && app->kind != GUI_APP_KIND_CUSTOM) {
                             WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
                             if (win) {
                                 int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
@@ -799,8 +816,9 @@ void CsrssSessionRun(void *mb_info) {
                                 int client_bottom = win->y + win->height - 3;
 
                                 if (!win->minimized &&
-                                    mouse_state.x >= client_left && mouse_state.x < client_right &&
-                                    mouse_state.y >= client_top && mouse_state.y < client_bottom) {
+                                    (g_mouse_capture == active_hwnd ||
+                                     (mouse_state.x >= client_left && mouse_state.x < client_right &&
+                                      mouse_state.y >= client_top && mouse_state.y < client_bottom))) {
                                     if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM && g_gui_apps[i].handle_mouse) {
                                         g_current_gui_pid = g_gui_apps[i].pid;
                                         g_gui_apps[i].handle_mouse(mouse_state.x - client_left,
@@ -808,6 +826,7 @@ void CsrssSessionRun(void *mb_info) {
                                                                    mouse_state.buttons,
                                                                    GUI_MOUSE_LDOWN);
                                         g_current_gui_pid = 0;
+                                        g_mouse_capture = active_hwnd;
                                     } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
                                         csrss_post_standard_message(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
                                                                     MAKELPARAM(mouse_state.x - client_left,
@@ -823,7 +842,8 @@ void CsrssSessionRun(void *mb_info) {
 
                 if (!(mouse_state.buttons & MOUSE_LEFT) && (last_buttons & MOUSE_LEFT)) {
                     Win32kHandleMouseUp(mouse_state.x, mouse_state.y, 1);
-                    active_hwnd = Win32kGetActiveWindow();
+                    active_hwnd = g_mouse_capture != INVALID_HANDLE ?
+                                  g_mouse_capture : Win32kGetActiveWindow();
                     for (int i = 0; i < g_gui_app_count; i++) {
                         if (g_gui_apps[i].window == active_hwnd) {
                             WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
@@ -849,6 +869,7 @@ void CsrssSessionRun(void *mb_info) {
                                                                                mouse_state.y - client_top));
                                     }
                                 }
+                                if (g_mouse_capture == active_hwnd) g_mouse_capture = INVALID_HANDLE;
                                 ObDereferenceObject(active_hwnd);
                             }
                             break;

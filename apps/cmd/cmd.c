@@ -3,7 +3,8 @@
 #include "version.h"
 
 #define CMD_COLS 72
-#define CMD_ROWS 22
+#define CMD_ROWS 128
+#define CMD_SCROLL_SIZE 14
 
 #define COLOR_BLACK       0
 #define COLOR_LIGHT_GRAY  7
@@ -18,6 +19,11 @@ static char line_buf[CMD_ROWS][CMD_COLS + 1];
 static int line_count = 0;
 static char input_buf[CMD_COLS + 1];
 static int input_len = 0;
+/* Number of output rows scrolled back from the live prompt. */
+static int cmd_scroll = 0;
+static int cmd_scroll_drag = 0;
+static int cmd_scroll_drag_origin = 0;
+static int cmd_scroll_drag_start = 0;
 static char current_path[256];
 static char exec_path[256];
 static uint32_t cmd_pid = 0;
@@ -28,6 +34,27 @@ extern int strcmp(const char *a, const char *b);
 extern void strcpy(char *d, const char *s);
 extern void strcat(char *d, const char *s);
 extern char *itoa(int value, char *str, int base);
+
+static int cmd_visible_rows(int client_h) {
+    int rows = (client_h - 16) / 10;
+    return rows > 1 ? rows : 1;
+}
+
+static int cmd_scroll_max(int client_h) {
+    int total = line_count + 1;
+    int max = total - cmd_visible_rows(client_h);
+    return max > 0 ? max : 0;
+}
+
+static void cmd_clamp_scroll(int client_h) {
+    int max = cmd_scroll_max(client_h);
+    if (cmd_scroll < 0) cmd_scroll = 0;
+    if (cmd_scroll > max) cmd_scroll = max;
+}
+
+static void cmd_redraw(void) {
+    if (g_api && g_api->UpdateWindow && cmd_window != 0xFFFFFFFFU) g_api->UpdateWindow(cmd_window);
+}
 
 static void uppercase_copy(char *dst, const char *src, int max_len) {
     int i = 0;
@@ -278,6 +305,8 @@ static void cmd_append_line(const char *text) {
         line_buf[line_count][len] = 0;
         line_count++;
     }
+    /* New command output follows the live prompt. */
+    cmd_scroll = 0;
 }
 
 static void cmd_prompt_line(void) {
@@ -291,6 +320,7 @@ static void cmd_prompt_line(void) {
 static void cmd_clear_lines(void) {
     for (int i = 0; i < CMD_ROWS; i++) line_buf[i][0] = 0;
     line_count = 0;
+    cmd_scroll = 0;
 }
 
 static const char *skip_spaces(const char *s) {
@@ -450,6 +480,53 @@ static void cmd_process_input(void) {
     input_buf[0] = 0;
 }
 
+static void cmd_handle_scroll_mouse(int x, int y, uint8_t event_type) {
+    GUI_RECT rc;
+    int track, visible, max, total, thumb, travel, thumb_y;
+    int sx;
+    if (!g_api || !g_api->GetClientRect) return;
+    g_api->GetClientRect(cmd_window, &rc);
+    sx = rc.right - CMD_SCROLL_SIZE;
+    if (sx < 0 || y < 0 || y >= rc.bottom) return;
+    /* Once the thumb is grabbed, continue tracking even if the pointer
+     * leaves the narrow scrollbar column. */
+    if (!cmd_scroll_drag && x < sx) return;
+    visible = cmd_visible_rows(rc.bottom);
+    max = cmd_scroll_max(rc.bottom);
+    total = line_count + 1;
+    track = rc.bottom - CMD_SCROLL_SIZE * 2;
+    if (track <= 0) return;
+    thumb = max > 0 ? (visible * track) / total : track;
+    if (thumb < 8) thumb = 8;
+    if (thumb > track) thumb = track;
+    travel = track - thumb;
+    thumb_y = CMD_SCROLL_SIZE + (max > 0 ? (max - cmd_scroll) * travel / max : 0);
+
+    if (event_type == GUI_MOUSE_LDOWN) {
+        if (max <= 0) return;
+        if (y < CMD_SCROLL_SIZE) cmd_scroll += 1;
+        else if (y >= rc.bottom - CMD_SCROLL_SIZE) cmd_scroll -= 1;
+        else if (y < thumb_y) cmd_scroll += visible;
+        else if (y >= thumb_y + thumb) cmd_scroll -= visible;
+        else {
+            cmd_scroll_drag = 1;
+            cmd_scroll_drag_origin = y;
+            cmd_scroll_drag_start = cmd_scroll;
+            return;
+        }
+        cmd_clamp_scroll(rc.bottom);
+        cmd_redraw();
+    } else if (event_type == GUI_MOUSE_MOVE && cmd_scroll_drag) {
+        if (travel > 0) cmd_scroll = cmd_scroll_drag_start -
+            ((y - cmd_scroll_drag_origin) * max) / travel;
+        cmd_clamp_scroll(rc.bottom);
+        cmd_redraw();
+    } else if (event_type == GUI_MOUSE_LUP && cmd_scroll_drag) {
+        cmd_scroll_drag = 0;
+        cmd_redraw();
+    }
+}
+
 static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
     (void)wParam;
     (void)lParam;
@@ -473,6 +550,9 @@ static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t
         int client_h;
         int border_x;
         int border_y;
+        int visible_rows;
+        int total_rows;
+        int first_line;
 
         g_api->GetClientRect(hwnd, &client);
         g_api->GetWindowRect(hwnd, &win);
@@ -488,25 +568,55 @@ static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t
         client_x = win.left + border_x;
         client_y = win.top + border_y;
 
+        visible_rows = cmd_visible_rows(client_h);
+        cmd_clamp_scroll(client_h);
+        total_rows = line_count + 1;
+        first_line = total_rows - visible_rows - cmd_scroll;
+        if (first_line < 0) first_line = 0;
+
         g_api->FillRect(client_x, client_y, client_w, client_h, COLOR_BLACK);
 
-        for (int i = 0; i < line_count; i++) {
-            g_api->DrawString(client_x + 8, client_y + 8 + (i * 10),
-                              line_buf[i], COLOR_LIGHT_GRAY, COLOR_BLACK);
+        for (int i = 0; i < visible_rows && first_line + i < total_rows; i++) {
+            int line_index = first_line + i;
+            if (line_index < line_count) {
+                g_api->DrawString(client_x + 8, client_y + 8 + (i * 10),
+                                  line_buf[line_index], COLOR_LIGHT_GRAY, COLOR_BLACK);
+            }
         }
 
-        {
+        if (cmd_scroll == 0 && first_line + visible_rows - 1 >= line_count) {
             char prompt[CMD_COLS + 4];
             strcpy(prompt, "D:\\>");
             strcat(prompt, input_buf);
-            g_api->DrawString(client_x + 8, client_y + 8 + (line_count * 10),
+            g_api->DrawString(client_x + 8, client_y + 8 + ((line_count - first_line) * 10),
                               prompt, COLOR_WHITE, COLOR_BLACK);
 
             if ((int)strlen(prompt) < CMD_COLS) {
                 int cursor_x = client_x + 8 + ((int)strlen(prompt) * 8);
-                int cursor_y = client_y + 8 + (line_count * 10);
+                int cursor_y = client_y + 8 + ((line_count - first_line) * 10);
                 g_api->FillRect(cursor_x, cursor_y + 8, 7, 1, COLOR_WHITE);
             }
+        }
+
+        /* Console scroll bar: the live prompt is the bottom of the range. */
+        if (client_w >= CMD_SCROLL_SIZE + 24) {
+            int sx = client_x + client_w - CMD_SCROLL_SIZE;
+            int sh = client_h;
+            int track = sh - CMD_SCROLL_SIZE * 2;
+            int max = cmd_scroll_max(client_h);
+            int thumb = max > 0 ? (visible_rows * track) / total_rows : track;
+            int travel;
+            int thumb_y;
+            if (thumb < 8) thumb = 8;
+            if (thumb > track) thumb = track;
+            travel = track - thumb;
+            thumb_y = CMD_SCROLL_SIZE + (max > 0 ? (max - cmd_scroll) * travel / max : 0);
+            g_api->FillRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_LIGHT_GRAY);
+            g_api->DrawRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_BLACK);
+            g_api->DrawString(sx + 3, client_y + 2, "^", COLOR_BLACK, COLOR_LIGHT_GRAY);
+            g_api->DrawString(sx + 3, client_y + sh - 11, "v", COLOR_BLACK, COLOR_LIGHT_GRAY);
+            g_api->FillRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_WHITE);
+            g_api->DrawRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_BLACK);
         }
     }
 }
@@ -518,6 +628,8 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     cmd_exit_requested = 0;
     input_len = 0;
     input_buf[0] = 0;
+    cmd_scroll = 0;
+    cmd_scroll_drag = 0;
     strcpy(current_path, "/");
     strcpy(exec_path, "/SYSTEM32");
     cmd_pid = (g_api && g_api->GetProcessId) ? g_api->GetProcessId() : 0;
@@ -538,6 +650,8 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
     cmd_exit_requested = 0;
     input_len = 0;
     input_buf[0] = 0;
+    cmd_scroll = 0;
+    cmd_scroll_drag = 0;
 
     if (g_api->CreateWindowByClass) {
         cmd_window = g_api->CreateWindowByClass(cmd_class, "Command Prompt",
@@ -573,10 +687,8 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
 }
 
 __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint8_t buttons, uint8_t event_type) {
-    (void)x;
-    (void)y;
     (void)buttons;
-    (void)event_type;
+    cmd_handle_scroll_mouse(x, y, event_type);
 }
 
 __attribute__((visibility("default"))) int CmdAppShouldExit(void) {
