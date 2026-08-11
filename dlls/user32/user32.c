@@ -1084,6 +1084,29 @@ static void u32_destroy_subtree(HWND hwnd) {
     DestroyWindow(hwnd);
 }
 
+static void u32_forget_native_window(HWND hwnd) {
+    int i;
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    if (!win) return;
+    for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd) {
+            u32_forget_native_window(g_windows[i].hwnd);
+        }
+    }
+    if (win->listview_data) kfree(win->listview_data);
+    if (win->edit_text) kfree(win->edit_text);
+    memset(win, 0, sizeof(*win));
+}
+
+static int u32_has_top_level_window_for_pid(DWORD pid, HWND except) {
+    int i;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].top_level &&
+            g_windows[i].hwnd != except && g_windows[i].owner_pid == pid) return 1;
+    }
+    return 0;
+}
+
 static HWND u32_find_menu_root(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
     while (win) {
@@ -1471,6 +1494,11 @@ static void u32_win32k_callback(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
     u32_dispatch(win, msg, (WPARAM)wParam, (LPARAM)lParam);
     if (msg == WM_PAINT && win->top_level) {
         u32_paint_children((HWND)hwnd);
+    }
+    if (msg == WM_DESTROY) {
+        /* Win32k can destroy a window during caption handling or CSRSS
+         * cleanup. Keep USER32's handle table in sync with that native event. */
+        u32_forget_native_window((HWND)hwnd);
     }
 }
 
@@ -2967,7 +2995,11 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
 
 BOOL DestroyWindow(HWND hWnd) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
+    DWORD owner_pid;
+    int top_level;
     if (!win) return FALSE;
+    owner_pid = win->owner_pid;
+    top_level = win->top_level;
     if (win->top_level) Win32kDestroyWindow((HANDLE)hWnd);
     if (win->listview_data) {
         kfree(win->listview_data);
@@ -2978,6 +3010,9 @@ BOOL DestroyWindow(HWND hWnd) {
         win->edit_text = NULL;
     }
     memset(win, 0, sizeof(*win));
+    if (top_level && !u32_has_top_level_window_for_pid(owner_pid, hWnd)) {
+        PostQuitMessage(0);
+    }
     return TRUE;
 }
 

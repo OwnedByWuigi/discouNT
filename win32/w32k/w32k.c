@@ -764,7 +764,16 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     case CAPBTN_CLOSE:
         SerialPutString("[Win32k] Close window\r\n");
         ObDereferenceObject(hwnd);
-        Win32kDestroyWindow(hwnd);
+        /* Give USER32/the application the normal WM_CLOSE first.  Destroying
+         * the kernel window directly left USER32's HWND and the app's message
+         * loop alive, so closed programs could never really exit. */
+        win = (WINDOW*)ObReferenceObject(hwnd);
+        if (win && win->wndProc) win->wndProc(hwnd, WM_CLOSE, 0, 0);
+        if (win) ObDereferenceObject(hwnd);
+        if (ObReferenceObject(hwnd)) {
+            ObDereferenceObject(hwnd);
+            Win32kDestroyWindow(hwnd);
+        }
         Win32kRedrawAll();
         return;
     case CAPBTN_MAXIMIZE:
