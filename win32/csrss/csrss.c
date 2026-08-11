@@ -15,6 +15,7 @@
 #include "net.h"
 #include "ke.h"
 #include "version.h"
+#include "bugcheck.h"
 
 typedef int (*GuiAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*GuiAppCreateMainWindowFn)(void);
@@ -511,6 +512,11 @@ static void csrss_shutdown(void) {
     for (;;) __asm__ volatile("hlt");
 }
 
+static void csrss_bugcheck(uint32_t code, uint32_t p1, uint32_t p2,
+                           uint32_t p3, uint32_t p4) {
+    KeBugCheckEx(code, p1, p2, p3, p4);
+}
+
 static const GUI_APP_API gui_api = {
     csrss_register_class,
     csrss_create_window,
@@ -532,7 +538,8 @@ static const GUI_APP_API gui_api = {
     csrss_set_screen_resolution,
     csrss_ping,
     csrss_reboot,
-    csrss_shutdown
+    csrss_shutdown,
+    csrss_bugcheck
 };
 
 static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {

@@ -49,6 +49,7 @@ typedef struct _GUI_APP_API {
     int (*Ping)(const char *ip_text, char *out_text, int out_text_len);
     void (*Reboot)(void);
     void (*Shutdown)(void);
+    void (*BugCheck)(uint32_t code, uint32_t p1, uint32_t p2, uint32_t p3, uint32_t p4);
 } GUI_APP_API;
 
 #endif

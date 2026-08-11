@@ -14,6 +14,7 @@
 #include "w32k.h"
 #include "ke.h"
 #include "peloader.h"
+#include "bugcheck.h"
 
 typedef struct _KERNEL_EXPORT {
     const char *name;
@@ -116,6 +117,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"KeSetEvent", KeSetEvent},
     {"KeResetEvent", KeResetEvent},
     {"KeWaitEvent", KeWaitEvent},
+    {"KeBugCheck", KeBugCheck},
+    {"KeBugCheckEx", KeBugCheckEx},
     {"PeGetLoadedModuleHandle", PeGetLoadedModuleHandle},
     {"PeGetImagePath", PeGetImagePath},
     {"PeGetProcAddress", PeGetProcAddress},

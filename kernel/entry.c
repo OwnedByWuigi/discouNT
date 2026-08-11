@@ -10,6 +10,7 @@
 #include "driver.h"
 #include "util.h"
 #include "version.h"
+#include "idt.h"
 
 typedef struct _MULTIBOOT_INFO {
     uint32_t flags;
@@ -129,6 +130,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     SerialPutString("========================================\r\n\r\n");
     
     HalInitialize();
+    IdtInitialize();
     ShowBootScreen(mb_info_ptr);
     
     ObInit();

@@ -358,6 +358,10 @@ static void cmd_process_input(void) {
     if (strcmp(cmd, "HELP") == 0) {
         cmd_append_line("Commands: HELP CLS INFO DIR LS CD PWD");
         cmd_append_line("          PATH EXEC PING REBOOT SHUTDOWN EXIT");
+    } else if (strcmp(cmd, "INDUCECRASHFORREALZ") == 0) {
+        if (g_api && g_api->BugCheck) {
+            g_api->BugCheck(0xDEAD0001U, 0x434D4443U, cmd_pid, 0, 0);
+        }
     } else if (strcmp(cmd, "VER") == 0 || strcmp(cmd, "INFO") == 0) {
         cmd_append_line("discouNT Win32 Command Prompt");
         cmd_append_line("Filesystem: CDFS (ISO 9660)");

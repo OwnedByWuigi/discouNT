@@ -11,13 +11,15 @@ extern exception_handler_c
 ; Common exception handler
 exception_handler:
     pusha
-    push dword [esp+36]  ; EIP
-    push dword [esp+36]  ; Error code  
-    push dword [esp+36]  ; Exception number (pushed by stub)
+    ; pusha leaves the stub frame at ESP+32:
+    ; error code, vector, EIP, CS, EFLAGS.
+    push dword [esp+40]  ; EIP
+    push dword [esp+32]  ; Error code
+    push dword [esp+36]  ; Exception number
     call exception_handler_c
     add esp, 12
     popa
-    add esp, 4           ; Remove error code
+    add esp, 8           ; Remove vector and error code
     iret
 
 ; Stubs for exceptions with error code

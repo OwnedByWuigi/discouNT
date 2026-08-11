@@ -54,6 +54,9 @@ KERNEL_CORE_SRCS := \
 	kernel/driver_stubs.c \
 	kernel/subsystem.c \
 	kernel/nativecmd.c \
+	kernel/bugcheck.c \
+	kernel/idt.c \
+	kernel/isr.c \
 	win32/csrss/csrss.c \
 	win32/smss/smss.c \
 	kernel/entry.c
@@ -62,7 +65,8 @@ KERNEL_SRCS := $(KERNEL_CORE_SRCS)
 KERNEL_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(KERNEL_SRCS))
 BOOT_SERIAL_OBJ := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
-KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ)
+ISR_STUBS_OBJ := $(BUILD_DIR)/kernel/isr_stubs.o
+KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ) $(ISR_STUBS_OBJ)
 
 DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine
 DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(filter $(d),$(DLL_EXCLUDE_DIRS)),,$(if $(wildcard $(d)/*.c),$(d),))))
@@ -117,6 +121,10 @@ $(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
 
 $(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS)
 	$(LD) $(LDFLAGS) $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS) -o $@
+
+$(ISR_STUBS_OBJ): kernel/isr_stubs.asm
+	@mkdir -p $(@D)
+	$(NASM) -f elf32 $< -o $@
 
 $(BOOT_OBJ): boot/boot.asm
 	@mkdir -p $(@D)
