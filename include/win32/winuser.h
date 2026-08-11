@@ -82,6 +82,43 @@ typedef struct tagMINMAXINFO {
 
 #define WS_OVERLAPPEDWINDOW (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
 
+/* Scroll-bar commands and SCROLLINFO flags. */
+#define SB_HORZ             0
+#define SB_VERT             1
+#define SB_CTL              2
+#define SB_BOTH             3
+#define SB_LINEUP           0
+#define SB_LINELEFT         0
+#define SB_LINEDOWN         1
+#define SB_LINERIGHT        1
+#define SB_PAGEUP           2
+#define SB_PAGELEFT         2
+#define SB_PAGEDOWN         3
+#define SB_PAGERIGHT        3
+#define SB_THUMBPOSITION    4
+#define SB_THUMBTRACK       5
+#define SB_TOP               6
+#define SB_LEFT              6
+#define SB_BOTTOM            7
+#define SB_RIGHT             7
+#define SB_ENDSCROLL        8
+#define SIF_RANGE            0x0001
+#define SIF_PAGE             0x0002
+#define SIF_POS              0x0004
+#define SIF_DISABLENOSCROLL  0x0008
+#define SIF_TRACKPOS         0x0010
+#define SIF_ALL              (SIF_RANGE | SIF_PAGE | SIF_POS | SIF_TRACKPOS)
+
+typedef struct tagSCROLLINFO {
+    UINT cbSize;
+    UINT fMask;
+    int nMin;
+    int nMax;
+    UINT nPage;
+    int nPos;
+    int nTrackPos;
+} SCROLLINFO, *LPSCROLLINFO, *LPCSCROLLINFO;
+
 #define WM_NULL             0x0000
 #define WM_CREATE           0x0001
 #define WM_DESTROY          0x0002
@@ -143,6 +180,7 @@ typedef struct tagMINMAXINFO {
 #define WM_MBUTTONDOWN      0x0207
 #define WM_MBUTTONUP        0x0208
 #define WM_MBUTTONDBLCLK    0x0209
+#define WM_MOUSEWHEEL       0x020A
 #define WM_CAPTURECHANGED   0x0215
 #define WM_DESTROYCLIPBOARD 0x0307
 #define WM_MOUSEACTIVATE    0x0021
@@ -375,6 +413,11 @@ int WINAPI LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBu
 int WINAPI LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax);
 BOOL WINAPI GetClientRect(HWND hWnd, LPRECT lpRect);
 BOOL WINAPI GetWindowRect(HWND hWnd, LPRECT lpRect);
+int WINAPI GetScrollPos(HWND hWnd, int nBar);
+BOOL WINAPI GetScrollInfo(HWND hWnd, int nBar, LPSCROLLINFO lpScrollInfo);
+int WINAPI SetScrollPos(HWND hWnd, int nBar, int nPos, BOOL bRedraw);
+int WINAPI SetScrollInfo(HWND hWnd, int nBar, LPCSCROLLINFO lpScrollInfo, BOOL bRedraw);
+BOOL WINAPI ShowScrollBar(HWND hWnd, int wBar, BOOL bShow);
 int WINAPI GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount);
 int WINAPI GetWindowTextLengthW(HWND hWnd);
 HWND WINAPI GetDlgItem(HWND hDlg, int nIDDlgItem);

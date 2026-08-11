@@ -125,7 +125,180 @@ typedef struct _U32_WINDOW {
     HICON hIcon;
     HICON hIconSm;
     DWORD owner_pid;
+    int scroll_min[2];
+    int scroll_max[2];
+    UINT scroll_page[2];
+    int scroll_pos[2];
+    int scroll_track[2];
+    int scroll_visible[2];
+    int scroll_drag_bar;
+    int scroll_drag_origin;
+    int scroll_drag_start_pos;
 } U32_WINDOW;
+
+#define U32_SCROLLBAR_SIZE 14
+
+static void u32_mark_invalid(HWND hwnd);
+
+static int u32_scroll_bar_index(int bar) {
+    return bar == SB_HORZ ? 0 : 1;
+}
+
+static int u32_scroll_limit(U32_WINDOW *win, int bar) {
+    int i = u32_scroll_bar_index(bar);
+    int page = (int)win->scroll_page[i];
+    int limit = win->scroll_max[i] - (page > 0 ? page - 1 : 0);
+    return limit < win->scroll_min[i] ? win->scroll_min[i] : limit;
+}
+
+static void u32_scroll_clamp(U32_WINDOW *win, int bar) {
+    int i = u32_scroll_bar_index(bar);
+    int limit = u32_scroll_limit(win, bar);
+    if (win->scroll_pos[i] < win->scroll_min[i]) win->scroll_pos[i] = win->scroll_min[i];
+    if (win->scroll_pos[i] > limit) win->scroll_pos[i] = limit;
+    win->scroll_track[i] = win->scroll_pos[i];
+}
+
+static void u32_scroll_init(U32_WINDOW *win) {
+    win->scroll_min[0] = win->scroll_min[1] = 0;
+    win->scroll_max[0] = win->scroll_max[1] = 1;
+    win->scroll_page[0] = win->scroll_page[1] = 1;
+    win->scroll_pos[0] = win->scroll_pos[1] = 0;
+    win->scroll_track[0] = win->scroll_track[1] = 0;
+    win->scroll_visible[0] = (win->style & WS_HSCROLL) != 0;
+    win->scroll_visible[1] = (win->style & WS_VSCROLL) != 0;
+}
+
+static int u32_scroll_geometry(U32_WINDOW *win, RECT *rc, int bar, int *start, int *length) {
+    int i = u32_scroll_bar_index(bar);
+    if (!win->scroll_visible[i]) return 0;
+    if (bar == SB_VERT) {
+        *start = 0;
+        *length = rc->bottom - (win->scroll_visible[0] ? U32_SCROLLBAR_SIZE : 0);
+    } else {
+        *start = 0;
+        *length = rc->right - (win->scroll_visible[1] ? U32_SCROLLBAR_SIZE : 0);
+    }
+    return *length > U32_SCROLLBAR_SIZE * 2;
+}
+
+static void u32_scroll_arrow(HDC hdc, int x, int y, int bar, int down) {
+    int cx = x + U32_SCROLLBAR_SIZE / 2;
+    int cy = y + U32_SCROLLBAR_SIZE / 2;
+    MoveToEx(hdc, bar == SB_VERT ? cx - 3 : (down ? cx + 3 : cx - 3),
+             bar == SB_VERT ? (down ? cy + 3 : cy - 3) : cy - 3, 0);
+    LineTo(hdc, bar == SB_VERT ? cx : (down ? cx + 3 : cx - 3),
+           bar == SB_VERT ? (down ? cy - 2 : cy + 2) : cy);
+    LineTo(hdc, bar == SB_VERT ? cx + 3 : (down ? cx + 3 : cx - 3),
+           bar == SB_VERT ? (down ? cy + 3 : cy - 3) : cy + 3);
+}
+
+static void u32_draw_scrollbar(HDC hdc, U32_WINDOW *win, RECT *rc, int bar) {
+    int i = u32_scroll_bar_index(bar), start, length, track, thumb, travel, pos;
+    RECT r;
+    if (!u32_scroll_geometry(win, rc, bar, &start, &length)) return;
+    if (bar == SB_VERT) {
+        r.left = rc->right - U32_SCROLLBAR_SIZE; r.right = rc->right;
+        r.top = 0; r.bottom = length;
+    } else {
+        r.left = 0; r.right = length;
+        r.top = rc->bottom - U32_SCROLLBAR_SIZE; r.bottom = rc->bottom;
+    }
+    FillRect(hdc, &r, (HBRUSH)GetStockObject(0));
+    Rectangle(hdc, r.left, r.top, r.right, r.bottom);
+    if (bar == SB_VERT) {
+        Rectangle(hdc, r.left, r.top, r.right, r.top + U32_SCROLLBAR_SIZE);
+        Rectangle(hdc, r.left, r.bottom - U32_SCROLLBAR_SIZE, r.right, r.bottom);
+        u32_scroll_arrow(hdc, r.left, r.top, bar, 0);
+        u32_scroll_arrow(hdc, r.left, r.bottom - U32_SCROLLBAR_SIZE, bar, 1);
+    } else {
+        Rectangle(hdc, r.left, r.top, r.left + U32_SCROLLBAR_SIZE, r.bottom);
+        Rectangle(hdc, r.right - U32_SCROLLBAR_SIZE, r.top, r.right, r.bottom);
+        u32_scroll_arrow(hdc, r.left, r.top, bar, 0);
+        u32_scroll_arrow(hdc, r.right - U32_SCROLLBAR_SIZE, r.top, bar, 1);
+    }
+    track = length - U32_SCROLLBAR_SIZE * 2;
+    thumb = ((int)win->scroll_page[i] * track) /
+            (win->scroll_max[i] - win->scroll_min[i] + 1);
+    if (thumb < 8) thumb = 8;
+    if (thumb > track) thumb = track;
+    travel = track - thumb;
+    pos = u32_scroll_limit(win, bar) - win->scroll_min[i];
+    if (pos < 0) pos = 0;
+    if (bar == SB_VERT) {
+        int y = r.top + U32_SCROLLBAR_SIZE +
+                ((win->scroll_max[i] - win->scroll_min[i] > 0) ?
+                 pos * travel / (win->scroll_max[i] - win->scroll_min[i]) : 0);
+        r.top = y; r.bottom = y + thumb;
+    } else {
+        int x = r.left + U32_SCROLLBAR_SIZE +
+                ((win->scroll_max[i] - win->scroll_min[i] > 0) ?
+                 pos * travel / (win->scroll_max[i] - win->scroll_min[i]) : 0);
+        r.left = x; r.right = x + thumb;
+    }
+    FillRect(hdc, &r, (HBRUSH)GetStockObject(7));
+    Rectangle(hdc, r.left, r.top, r.right, r.bottom);
+}
+
+static void u32_draw_scrollbars(HDC hdc, U32_WINDOW *win, RECT *rc) {
+    u32_draw_scrollbar(hdc, win, rc, SB_VERT);
+    u32_draw_scrollbar(hdc, win, rc, SB_HORZ);
+}
+
+static int u32_scroll_hit(U32_WINDOW *win, int x, int y, int *bar, int *code) {
+    RECT rc;
+    int start, length, i, track, thumb, travel, p, thumb_start;
+    if (!GetClientRect(win->hwnd, &rc)) return 0;
+    if (win->scroll_visible[1] && x >= rc.right - U32_SCROLLBAR_SIZE &&
+        u32_scroll_geometry(win, &rc, SB_VERT, &start, &length)) {
+        track = length - U32_SCROLLBAR_SIZE * 2;
+        i = 1; thumb = ((int)win->scroll_page[i] * track) /
+            (win->scroll_max[i] - win->scroll_min[i] + 1);
+        if (thumb < 8) thumb = 8; if (thumb > track) thumb = track;
+        travel = track - thumb;
+        p = u32_scroll_limit(win, SB_VERT) - win->scroll_min[i];
+        thumb_start = U32_SCROLLBAR_SIZE + (travel > 0 ? p * travel / (win->scroll_max[i] - win->scroll_min[i]) : 0);
+        *bar = SB_VERT;
+        if (y < U32_SCROLLBAR_SIZE) *code = SB_LINEUP;
+        else if (y >= length - U32_SCROLLBAR_SIZE) *code = SB_LINEDOWN;
+        else if (y < thumb_start) *code = SB_PAGEUP;
+        else if (y >= thumb_start + thumb) *code = SB_PAGEDOWN;
+        else *code = SB_THUMBTRACK;
+        return 1;
+    }
+    if (win->scroll_visible[0] && y >= rc.bottom - U32_SCROLLBAR_SIZE &&
+        u32_scroll_geometry(win, &rc, SB_HORZ, &start, &length)) {
+        track = length - U32_SCROLLBAR_SIZE * 2;
+        i = 0; thumb = ((int)win->scroll_page[i] * track) /
+            (win->scroll_max[i] - win->scroll_min[i] + 1);
+        if (thumb < 8) thumb = 8; if (thumb > track) thumb = track;
+        travel = track - thumb;
+        p = u32_scroll_limit(win, SB_HORZ) - win->scroll_min[i];
+        thumb_start = U32_SCROLLBAR_SIZE + (travel > 0 ? p * travel / (win->scroll_max[i] - win->scroll_min[i]) : 0);
+        *bar = SB_HORZ;
+        if (x < U32_SCROLLBAR_SIZE) *code = SB_LINELEFT;
+        else if (x >= length - U32_SCROLLBAR_SIZE) *code = SB_LINERIGHT;
+        else if (x < thumb_start) *code = SB_PAGELEFT;
+        else if (x >= thumb_start + thumb) *code = SB_PAGERIGHT;
+        else *code = SB_THUMBTRACK;
+        return 1;
+    }
+    return 0;
+}
+
+static void u32_scroll_command(U32_WINDOW *win, int bar, int code) {
+    int i = u32_scroll_bar_index(bar), delta = (int)win->scroll_page[i];
+    if (code == SB_LINEUP || code == SB_LINELEFT) win->scroll_pos[i]--;
+    else if (code == SB_LINEDOWN || code == SB_LINERIGHT) win->scroll_pos[i]++;
+    else if (code == SB_PAGEUP || code == SB_PAGELEFT) win->scroll_pos[i] -= delta;
+    else if (code == SB_PAGEDOWN || code == SB_PAGERIGHT) win->scroll_pos[i] += delta;
+    else if (code == SB_TOP || code == SB_LEFT) win->scroll_pos[i] = win->scroll_min[i];
+    else if (code == SB_BOTTOM || code == SB_RIGHT) win->scroll_pos[i] = u32_scroll_limit(win, bar);
+    u32_scroll_clamp(win, bar);
+    SendMessageW(win->hwnd, bar == SB_VERT ? WM_VSCROLL : WM_HSCROLL,
+                 MAKEWPARAM(code, win->scroll_pos[i]), 0);
+    u32_mark_invalid(win->hwnd);
+}
 
 typedef struct _U32_LISTVIEW_DATA {
     WCHAR columns[MAX_LV_COLUMNS][64];
@@ -364,6 +537,29 @@ static void u32_edit_replace_sel(U32_WINDOW *win, LPCWSTR repl) {
     win->edit_modified = 1;
     u32_edit_sync_title(win);
     u32_mark_invalid(win->hwnd);
+}
+
+static void u32_update_scroll_content(U32_WINDOW *win) {
+    RECT rc;
+    int i, lines = 1, columns = 0, current = 0;
+    if (!win || !GetClientRect(win->hwnd, &rc)) return;
+    if (win->ctrl_type == U32_CTRL_EDIT && win->edit_text) {
+        for (i = 0; i < win->edit_len; i++) {
+            if (win->edit_text[i] == L'\n') {
+                lines++; if (current > columns) columns = current; current = 0;
+            } else current++;
+        }
+        if (current > columns) columns = current;
+        win->scroll_max[1] = lines * 10;
+        win->scroll_page[1] = rc.bottom > 0 ? (UINT)rc.bottom : 1;
+        win->scroll_max[0] = columns * 8;
+        win->scroll_page[0] = rc.right > 0 ? (UINT)rc.right : 1;
+        u32_scroll_clamp(win, SB_VERT); u32_scroll_clamp(win, SB_HORZ);
+    } else if (win->ctrl_type == U32_CTRL_LISTVIEW) {
+        win->scroll_max[1] = 18 + win->listview_item_count * 14;
+        win->scroll_page[1] = rc.bottom > 0 ? (UINT)rc.bottom : 1;
+        u32_scroll_clamp(win, SB_VERT);
+    }
 }
 
 static void u32_wide_to_ansi(LPCWSTR src, char *dst, int max_chars) {
@@ -1324,6 +1520,7 @@ static HWND u32_create_child_control(HWND parent, LPCWSTR class_name, LPCWSTR ti
     win->klass = u32_find_class(class_name);
     win->proc = win->klass ? win->klass->proc : NULL;
     win->ctrl_type = u32_pick_ctrl_type(class_name, style);
+    u32_scroll_init(win);
     u32_wstrcpy(win->title, title, 128);
     (void)prc;
     u32_set_rect(win, x, y, w, h);
@@ -1766,6 +1963,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             DestroyWindow(hWnd);
         }
     } else if (win && Msg == WM_LBUTTONDOWN) {
+        int scroll_bar, scroll_code;
+        if (u32_scroll_hit(win, x, y, &scroll_bar, &scroll_code)) {
+            if (scroll_code == SB_THUMBTRACK) {
+                win->scroll_drag_bar = scroll_bar;
+                win->scroll_drag_origin = scroll_bar == SB_VERT ? y : x;
+                win->scroll_drag_start_pos = win->scroll_pos[u32_scroll_bar_index(scroll_bar)];
+            } else {
+                u32_scroll_command(win, scroll_bar, scroll_code);
+            }
+            return 0;
+        }
         if (win->top_level && win->menu) {
             int menu_index = u32_menu_bar_hit_test(win, x, y);
             if (menu_index >= 0) {
@@ -1811,6 +2019,27 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
     } else if (win && Msg == WM_MOUSEMOVE) {
+        if (win->scroll_drag_bar) {
+            int bar = win->scroll_drag_bar;
+            int i = u32_scroll_bar_index(bar);
+            RECT srect;
+            int start, length, track, thumb, travel, delta, range;
+            GetClientRect(hWnd, &srect);
+            u32_scroll_geometry(win, &srect, bar, &start, &length);
+            track = length - U32_SCROLLBAR_SIZE * 2;
+            thumb = ((int)win->scroll_page[i] * track) /
+                    (win->scroll_max[i] - win->scroll_min[i] + 1);
+            if (thumb < 8) thumb = 8; if (thumb > track) thumb = track;
+            travel = track - thumb;
+            delta = (bar == SB_VERT ? y : x) - win->scroll_drag_origin;
+            range = u32_scroll_limit(win, bar) - win->scroll_min[i];
+            if (travel > 0) win->scroll_pos[i] = win->scroll_drag_start_pos + delta * range / travel;
+            u32_scroll_clamp(win, bar);
+            SendMessageW(hWnd, bar == SB_VERT ? WM_VSCROLL : WM_HSCROLL,
+                         MAKEWPARAM(SB_THUMBTRACK, win->scroll_pos[i]), 0);
+            u32_mark_invalid(hWnd);
+            return 0;
+        }
         if (win->ctrl_type == U32_CTRL_MENUPOPUP) {
             U32_MENU *menu = u32_lookup_menu(win->menu);
             int index = u32_popup_item_at(menu, y);
@@ -1826,6 +2055,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
     } else if (win && Msg == WM_LBUTTONUP) {
+        if (win->scroll_drag_bar) {
+            int bar = win->scroll_drag_bar;
+            int i = u32_scroll_bar_index(bar);
+            SendMessageW(hWnd, bar == SB_VERT ? WM_VSCROLL : WM_HSCROLL,
+                         MAKEWPARAM(SB_THUMBPOSITION, win->scroll_pos[i]), 0);
+            SendMessageW(hWnd, bar == SB_VERT ? WM_VSCROLL : WM_HSCROLL,
+                         MAKEWPARAM(SB_ENDSCROLL, 0), 0);
+            win->scroll_drag_bar = 0;
+            u32_mark_invalid(hWnd);
+            return 0;
+        }
         switch (win->ctrl_type) {
         case U32_CTRL_BUTTON:
             if (win->pressed) {
@@ -1863,9 +2103,14 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         default:
             break;
         }
+    } else if (win && Msg == WM_MOUSEWHEEL) {
+        int delta = (short)((wParam >> 16) & 0xFFFF);
+        if (win->scroll_visible[1]) u32_scroll_command(win, SB_VERT, delta > 0 ? SB_LINEUP : SB_LINEDOWN);
+        return 0;
     } else if (Msg == WM_PAINT && win) {
         if (win->painting) return 0;
         win->painting = 1;
+        u32_update_scroll_content(win);
         hdc = BeginPaint(hWnd, &ps);
         GetClientRect(hWnd, &rc);
         switch (win->ctrl_type) {
@@ -1961,7 +2206,29 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         case U32_CTRL_EDIT:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             Rectangle(hdc, 0, 0, rc.right, rc.bottom);
-            if (win->title[0]) TextOutW(hdc, 2, 0, win->title, -1);
+            if (win->edit_text) {
+                int i, line = 0, col = 0, first_line = win->scroll_pos[1] / 10;
+                int first_col = win->scroll_pos[0] / 8;
+                WCHAR text_line[128];
+                for (i = 0; i <= win->edit_len; i++) {
+                    WCHAR ch = (i < win->edit_len) ? win->edit_text[i] : 0;
+                    if (ch == L'\n' || ch == 0) {
+                        if (line >= first_line && line * 10 - win->scroll_pos[1] < rc.bottom) {
+                            if (first_col < col || col == 0) {
+                                int k = 0, p = 0;
+                                while (p < col && k < 127) {
+                                    if (p++ >= first_col) text_line[k++] = win->edit_text[i - col + p - 1];
+                                }
+                                text_line[k] = 0;
+                                TextOutW(hdc, 2, line * 10 - win->scroll_pos[1], text_line, -1);
+                            }
+                        }
+                        line++; col = 0;
+                    } else {
+                        col++;
+                    }
+                }
+            } else if (win->title[0]) TextOutW(hdc, 2, 0, win->title, -1);
             break;
         case U32_CTRL_STATUS:
             {
@@ -1985,6 +2252,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         default:
             break;
         }
+        u32_draw_scrollbars(hdc, win, &rc);
         EndPaint(hWnd, &ps);
         win->painting = 0;
         return 0;
@@ -2141,6 +2409,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     win->hIconSm = cls->hIconSm ? cls->hIconSm : cls->hIcon;
     win->dialog = FALSE;
     win->ctrl_type = u32_pick_ctrl_type(lpClassName, dwStyle);
+    u32_scroll_init(win);
     u32_set_rect(win, X, Y, nWidth, nHeight);
 
     if (hWndParent && (dwStyle & WS_CHILD)) {
@@ -2324,7 +2593,7 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         return SendMessageW(g_focus, Msg, wParam, lParam);
     }
 
-    if (Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP) {
+    if (Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP || Msg == WM_MOUSEWHEEL) {
         int x = (short)(lParam & 0xFFFF);
         int y = (short)((lParam >> 16) & 0xFFFF);
         HWND child = win->top_level ? u32_route_mouse_target(hWnd, x, y) : u32_hit_test_child(hWnd, x, y);
@@ -2709,6 +2978,56 @@ BOOL DestroyWindow(HWND hWnd) {
         win->edit_text = NULL;
     }
     memset(win, 0, sizeof(*win));
+    return TRUE;
+}
+
+int GetScrollPos(HWND hWnd, int nBar) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    return win ? win->scroll_pos[u32_scroll_bar_index(nBar)] : 0;
+}
+
+BOOL GetScrollInfo(HWND hWnd, int nBar, LPSCROLLINFO si) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    int i;
+    if (!win || !si) return FALSE;
+    i = u32_scroll_bar_index(nBar);
+    if (si->fMask & SIF_RANGE) { si->nMin = win->scroll_min[i]; si->nMax = win->scroll_max[i]; }
+    if (si->fMask & SIF_PAGE) si->nPage = win->scroll_page[i];
+    if (si->fMask & SIF_POS) si->nPos = win->scroll_pos[i];
+    if (si->fMask & SIF_TRACKPOS) si->nTrackPos = win->scroll_track[i];
+    return TRUE;
+}
+
+int SetScrollPos(HWND hWnd, int nBar, int nPos, BOOL bRedraw) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    int i, old;
+    if (!win) return 0;
+    i = u32_scroll_bar_index(nBar); old = win->scroll_pos[i];
+    win->scroll_pos[i] = nPos; u32_scroll_clamp(win, nBar);
+    if (bRedraw) u32_mark_invalid(hWnd);
+    return old;
+}
+
+int SetScrollInfo(HWND hWnd, int nBar, LPCSCROLLINFO si, BOOL bRedraw) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    int i, old;
+    if (!win || !si) return 0;
+    i = u32_scroll_bar_index(nBar); old = win->scroll_pos[i];
+    if (si->fMask & SIF_RANGE) { win->scroll_min[i] = si->nMin; win->scroll_max[i] = si->nMax; }
+    if (si->fMask & SIF_PAGE) win->scroll_page[i] = si->nPage ? si->nPage : 1;
+    if (si->fMask & SIF_POS) win->scroll_pos[i] = si->nPos;
+    if (si->fMask & SIF_TRACKPOS) win->scroll_track[i] = si->nTrackPos;
+    u32_scroll_clamp(win, nBar);
+    if (bRedraw) u32_mark_invalid(hWnd);
+    return old;
+}
+
+BOOL ShowScrollBar(HWND hWnd, int wBar, BOOL bShow) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    if (!win) return FALSE;
+    if (wBar == SB_BOTH || wBar == SB_HORZ) win->scroll_visible[0] = bShow ? TRUE : FALSE;
+    if (wBar == SB_BOTH || wBar == SB_VERT) win->scroll_visible[1] = bShow ? TRUE : FALSE;
+    u32_mark_invalid(hWnd);
     return TRUE;
 }
 
