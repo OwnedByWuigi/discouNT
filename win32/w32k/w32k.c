@@ -176,9 +176,33 @@ static CAPTION_BUTTON_HIT hit_caption_button(WINDOW *win, int x, int y) {
     return CAPBTN_NONE;
 }
 
-static void draw_sys_icon(int x, int y) {
+static void draw_sys_icon(WINDOW *win, int x, int y) {
+    char glyph = 0;
+    uint8_t fill = ACTIVE_CAPTION;
+    uintptr_t icon_key = (uintptr_t)(win ? (win->small_icon ? win->small_icon : win->big_icon) : 0);
+
     FbFillRect(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, FACE_COLOR);
     draw_bevel(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, HILIGHT_COLOR, SHADOW_COLOR);
+
+    if (icon_key) {
+        int i = 0;
+        while (win->title[i]) {
+            char c = win->title[i];
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                glyph = (c >= 'a' && c <= 'z') ? (c - 32) : c;
+                break;
+            }
+            i++;
+        }
+        fill = (uint8_t)(1 + ((icon_key >> 4) % 14));
+        if (fill == FACE_COLOR || fill == HILIGHT_COLOR) fill = ACTIVE_CAPTION;
+        FbFillRect(x + 2, y + 2, ICON_BOX_SIZE - 4, ICON_BOX_SIZE - 4, fill);
+        if (glyph) {
+            FbDrawChar(x + 4, y + 3, glyph, COLOR_WHITE, fill);
+            return;
+        }
+    }
+
     FbFillRect(x + 3, y + 3, 8, 8, ACTIVE_CAPTION);
     FbFillRect(x + 5, y + 5, 4, 1, HILIGHT_COLOR);
 }
@@ -204,7 +228,7 @@ static void draw_window_frame(WINDOW *win) {
         FbFillRect(cap_x, cap_y, cap_w, TITLEBAR_HEIGHT, title_color);
 
         if (win->style & WS_SYSMENU) {
-            draw_sys_icon(cap_x + BUTTON_MARGIN, cap_y + BUTTON_MARGIN);
+            draw_sys_icon(win, cap_x + BUTTON_MARGIN, cap_y + BUTTON_MARGIN);
         }
 
         if (win->style & WS_SYSMENU) {
@@ -936,6 +960,14 @@ void Win32kActivateWindow(HANDLE hwnd) {
     if (hwnd == INVALID_HANDLE) return;
     raise_window(hwnd);
     set_window_active(hwnd);
+}
+
+void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win) return;
+    win->big_icon = big_icon;
+    win->small_icon = small_icon ? small_icon : big_icon;
+    ObDereferenceObject(hwnd);
 }
 
 void Win32kRedrawAll(void) {

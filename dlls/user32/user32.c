@@ -19,6 +19,7 @@ extern void Win32kUpdateWindow(void *hwnd);
 extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kDestroyWindow(void *hwnd);
 extern void Win32kActivateWindow(void *hwnd);
+extern void Win32kSetWindowIcons(void *hwnd, HANDLE big_icon, HANDLE small_icon);
 extern void Win32kRedrawAll(void);
 extern void Win32kRefreshCursor(void);
 extern HDC GdiCreateScreenDC(HWND hwnd);
@@ -30,6 +31,7 @@ extern void GdiDestroyScreenDC(HDC hdc);
 #define MAX_U32_TIMERS 64
 #define MAX_U32_MENUS 64
 #define MAX_U32_MESSAGES 256
+#define MAX_U32_ICONS 64
 #define MAX_LV_COLUMNS 32
 #define MAX_LV_ITEMS 256
 #define MAX_TAB_ITEMS 16
@@ -42,6 +44,8 @@ typedef struct _U32_CLASS {
     WCHAR name[64];
     WNDPROC proc;
     UINT style;
+    HICON hIcon;
+    HICON hIconSm;
     HANDLE win32k_class;
 } U32_CLASS;
 
@@ -101,6 +105,8 @@ typedef struct _U32_WINDOW {
     WCHAR status_text[8][64];
     void *listview_data;
     WCHAR *edit_text;
+    HICON hIcon;
+    HICON hIconSm;
     DWORD owner_pid;
 } U32_WINDOW;
 
@@ -123,11 +129,19 @@ typedef struct _U32_MESSAGE {
     DWORD owner_pid;
 } U32_MESSAGE;
 
+typedef struct _U32_ICON {
+    int used;
+    UINT resource_id;
+    int width;
+    int height;
+} U32_ICON;
+
 static U32_CLASS g_classes[MAX_U32_CLASSES];
 static U32_WINDOW g_windows[MAX_U32_WINDOWS];
 static U32_TIMER g_timers[MAX_U32_TIMERS];
 static U32_MENU g_menus[MAX_U32_MENUS];
 static U32_MESSAGE g_messages[MAX_U32_MESSAGES];
+static U32_ICON g_icons[MAX_U32_ICONS];
 static HWND g_focus = NULL;
 static HWND g_active_window = NULL;
 static int g_message_loop_exit = 0;
@@ -567,6 +581,29 @@ static int u32_pick_ctrl_type(LPCWSTR class_name, DWORD style) {
     return U32_CTRL_GENERIC;
 }
 
+static U32_ICON *u32_lookup_icon(HICON hicon) {
+    int i;
+    for (i = 0; i < MAX_U32_ICONS; i++) {
+        if (g_icons[i].used && (HICON)&g_icons[i] == hicon) return &g_icons[i];
+    }
+    return NULL;
+}
+
+static HICON u32_create_icon(UINT resource_id, int width, int height) {
+    int i;
+    for (i = 0; i < MAX_U32_ICONS; i++) {
+        if (!g_icons[i].used) {
+            memset(&g_icons[i], 0, sizeof(g_icons[i]));
+            g_icons[i].used = 1;
+            g_icons[i].resource_id = resource_id;
+            g_icons[i].width = width;
+            g_icons[i].height = height;
+            return (HICON)&g_icons[i];
+        }
+    }
+    return 0;
+}
+
 static LRESULT u32_dispatch(U32_WINDOW *win, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (!win) return 0;
     if (win->dlgproc) return win->dlgproc(win->hwnd, msg, wParam, lParam);
@@ -948,7 +985,15 @@ ATOM RegisterClassExW(const WNDCLASSEXW *lpwcx) {
     wc.hbrBackground = lpwcx->hbrBackground;
     wc.lpszMenuName = lpwcx->lpszMenuName;
     wc.lpszClassName = lpwcx->lpszClassName;
-    return RegisterClassW(&wc);
+    {
+        ATOM atom = RegisterClassW(&wc);
+        U32_CLASS *cls = u32_find_class(lpwcx->lpszClassName);
+        if (cls) {
+            cls->hIcon = lpwcx->hIcon;
+            cls->hIconSm = lpwcx->hIconSm ? lpwcx->hIconSm : lpwcx->hIcon;
+        }
+        return atom;
+    }
 }
 
 LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
@@ -1214,6 +1259,8 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
                                 : GetCurrentProcessId();
     win->klass = cls;
     win->proc = cls->proc;
+    win->hIcon = cls->hIcon;
+    win->hIconSm = cls->hIconSm ? cls->hIconSm : cls->hIcon;
     win->dialog = FALSE;
     win->ctrl_type = u32_pick_ctrl_type(lpClassName, dwStyle);
     u32_set_rect(win, X, Y, nWidth, nHeight);
@@ -1233,6 +1280,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
             win->used = 0;
             return NULL;
         }
+        Win32kSetWindowIcons((HANDLE)win->hwnd, win->hIcon, win->hIconSm);
     }
 
     SendMessageW(win->hwnd, WM_CREATE, 0, 0);
@@ -1387,6 +1435,25 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
     case WM_SETICON:
+        {
+            HICON old_icon;
+            if (wParam == ICON_SMALL) {
+                old_icon = win->hIconSm;
+                win->hIconSm = (HICON)lParam;
+            } else {
+                old_icon = win->hIcon;
+                win->hIcon = (HICON)lParam;
+            }
+            if (win->top_level) {
+                Win32kSetWindowIcons((HANDLE)hWnd, win->hIcon, win->hIconSm ? win->hIconSm : win->hIcon);
+                Win32kRedrawAll();
+            }
+            u32_mark_invalid(hWnd);
+            return (LRESULT)old_icon;
+        }
+    case WM_GETICON:
+        if (wParam == ICON_SMALL) return (LRESULT)(win->hIconSm ? win->hIconSm : win->hIcon);
+        return (LRESULT)win->hIcon;
     case DM_SETDEFID:
     case WM_SETREDRAW:
         return 0;
@@ -1676,13 +1743,25 @@ BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent) {
 }
 
 HICON LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
-    (void)hInstance; (void)lpIconName;
-    return (HICON)1;
+    (void)hInstance;
+    if (u32_is_int_resource(lpIconName)) {
+        return u32_create_icon(u32_resource_id(lpIconName), 32, 32);
+    }
+    return u32_create_icon(0, 32, 32);
 }
 
 HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT fuLoad) {
-    (void)hinst; (void)name; (void)type; (void)cx; (void)cy; (void)fuLoad;
-    return (HANDLE)1;
+    int width;
+    int height;
+    (void)hinst;
+    (void)fuLoad;
+    if (type != IMAGE_ICON) return 0;
+    width = cx > 0 ? cx : 32;
+    height = cy > 0 ? cy : 32;
+    if (u32_is_int_resource(name)) {
+        return (HANDLE)u32_create_icon(u32_resource_id(name), width, height);
+    }
+    return (HANDLE)u32_create_icon(0, width, height);
 }
 
 int LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax) {
@@ -2042,7 +2121,16 @@ LONG_PTR SetWindowLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong) {
     }
     return (LONG_PTR)SetWindowLongW(hWnd, nIndex, (LONG)dwNewLong);
 }
-LONG_PTR GetClassLongPtrW(HWND hWnd, int nIndex) { (void)hWnd; (void)nIndex; return 0; }
+LONG_PTR GetClassLongPtrW(HWND hWnd, int nIndex) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    U32_CLASS *cls;
+    if (!win) return 0;
+    cls = win->klass;
+    if (!cls) return 0;
+    if (nIndex == GCLP_HICON) return (LONG_PTR)cls->hIcon;
+    if (nIndex == GCLP_HICONSM) return (LONG_PTR)(cls->hIconSm ? cls->hIconSm : cls->hIcon);
+    return 0;
+}
 BOOL IsWindowVisible(HWND hWnd) { U32_WINDOW *win = u32_lookup_window(hWnd); return win ? win->visible : FALSE; }
 BOOL IsIconic(HWND hWnd) { (void)hWnd; return FALSE; }
 BOOL DeleteMenu(HMENU hMenu, UINT uPosition, UINT uFlags) { return RemoveMenu(hMenu, uPosition, uFlags); }
@@ -2150,7 +2238,13 @@ BOOL TrackPopupMenu(HMENU hMenu, UINT uFlags, int x, int y, int nReserved, HWND 
 LRESULT SendMessageTimeoutW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, UINT fuFlags, UINT uTimeout, PDWORD_PTR lpdwResult) { LRESULT r = SendMessageW(hWnd, Msg, wParam, lParam); (void)fuFlags; (void)uTimeout; if (lpdwResult) *lpdwResult = (DWORD_PTR)r; return r; }
 BOOL EnumWindows(BOOL (CALLBACK *lpEnumFunc)(HWND, LPARAM), LPARAM lParam) { int i; for (i = 0; i < MAX_U32_WINDOWS; i++) if (g_windows[i].used && g_windows[i].top_level) if (!lpEnumFunc(g_windows[i].hwnd, lParam)) break; return TRUE; }
 BOOL IsHungAppWindow(HWND hWnd) { (void)hWnd; return FALSE; }
-BOOL DestroyIcon(HICON hIcon) { (void)hIcon; return TRUE; }
+BOOL DestroyIcon(HICON hIcon) {
+    U32_ICON *icon = u32_lookup_icon(hIcon);
+    if (icon) {
+        memset(icon, 0, sizeof(*icon));
+    }
+    return TRUE;
+}
 WORD TileWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 WORD CascadeWindows(HWND hwndParent, UINT wHow, const RECT *lpRect, UINT cKids, const HWND *lpKids) { (void)hwndParent; (void)wHow; (void)lpRect; (void)cKids; (void)lpKids; return 0; }
 void SwitchToThisWindow(HWND hWnd, BOOL fAltTab) { (void)fAltTab; BringWindowToTop(hWnd); }

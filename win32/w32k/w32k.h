@@ -35,6 +35,8 @@ typedef struct _WINDOW {
     uint8_t   active;
     uint8_t   minimized;
     uint8_t   maximized;
+    HANDLE    big_icon;
+    HANDLE    small_icon;
     WNDCLASS  *wndClass;
     void      (*wndProc)(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam);
 } WINDOW;
@@ -61,5 +63,6 @@ int Win32kIsDragging(void);
 int Win32kIsResizing(void);
 HANDLE Win32kGetActiveWindow(void);
 void Win32kActivateWindow(HANDLE hwnd);
+void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon);
 
 #endif
