@@ -5,6 +5,8 @@
 #include "portio.h"
 #include "mm.h"
 #include "util.h"
+#include "cdfs.h"
+#include "ttf.h"
 
 #define BGA_IOPORT_INDEX      0x01CE
 #define BGA_IOPORT_DATA       0x01CF
@@ -132,6 +134,302 @@ static const uint8_t *fb_get_font(char c) {
     if (c >= 32 && c <= 126) return font[c - 32];
     return font[0];
 }
+
+/* Runtime TTF rendering is disabled until the outline backend is reliable.
+ * Keep the original built-in framebuffer font as the active renderer. */
+static int fb_use_ttf_glyphs = 0;
+
+#if 0
+/* Retired experimental runtime TrueType reader. The implementation in
+ * drivers/fb/ttf.c is the only active font backend. It intentionally covers
+ * by the system UI: cmap format 4, hmtx, loca, and simple glyf outlines. */
+typedef struct {
+    uint8_t *data;
+    uint32_t size;
+    uint32_t cmap, head, hhea, hmtx, loca, glyf;
+    uint16_t units, metrics, glyphs;
+    int16_t loca_format;
+    uint8_t glyphs8[95][12];
+    int ready;
+} FB_TTF;
+
+static FB_TTF fb_ttf;
+/* The outline backend is kept behind this gate while it is being replaced.
+ * A malformed glyph must never corrupt the system UI; the built-in 8x8
+ * console font remains the safe runtime renderer until the new backend is
+ * validated. */
+/* Curve flattening can need up to four samples per source point.  Keep these
+ * buffers out of the early kernel stack; the font is loaded synchronously. */
+static int32_t ttf_curve_x[1024];
+static int32_t ttf_curve_y[1024];
+static int32_t ttf_edge_x1[4096], ttf_edge_y1[4096];
+static int32_t ttf_edge_x2[4096], ttf_edge_y2[4096];
+static int ttf_edge_count;
+
+static uint16_t ttf_u16(const uint8_t *p) { return ((uint16_t)p[0] << 8) | p[1]; }
+static int16_t ttf_s16(const uint8_t *p) { return (int16_t)ttf_u16(p); }
+static uint32_t ttf_u32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static uint32_t ttf_table(uint8_t *data, uint32_t size, uint32_t tag) {
+    uint16_t count;
+    uint32_t i;
+    if (!data || size < 12) return 0;
+    count = ttf_u16(data + 4);
+    if (12U + (uint32_t)count * 16U > size) return 0;
+    for (i = 0; i < count; i++) {
+        uint8_t *rec = data + 12 + i * 16;
+        if (ttf_u32(rec) == tag) {
+            uint32_t off = ttf_u32(rec + 8), len = ttf_u32(rec + 12);
+            if (off <= size && len <= size - off) return off;
+        }
+    }
+    return 0;
+}
+
+static int ttf_cmap_glyph(uint32_t code) {
+    uint8_t *base;
+    uint16_t n, i;
+    if (!fb_ttf.cmap || code > 0xFFFF) return 0;
+    base = fb_ttf.data + fb_ttf.cmap;
+    n = ttf_u16(base + 2);
+    for (i = 0; i < n; i++) {
+        uint8_t *rec = base + 4 + i * 8;
+        uint32_t off = ttf_u32(rec + 4);
+        uint8_t *sub;
+        uint16_t format, segs, j;
+        if (4U + (uint32_t)i * 8U + 8U > 0x100000U || off >= fb_ttf.size - fb_ttf.cmap) continue;
+        sub = base + off;
+        format = ttf_u16(sub);
+        if (format != 4) continue;
+        segs = ttf_u16(sub + 6) / 2;
+        if (segs == 0 || 16U + (uint32_t)segs * 8U > fb_ttf.size - fb_ttf.cmap - off) continue;
+        for (j = 0; j < segs; j++) {
+            uint8_t *end = sub + 14 + j * 2;
+            uint8_t *start = sub + 16 + segs * 2 + j * 2;
+            uint8_t *delta = start + segs * 2;
+            uint8_t *range = delta + segs * 2;
+            uint16_t end_code = ttf_u16(end), start_code = ttf_u16(start);
+            int32_t glyph;
+            if (code > end_code || code < start_code) continue;
+            if (ttf_u16(range) == 0) glyph = (int32_t)code + ttf_s16(delta);
+            else {
+                uint8_t *entry = range + ttf_u16(range) + (code - start_code) * 2;
+                if (entry + 2 > fb_ttf.data + fb_ttf.size) return 0;
+                glyph = ttf_u16(entry);
+                if (glyph) glyph += ttf_s16(delta);
+            }
+            if (glyph < 0 || glyph >= fb_ttf.glyphs) return 0;
+            return glyph;
+        }
+    }
+    return 0;
+}
+
+static uint32_t ttf_glyph_offset(uint16_t glyph) {
+    if (glyph >= fb_ttf.glyphs || !fb_ttf.loca) return 0;
+    if (fb_ttf.loca_format == 0) return (uint32_t)ttf_u16(fb_ttf.data + fb_ttf.loca + glyph * 2) * 2;
+    return ttf_u32(fb_ttf.data + fb_ttf.loca + glyph * 4);
+}
+
+static void ttf_plot_edges(uint8_t out[12], int32_t xmin, int32_t xmax,
+                           int32_t ymin, int32_t ymax) {
+    int py, px, sx4, sy4, i, j;
+    if (xmax <= xmin || ymax <= ymin || ttf_edge_count < 3) return;
+    for (py = 0; py < 12; py++) for (px = 0; px < 8; px++) {
+        int covered = 0;
+        /* Four-by-four supersampling keeps thin stems and curves visible at
+         * the small console size without storing a pre-rasterized font. */
+        for (sy4 = 0; sy4 < 4; sy4++) for (sx4 = 0; sx4 < 4; sx4++) {
+            int inside = 0;
+            int32_t sx = xmin + (((px * 4 + sx4) * 2 + 1) * (xmax - xmin)) / 64;
+            int32_t sy = ymax - (((py * 4 + sy4) * 2 + 1) * (ymax - ymin)) / 96;
+            for (i = 0; i < ttf_edge_count; i++) {
+                j = i;
+                if (((ttf_edge_y1[i] > sy) != (ttf_edge_y2[i] > sy)) &&
+                    sx < (ttf_edge_x2[i] - ttf_edge_x1[i]) *
+                         (sy - ttf_edge_y1[i]) /
+                         (ttf_edge_y2[i] - ttf_edge_y1[i]) + ttf_edge_x1[i])
+                    inside = !inside;
+            }
+            if (inside) covered++;
+        }
+        if (covered >= 6) out[py] |= (uint8_t)(0x80 >> px);
+    }
+}
+
+static void ttf_add_curve_point(int32_t *x, int32_t *y, int *count,
+                                int32_t px, int32_t py) {
+    if (*count >= 1024) return;
+    x[*count] = px;
+    y[*count] = py;
+    (*count)++;
+}
+
+/* Convert a quadratic TrueType contour into a polygon.  Points with the
+ * on-curve flag clear are quadratic control points; treating them as normal
+ * vertices produces the broken, spiky glyphs seen with small fonts. */
+static int ttf_flatten_contour(int32_t *srcx, int32_t *srcy, uint8_t *flags,
+                               int begin, int end, int32_t *dstx, int32_t *dsty) {
+    int n = end - begin + 1;
+    int first = begin;
+    int last = end;
+    int i;
+    int out = 0;
+    int32_t curx, cury;
+
+    if (n < 1) return 0;
+    if (flags[first] & 1) {
+        curx = srcx[first];
+        cury = srcy[first];
+    } else if (flags[last] & 1) {
+        curx = srcx[last];
+        cury = srcy[last];
+    } else {
+        curx = (srcx[first] + srcx[last]) / 2;
+        cury = (srcy[first] + srcy[last]) / 2;
+    }
+    ttf_add_curve_point(dstx, dsty, &out, curx, cury);
+
+    for (i = 0; i < n; i++) {
+        int at = begin + i;
+        int next = (i + 1 < n) ? at + 1 : begin;
+        int next2 = (i + 2 < n) ? at + 2 : begin + ((i + 2) - n);
+        int32_t ex, ey;
+
+        if (flags[at] & 1) {
+            ex = srcx[at];
+            ey = srcy[at];
+            ttf_add_curve_point(dstx, dsty, &out, ex, ey);
+            curx = ex;
+            cury = ey;
+            continue;
+        }
+
+        if (flags[next] & 1) {
+            ex = srcx[next];
+            ey = srcy[next];
+        } else {
+            ex = (srcx[next] + srcx[next2]) / 2;
+            ey = (srcy[next] + srcy[next2]) / 2;
+        }
+
+        {
+            int step;
+            int32_t cx = srcx[at], cy = srcy[at];
+            for (step = 1; step <= 4; step++) {
+                int32_t t = step * 256 / 4;
+                int32_t a = 256 - t;
+                int32_t qx = (a * a * curx + 2 * a * t * cx + t * t * ex) / 65536;
+                int32_t qy = (a * a * cury + 2 * a * t * cy + t * t * ey) / 65536;
+                ttf_add_curve_point(dstx, dsty, &out, qx, qy);
+            }
+        }
+        curx = ex;
+        cury = ey;
+    }
+    return out;
+}
+
+static void ttf_render_glyph(uint16_t glyph, uint8_t out[12]) {
+    uint32_t off = ttf_glyph_offset(glyph), next = ttf_glyph_offset(glyph + 1);
+    int16_t contours;
+    int32_t x[256], y[256];
+    uint16_t ends[64];
+    uint16_t points = 0, i, c;
+    uint8_t flags[256];
+    uint8_t *p;
+    int32_t xmin, xmax, ymin, ymax;
+    if (!off || !next || next <= off || next > fb_ttf.size - fb_ttf.glyf) return;
+    p = fb_ttf.data + fb_ttf.glyf + off;
+    if (p + 10 > fb_ttf.data + fb_ttf.size || (contours = ttf_s16(p)) <= 0 || contours > 64) return;
+    /* glyf header order is:
+     *   numberOfContours, xMin, yMin, xMax, yMax
+     * Keep the coordinate order intact; treating yMin as xMax makes every
+     * glyph appear to have a zero-width outline. */
+    xmin = ttf_s16(p + 2);
+    ymin = ttf_s16(p + 4);
+    xmax = ttf_s16(p + 6);
+    ymax = ttf_s16(p + 8);
+    p += 10;
+    for (c = 0; c < (uint16_t)contours; c++) ends[c] = ttf_u16(p + c * 2);
+    points = ends[contours - 1] + 1;
+    if (points == 0 || points > 256) return;
+    p += contours * 2;
+    p += 2 + ttf_u16(p);
+    for (i = 0; i < points; i++) {
+        if (p >= fb_ttf.data + fb_ttf.size) return;
+        flags[i] = *p++;
+        if (flags[i] & 8) {
+            uint8_t repeat = *p++;
+            while (repeat-- && i + 1 < points) flags[++i] = flags[i - 1];
+        }
+    }
+    x[0] = y[0] = 0;
+    for (i = 0; i < points; i++) {
+        int16_t delta = 0;
+        if (flags[i] & 2) delta = (flags[i] & 16) ? *p++ : -(int16_t)*p++;
+        else if (!(flags[i] & 16)) delta = ttf_s16(p), p += 2;
+        x[i] = (i ? x[i - 1] : 0) + delta;
+    }
+    for (i = 0; i < points; i++) {
+        int16_t delta = 0;
+        if (flags[i] & 4) delta = (flags[i] & 32) ? *p++ : -(int16_t)*p++;
+        else if (!(flags[i] & 32)) delta = ttf_s16(p), p += 2;
+        y[i] = (i ? y[i - 1] : 0) + delta;
+    }
+    ttf_edge_count = 0;
+    for (c = 0, i = 0; c < (uint16_t)contours; c++) {
+        uint16_t end = ends[c], begin = i;
+        uint16_t n = end - begin + 1;
+        int flattened;
+        int k;
+        if (n > 256) return;
+        flattened = ttf_flatten_contour(x, y, flags, begin, end,
+                                        ttf_curve_x, ttf_curve_y);
+        for (k = 0; k < flattened; k++) {
+            int next = (k + 1 < flattened) ? k + 1 : 0;
+            if (ttf_edge_count >= 4096) return;
+            if (ttf_curve_x[k] == ttf_curve_x[next] &&
+                ttf_curve_y[k] == ttf_curve_y[next]) continue;
+            ttf_edge_x1[ttf_edge_count] = ttf_curve_x[k];
+            ttf_edge_y1[ttf_edge_count] = ttf_curve_y[k];
+            ttf_edge_x2[ttf_edge_count] = ttf_curve_x[next];
+            ttf_edge_y2[ttf_edge_count] = ttf_curve_y[next];
+            ttf_edge_count++;
+        }
+        i = end + 1;
+    }
+    ttf_plot_edges(out, xmin, xmax, ymin, ymax);
+}
+
+static void fb_load_ttf(void) {
+    uint8_t *data = 0;
+    uint32_t size = 0;
+    int c;
+    if (fb_ttf.ready || !CdfsReadFile("/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size)) return;
+    if (size < 12 || !ttf_table(data, size, 0x68656164U) ||
+        !ttf_table(data, size, 0x636D6170U) || !ttf_table(data, size, 0x676C7966U)) { kfree(data); return; }
+    fb_ttf.data = data; fb_ttf.size = size;
+    fb_ttf.head = ttf_table(data, size, 0x68656164U);
+    fb_ttf.cmap = ttf_table(data, size, 0x636D6170U);
+    fb_ttf.hhea = ttf_table(data, size, 0x68686561U);
+    fb_ttf.hmtx = ttf_table(data, size, 0x686D7478U);
+    fb_ttf.loca = ttf_table(data, size, 0x6C6F6361U);
+    fb_ttf.glyf = ttf_table(data, size, 0x676C7966U);
+    fb_ttf.units = ttf_u16(data + fb_ttf.head + 18);
+    fb_ttf.loca_format = ttf_s16(data + fb_ttf.head + 50);
+    fb_ttf.metrics = ttf_u16(data + fb_ttf.hhea + 34);
+    {
+        uint32_t maxp = ttf_table(data, size, 0x6D617870U);
+        if (!maxp) { kfree(data); fb_ttf.data = 0; return; }
+        fb_ttf.glyphs = ttf_u16(data + maxp + 4);
+    }
+    for (c = 0; c < 95; c++) ttf_render_glyph((uint16_t)ttf_cmap_glyph((uint32_t)c + 32), fb_ttf.glyphs8[c]);
+    fb_ttf.ready = 1;
+}
+#endif
 
 static uint8_t *fb_indexed_buffer(void) {
     if (use_framebuffer) return fb_shadow;
@@ -536,6 +834,7 @@ void FbInit(void *mb_info_ptr) {
 
     if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32) ||
         fb_try_vmware_mode(800, 600, 32) || fb_try_vmware_mode(640, 480, 32)) {
+        FbTtfLoad("/SYSTEM32/FONTS/TAHOMA.TTF");
         FbSwapBuffers();
         return;
     }
@@ -635,8 +934,14 @@ void FbDrawRect(int x, int y, int w, int h, uint8_t color) {
 
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) {
     if (use_framebuffer) {
+        uint8_t ttf_glyph[12];
         const uint8_t *glyph = fb_get_font(c);
-        for (int row = 0; row < 8; row++) {
+        int glyph_height = 8;
+        if (fb_use_ttf_glyphs && FbTtfReady() && FbTtfGlyph(c, ttf_glyph)) {
+            glyph = ttf_glyph;
+            glyph_height = 12;
+        }
+        for (int row = 0; row < glyph_height; row++) {
             uint8_t bits = glyph[row];
             for (int col = 0; col < 8; col++) {
                 FbPutPixel(x + col, y + row, (bits & (0x80 >> col)) ? fg : bg);
@@ -654,17 +959,17 @@ void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
         while (*str) {
             if (*str == '\n') {
                 cx = x;
-                cy += 10;
+                cy += (fb_use_ttf_glyphs && FbTtfReady() ? 14 : 10);
             } else {
                 FbDrawChar(cx, cy, *str, fg, bg);
                 cx += 8;
                 if (cx + 8 > fb_width) {
                     cx = x;
-                    cy += 10;
+                    cy += (fb_use_ttf_glyphs && FbTtfReady() ? 14 : 10);
                 }
             }
             str++;
-            if (cy + 8 > fb_height) break;
+            if (cy + (fb_use_ttf_glyphs && FbTtfReady() ? 12 : 8) > fb_height) break;
         }
     } else {
         VgaDrawString(x, y, str, fg, bg);

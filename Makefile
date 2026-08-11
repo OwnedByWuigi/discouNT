@@ -101,6 +101,8 @@ KEYBOARD_SYS := $(BUILD_DIR)/drivers/keyboard/keyboard.sys
 MOUSE_SYS := $(BUILD_DIR)/drivers/mouse/mouse.sys
 NET_SYS := $(BUILD_DIR)/drivers/net/net.sys
 FB_SYS := $(BUILD_DIR)/drivers/fb/fb.sys
+FONT_DIR := $(SYSTEM32_DIR)/FONTS
+FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS)
 
@@ -277,15 +279,17 @@ $(NET_SYS): drivers/net/net.c drivers/module_entry.c
 
 $(FB_SYS): drivers/fb/fb.c drivers/module_entry.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/fb/fb.c drivers/fb/ttf.c drivers/module_entry.c
 
 $(USB_SYS): drivers/usb/usb.c drivers/usb/usb.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/usb/usb.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
+	@mkdir -p $(FONT_DIR)
+	@for font in $(FONT_SOURCES); do cp "$$font" "$(FONT_DIR)/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; done
 	@rm -rf $(ISO_DIR)/APPS
 	@rm -f "$(DRIVERS_DIR)/WIN32K.SYS"
 	@cp "$(KERNEL_ELF)" "$(KERNEL_ISO_PATH)"
