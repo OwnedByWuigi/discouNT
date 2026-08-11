@@ -280,23 +280,31 @@ static void gdi_line_to(GDIDC *dc, int x0, int y0, int x1, int y1, COLORREF colo
 }
 
 static void gdi_draw_text_screen(GDIDC *dc, int x, int y, LPCSTR str, int len) {
-    char buf[256];
     int ox = 0, oy = 0, i;
     if (!dc || !str) return;
     if (len < 0) {
         len = 0;
         while (str[len]) len++;
     }
-    if (len > 255) len = 255;
-    for (i = 0; i < len; i++) buf[i] = str[i];
-    buf[len] = 0;
     if (dc->has_custom_origin) {
         ox = dc->origin_x;
         oy = dc->origin_y;
     } else {
         gdi_get_screen_origin(dc->hwnd, &ox, &oy);
     }
-    FbDrawString(ox + x, oy + y, buf, gdi_color_to_index(dc->text_color), gdi_color_to_index(dc->bk_color));
+    for (i = 0; i < len; i++) {
+        int char_left = x + (i * 8);
+        int char_top = y;
+        int char_right = char_left + 8;
+        int char_bottom = char_top + 8;
+        if (char_right <= dc->clip.left || char_left >= dc->clip.right ||
+            char_bottom <= dc->clip.top || char_top >= dc->clip.bottom) {
+            continue;
+        }
+        FbDrawChar(ox + char_left, oy + char_top, str[i],
+                   gdi_color_to_index(dc->text_color),
+                   gdi_color_to_index(dc->bk_color));
+    }
 }
 
 static void gdi_draw_text_mem(GDIDC *dc, int x, int y, LPCSTR str, int len) {

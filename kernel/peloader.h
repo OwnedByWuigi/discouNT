@@ -113,6 +113,7 @@ typedef struct {
 // PE Loader functions
 void *PeLoadImage(void *image_data, uint32_t size);
 void *PeGetEntryPoint(void *image_base);
+int PeIsELFImage(void *image_base);
 int PeResolveImports(void *image_base);
 const char *PeGetLastError(void);
 void PeClearLastError(void);

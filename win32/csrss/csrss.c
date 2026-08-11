@@ -341,7 +341,7 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
         PeFreeImage(image);
         return -5;
     }
-    if (!(*(uint32_t*)file_buf == 0x464C457F)) {
+    if (!PeIsELFImage(image)) {
         PePerformRelocations(image);
     }
 
@@ -567,7 +567,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         app->image = 0;
         return 0;
     }
-    if (*(uint32_t*)app->image != 0x464C457F) {
+    if (!PeIsELFImage(app->image)) {
         PePerformRelocations(app->image);
     }
 
@@ -904,21 +904,32 @@ void CsrssSessionRun(void *mb_info) {
                 if (thread) {
                     if (thread->state == THREAD_TERMINATED || g_gui_apps[i].exited) {
                         if (g_gui_apps[i].window != INVALID_HANDLE) {
-                            WINDOW *win = (WINDOW*)ObReferenceObject(g_gui_apps[i].window);
-                            if (!win) {
-                                remove = 1;
-                            } else {
+                            /* A standard WinMain app is allowed to return
+                             * without destroying its last window.  CSRSS
+                             * owns the process lifetime, so tear the window
+                             * down here before releasing the image. */
+                            if (ObReferenceObject(g_gui_apps[i].window)) {
                                 ObDereferenceObject(g_gui_apps[i].window);
+                                Win32kDestroyWindow(g_gui_apps[i].window);
                             }
                         }
+                        remove = 1;
                     }
                     ObDereferenceObject(g_gui_apps[i].thread);
                 }
             }
 
             if (remove) {
-                if (g_gui_apps[i].image && g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM) {
+                if (g_gui_apps[i].image) {
                     PeFreeImage(g_gui_apps[i].image);
+                    g_gui_apps[i].image = 0;
+                }
+                if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM &&
+                    g_gui_apps[i].thread != INVALID_HANDLE) {
+                    /* Release the owning handle reference.  The temporary
+                     * reference above was already dropped. */
+                    ObDereferenceObject(g_gui_apps[i].thread);
+                    g_gui_apps[i].thread = INVALID_HANDLE;
                 }
                 for (int j = i; j < g_gui_app_count - 1; j++) {
                     g_gui_apps[j] = g_gui_apps[j + 1];

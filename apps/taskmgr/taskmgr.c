@@ -916,6 +916,7 @@ TaskManagerWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
             (pnmh->idFrom == IDC_TAB) &&
             (pnmh->code == TCN_SELCHANGE))
         {
+            SerialPutString("[TASKMGR] WM_NOTIFY TCN_SELCHANGE\r\n");
             TaskManager_OnTabWndSelChange();
         }
         break;

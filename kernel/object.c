@@ -4,6 +4,7 @@
 #include "hal.h"
 #include "util.h"
 #include "serial.h"
+#include "ke.h"
 
 static HANDLE_TABLE global_table;
 
@@ -55,7 +56,19 @@ void ObDereferenceObject(HANDLE handle) {
     obj->ref_count--;
     
     if (obj->ref_count == 0) {
-        if (obj->body) kfree(obj->body);
+        if (obj->body) {
+            /* THREAD owns a separately allocated scheduler stack.  The
+             * object body used to be freed without releasing it, so every
+             * GUI CreateThread permanently consumed kernel heap space. */
+            if (obj->type == OBJ_TYPE_THREAD) {
+                THREAD *thread = (THREAD*)obj->body;
+                if (thread->stack) {
+                    kfree(thread->stack);
+                    thread->stack = 0;
+                }
+            }
+            kfree(obj->body);
+        }
         kfree(obj);
         global_table.objects[handle] = 0;
         global_table.count--;

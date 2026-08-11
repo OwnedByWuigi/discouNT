@@ -63,7 +63,8 @@ BOOT_SERIAL_OBJ := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ)
 
-DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(wildcard $(d)/$(notdir $(d)).c),$(d),)))
+DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine
+DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(filter $(d),$(DLL_EXCLUDE_DIRS)),,$(if $(wildcard $(d)/*.c),$(d),))))
 DLL_NAMES := $(notdir $(DLL_DIRS))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
 W32K_DLL := $(BUILD_DIR)/win32/w32k/w32k.dll
@@ -81,6 +82,11 @@ NOTEPAD_APP := $(BUILD_DIR)/apps/notepad/notepad.exe
 NOTEPAD_SRCS := apps/notepad/main.c apps/notepad/dialog.c
 WINVER_APP := $(BUILD_DIR)/apps/winver/winver.exe
 WINVER_SRCS := apps/winver/winver.c
+RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
+RESOURCE_MENU_OUTPUTS := $(patsubst apps/%/%.rc,$(BUILD_DIR)/apps/%/%.menu.bin,$(RESOURCE_MENU_SRCS))
+TASKMGR_MENU_RES := $(BUILD_DIR)/apps/taskmgr/taskmgr.menu.bin
+NOTEPAD_MENU_RES := $(BUILD_DIR)/apps/notepad/notepad.menu.bin
+WINVER_MENU_RES := $(BUILD_DIR)/apps/winver/winver.menu.bin
 ICON_SIDE_CARS := apps/notepad/notepad.ico apps/taskmgr/taskmgr.ico
 DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
 SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
@@ -101,6 +107,8 @@ kernel: $(KERNEL_ELF)
 dlls: $(DLL_OUTPUTS) $(W32K_DLL)
 
 apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
+
+resources: $(RESOURCE_MENU_OUTPUTS)
 
 $(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR)
@@ -125,12 +133,13 @@ $(BOOT_CDFS_OBJ): drivers/cdfs/cdfs.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCdfsInit=BootCdfsInit -DCdfsReadSector=BootCdfsReadSector -DCdfsFindFile=BootCdfsFindFile -DCdfsReadFile=BootCdfsReadFile -c $< -o $@
 
 define BUILD_DLL_template
-$(BUILD_DIR)/dlls/$(1).dll: dlls/$(1)/$(1).c $(KERNEL_ELF)
+DLL_$(1)_SRCS := $$(filter-out %/tests/%,$$(wildcard dlls/$(1)/*.c))
+$(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 	@mkdir -p $$(@D)
 	@if command -v $(MINGW_CC) >/dev/null 2>&1; then \
 		$(MINGW_CC) -shared \
 			-o $$@ \
-			$$< \
+			$$(DLL_$(1)_SRCS) \
 			-nostdlib -nostartfiles \
 			-Wl,--subsystem,windows \
 			-Wl,--image-base,0x10000000 \
@@ -142,7 +151,7 @@ $(BUILD_DIR)/dlls/$(1).dll: dlls/$(1)/$(1).c $(KERNEL_ELF)
 	else \
 		$(CC) $(CPPFLAGS) -ffreestanding -nostdlib -fno-builtin -m32 -fPIC -shared -Wl,-Bsymbolic \
 			-o $$@ \
-			$$<; \
+			$$(DLL_$(1)_SRCS); \
 	fi
 endef
 
@@ -180,26 +189,41 @@ $(DESK_CPL): apps/control/desk/desk.c
 		-o $@ \
 		$< kernel/util.c
 
-$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c
+$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c $(TASKMGR_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
 		$(TASKMGR_SRCS) kernel/util.c
+	@objcopy --add-section .disres=$(TASKMGR_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/util.c
+$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/util.c $(NOTEPAD_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
 		$(NOTEPAD_SRCS) kernel/util.c
+	@objcopy --add-section .disres=$(NOTEPAD_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(WINVER_APP): $(WINVER_SRCS) kernel/util.c
+$(WINVER_APP): $(WINVER_SRCS) kernel/util.c $(WINVER_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
 		$(WINVER_SRCS) kernel/util.c
+	@objcopy --add-section .disres=$(WINVER_MENU_RES) --set-section-flags .disres=readonly,data $@
+
+$(TASKMGR_MENU_RES): apps/taskmgr/taskmgr.rc tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
+
+$(NOTEPAD_MENU_RES): apps/notepad/notepad.rc tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
+
+$(WINVER_MENU_RES): apps/winver/winver.rc tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
 
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
@@ -243,7 +267,7 @@ $(FB_SYS): drivers/fb/fb.c drivers/module_entry.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $^
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@rm -rf $(ISO_DIR)/APPS
@@ -297,10 +321,7 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(SYSTEM32_DIR)/.stamp
 iso: $(ISO_NAME)
 
 run: $(ISO_NAME)
-	qemu-system-i386 -cdrom $(ISO_NAME) -m 64 -vga std -serial stdio -nic user,model=rtl8139
-
-run-bridge: $(ISO_NAME)
-	qemu-system-i386 -cdrom $(ISO_NAME) -m 64 -vga std -serial stdio -nic tap,model=rtl8139,ifname=tap0,script=no,downscript=no
+	qemu-system-i386 -cdrom $(ISO_NAME) -m 128 -vga std -serial stdio -nic user,model=rtl8139
 
 clean:
 	rm -rf $(BUILD_DIR) $(ISO_NAME)

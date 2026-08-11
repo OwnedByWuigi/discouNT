@@ -318,10 +318,12 @@ typedef struct tagMINMAXINFO {
 
 #define LANG_NEUTRAL       0x00
 
+#define BST_UNCHECKED      0
 #define BST_CHECKED        1
 
 #define BM_GETCHECK        0x00F0
 #define BM_SETCHECK        0x00F1
+#define BM_CLICK           0x00F5
 
 #define DT_CENTER          0x00000001
 
@@ -353,7 +355,14 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
                             DWORD dwStyle, int X, int Y, int nWidth, int nHeight,
                             HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
 HWND WINAPI CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc);
+HWND WINAPI CreateDialogParamW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+HWND WINAPI CreateDialogParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
 INT_PTR WINAPI DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc);
+INT_PTR WINAPI DialogBoxParamW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+INT_PTR WINAPI DialogBoxParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+HWND WINAPI CreateDialogIndirectParamW(HINSTANCE hInstance, LPCVOID lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+INT_PTR WINAPI DialogBoxIndirectParamW(HINSTANCE hInstance, LPCVOID lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+LRESULT WINAPI DefDlgProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 LRESULT WINAPI SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 BOOL WINAPI DestroyWindow(HWND hWnd);
 BOOL WINAPI GetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl);
@@ -370,14 +379,20 @@ int WINAPI GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount);
 int WINAPI GetWindowTextLengthW(HWND hWnd);
 HWND WINAPI GetDlgItem(HWND hDlg, int nIDDlgItem);
 UINT WINAPI GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax);
+LRESULT WINAPI SendDlgItemMessageW(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam, LPARAM lParam);
 BOOL WINAPI SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString);
 UINT WINAPI GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned);
 BOOL WINAPI SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned);
+BOOL WINAPI CheckDlgButton(HWND hDlg, int nIDButton, UINT uCheck);
+UINT WINAPI IsDlgButtonChecked(HWND hDlg, int nIDButton);
+BOOL WINAPI CheckRadioButton(HWND hDlg, int firstID, int lastID, int checkID);
 BOOL WINAPI SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom);
 int WINAPI GetSystemMetrics(int nIndex);
 BOOL WINAPI SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags);
 BOOL WINAPI MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint);
 HMENU WINAPI GetMenu(HWND hWnd);
+BOOL WINAPI SetMenu(HWND hWnd, HMENU hMenu);
+HMENU WINAPI CreateMenu(void);
 HMENU WINAPI GetSubMenu(HMENU hMenu, int nPos);
 int WINAPI GetMenuItemCount(HMENU hMenu);
 BOOL WINAPI CheckMenuRadioItem(HMENU hmenu, UINT first, UINT last, UINT check, UINT flags);
@@ -386,8 +401,11 @@ BOOL WINAPI EnableMenuItem(HMENU hMenu, UINT uIDEnableItem, UINT uEnable);
 BOOL WINAPI DestroyMenu(HMENU hMenu);
 BOOL WINAPI RemoveMenu(HMENU hMenu, UINT uPosition, UINT uFlags);
 BOOL WINAPI AppendMenuW(HMENU hMenu, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem);
+BOOL WINAPI AppendMenuA(HMENU hMenu, UINT uFlags, UINT_PTR uIDNewItem, LPCSTR lpNewItem);
 HMENU WINAPI LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName);
+HMENU WINAPI LoadMenuA(HINSTANCE hInstance, LPCSTR lpMenuName);
 BOOL WINAPI InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem);
+BOOL WINAPI InsertMenuA(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCSTR lpNewItem);
 BOOL WINAPI DrawMenuBar(HWND hWnd);
 BOOL WINAPI BringWindowToTop(HWND hWnd);
 HWND WINAPI SetFocus(HWND hWnd);
@@ -413,6 +431,8 @@ BOOL WINAPI DeleteMenu(HMENU hMenu, UINT uPosition, UINT uFlags);
 BOOL WINAPI SetMenuDefaultItem(HMENU hMenu, UINT uItem, UINT fByPos);
 BOOL WINAPI TrackPopupMenuEx(HMENU hmenu, UINT fuFlags, int x, int y, HWND hwnd, void *lptpm);
 UINT WINAPI GetMenuState(HMENU hMenu, UINT uId, UINT uFlags);
+UINT WINAPI GetMenuItemID(HMENU hMenu, int nPos);
+BOOL WINAPI IsMenu(HMENU hMenu);
 HWND WINAPI GetWindow(HWND hWnd, UINT uCmd);
 LRESULT WINAPI CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 HDC WINAPI GetDC(HWND hWnd);
@@ -431,6 +451,9 @@ BOOL WINAPI InvalidateRect(HWND hWnd, const RECT *lpRect, BOOL bErase);
 BOOL WINAPI IsWindow(HWND hWnd);
 HWND WINAPI GetParent(HWND hWnd);
 int WINAPI MapWindowPoints(HWND hWndFrom, HWND hWndTo, LPPOINT lpPoints, UINT cPoints);
+BOOL WINAPI ClientToScreen(HWND hWnd, LPPOINT lpPoint);
+BOOL WINAPI ScreenToClient(HWND hWnd, LPPOINT lpPoint);
+BOOL WINAPI MapDialogRect(HWND hDlg, LPRECT lpRect);
 BOOL WINAPI SetWindowTextW(HWND hWnd, LPCWSTR lpString);
 BOOL WINAPI TrackPopupMenu(HMENU hMenu, UINT uFlags, int x, int y, int nReserved, HWND hWnd, const RECT *prcRect);
 LRESULT WINAPI SendMessageTimeoutW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam,

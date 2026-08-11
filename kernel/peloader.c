@@ -624,6 +624,15 @@ void *PeGetEntryPoint(void *image_base) {
     return (uint8_t*)image_base + opt->AddressOfEntryPoint;
 }
 
+int PeIsELFImage(void *image_base) {
+    PE_RUNTIME_HEADER *runtime;
+
+    if (!image_base) return 0;
+    runtime = PeGetRuntimeHeader(image_base);
+    if (runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)) return 1;
+    return *(uint32_t*)image_base == ELF_MAGIC;
+}
+
 void PeFreeImage(void *image_base) {
     PE_RUNTIME_HEADER *runtime;
 

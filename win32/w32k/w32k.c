@@ -7,6 +7,19 @@
 #include "serial.h"
 #include "icon.h"
 
+#ifndef WM_MOUSEMOVE
+#define WM_MOUSEMOVE 0x0200
+#endif
+#ifndef WM_LBUTTONDOWN
+#define WM_LBUTTONDOWN 0x0201
+#endif
+#ifndef WM_LBUTTONUP
+#define WM_LBUTTONUP 0x0202
+#endif
+#ifndef MAKELPARAM
+#define MAKELPARAM(l, h) ((uint32_t)(((uint16_t)((l) & 0xFFFF)) | (((uint32_t)((uint16_t)((h) & 0xFFFF))) << 16)))
+#endif
+
 #define MAX_WINDOWS 32
 #define DESKTOP_COLOR        COLOR_BLUE
 #define FACE_COLOR           COLOR_LIGHT_GRAY
@@ -808,8 +821,21 @@ void Win32kHandleMouseDown(int x, int y, int button) {
         drag_offset_x = x - win->x;
         drag_offset_y = y - win->y;
         begin_fast_drag(hwnd);
+        ObDereferenceObject(hwnd);
+        Win32kRedrawAll();
+        return;
     }
-    
+
+    if (win->wndProc &&
+        x >= client_left(win) + win->x &&
+        x < client_right(win) + win->x &&
+        y >= client_top(win) + win->y &&
+        y < client_bottom(win) + win->y) {
+        int client_x = x - (win->x + client_left(win));
+        int client_y = y - (win->y + client_top(win));
+        win->wndProc(hwnd, WM_LBUTTONDOWN, 0, (uint32_t)MAKELPARAM(client_x, client_y));
+    }
+
     ObDereferenceObject(hwnd);
     Win32kRedrawAll();
 }
@@ -828,6 +854,23 @@ void Win32kHandleMouseUp(int x, int y, int button) {
         resize_window = INVALID_HANDLE;
         resize_edge = RESIZE_NONE;
         Win32kRedrawAll();
+    }
+
+    {
+        HANDLE hwnd = find_window_at(x, y);
+        WINDOW *win = hwnd != INVALID_HANDLE ? (WINDOW*)ObReferenceObject(hwnd) : 0;
+        if (win) {
+            if (win->wndProc &&
+                x >= client_left(win) + win->x &&
+                x < client_right(win) + win->x &&
+                y >= client_top(win) + win->y &&
+                y < client_bottom(win) + win->y) {
+                int client_x = x - (win->x + client_left(win));
+                int client_y = y - (win->y + client_top(win));
+                win->wndProc(hwnd, WM_LBUTTONUP, 0, (uint32_t)MAKELPARAM(client_x, client_y));
+            }
+            ObDereferenceObject(hwnd);
+        }
     }
     update_cursor_for_point(x, y);
 }
@@ -915,6 +958,23 @@ void Win32kHandleMouseMove(int x, int y) {
         update_cursor_for_point(x, y);
         Win32kRedrawAll();
         return;
+    }
+
+    {
+        HANDLE hwnd = find_window_at(x, y);
+        WINDOW *hover = hwnd != INVALID_HANDLE ? (WINDOW*)ObReferenceObject(hwnd) : 0;
+        if (hover) {
+            if (hover->wndProc &&
+                x >= hover->x + client_left(hover) &&
+                x < hover->x + client_right(hover) &&
+                y >= hover->y + client_top(hover) &&
+                y < hover->y + client_bottom(hover)) {
+                int client_x = x - (hover->x + client_left(hover));
+                int client_y = y - (hover->y + client_top(hover));
+                hover->wndProc(hwnd, WM_MOUSEMOVE, 0, (uint32_t)MAKELPARAM(client_x, client_y));
+            }
+            ObDereferenceObject(hwnd);
+        }
     }
 
     update_cursor_for_point(x, y);

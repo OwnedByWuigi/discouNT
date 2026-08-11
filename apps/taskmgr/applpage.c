@@ -873,6 +873,7 @@ ApplicationPageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_COMMAND:
+        SerialPutString("[TASKMGR] app page WM_COMMAND\r\n");
 
         /* Handle the button clicks */
         switch (LOWORD(wParam))

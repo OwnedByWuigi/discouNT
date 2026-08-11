@@ -162,6 +162,12 @@ UINT GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax) {
     return (UINT)GetWindowTextW(child, lpString, cchMax);
 }
 
+LRESULT SendDlgItemMessageW(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    HWND child = GetDlgItem(hDlg, nIDDlgItem);
+    if (!child) return 0;
+    return SendMessageW(child, Msg, wParam, lParam);
+}
+
 BOOL SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString) {
     HWND child = GetDlgItem(hDlg, nIDDlgItem);
     if (!child) return FALSE;
@@ -194,6 +200,31 @@ BOOL SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned) {
     else pos = u32_append_number(buf, pos, ARRAY_SIZE(buf), (int)uValue, 1);
     buf[pos] = 0;
     return SetDlgItemTextW(hDlg, nIDDlgItem, buf);
+}
+
+BOOL CheckDlgButton(HWND hDlg, int nIDButton, UINT uCheck) {
+    HWND child = GetDlgItem(hDlg, nIDButton);
+    if (!child) return FALSE;
+    SendMessageW(child, BM_SETCHECK, uCheck, 0);
+    return TRUE;
+}
+
+UINT IsDlgButtonChecked(HWND hDlg, int nIDButton) {
+    HWND child = GetDlgItem(hDlg, nIDButton);
+    if (!child) return BST_UNCHECKED;
+    return (UINT)SendMessageW(child, BM_GETCHECK, 0, 0);
+}
+
+BOOL CheckRadioButton(HWND hDlg, int firstID, int lastID, int checkID) {
+    int id;
+    BOOL found = FALSE;
+    for (id = firstID; id <= lastID; id++) {
+        HWND child = GetDlgItem(hDlg, id);
+        if (!child) continue;
+        SendMessageW(child, BM_SETCHECK, id == checkID ? BST_CHECKED : BST_UNCHECKED, 0);
+        if (id == checkID) found = TRUE;
+    }
+    return found;
 }
 
 BOOL SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {

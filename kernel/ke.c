@@ -119,6 +119,11 @@ HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     strcat(thread_name, p);
     
     HANDLE handle = ObCreateObject(OBJ_TYPE_THREAD, thread_name, thread, sizeof(THREAD));
+    if (handle == INVALID_HANDLE) {
+        kfree(thread->stack);
+        kfree(thread);
+        return INVALID_HANDLE;
+    }
     thread->handle = handle;
     return handle;
 }

@@ -42,10 +42,13 @@ extern void GdiDestroyScreenDC(HDC hdc);
 #define U32_FRAME_THICKNESS 2
 #define U32_EDGE_THICKNESS 1
 #define U32_TITLEBAR_HEIGHT 18
+#define U32_MENU_HEIGHT 18
 
 typedef struct _U32_CLASS {
     int used;
     WCHAR name[64];
+    WCHAR menu_name[64];
+    UINT menu_res_id;
     WNDPROC proc;
     UINT style;
     HICON hIcon;
@@ -91,15 +94,21 @@ typedef struct _U32_WINDOW {
     WNDPROC proc;
     DLGPROC dlgproc;
     HMENU menu;
+    HMENU popup_menu;
     HWND header_hwnd;
+    HWND menu_owner;
+    int active_menu_index;
+    int hot_index;
     int check_state;
     int tab_cur_sel;
     int tab_count;
+    WCHAR tab_text[MAX_TAB_ITEMS][64];
     int listview_item_count;
     int listview_selected_count;
     int header_count;
     int status_parts_count;
     int focused;
+    int pressed;
     int ctrl_type;
     int invalidated;
     int painting;
@@ -152,6 +161,29 @@ typedef struct _U32_QUIT_STATE {
     int exit_code;
 } U32_QUIT_STATE;
 
+typedef struct _U32_TEMPLATE_CONTROL {
+    LPCWSTR class_name;
+    LPCWSTR title;
+    DWORD style;
+    DWORD exstyle;
+    UINT id;
+    int x;
+    int y;
+    int w;
+    int h;
+} U32_TEMPLATE_CONTROL;
+
+typedef struct _U32_DIALOG_TEMPLATE_DEF {
+    UINT tmpl_id;
+    LPCWSTR caption;
+    DWORD style;
+    int width;
+    int height;
+    int attach_to_tab_of_parent;
+    const U32_TEMPLATE_CONTROL *controls;
+    int control_count;
+} U32_DIALOG_TEMPLATE_DEF;
+
 static U32_CLASS g_classes[MAX_U32_CLASSES];
 static U32_WINDOW g_windows[MAX_U32_WINDOWS];
 static U32_TIMER g_timers[MAX_U32_TIMERS];
@@ -161,6 +193,7 @@ static U32_ICON g_icons[MAX_U32_ICONS];
 static U32_QUIT_STATE g_quit_states[MAX_U32_QUIT_STATES];
 static HWND g_focus = NULL;
 static HWND g_active_window = NULL;
+static HWND g_open_menu_popup = NULL;
 
 static void u32_paint_children(HWND hwnd);
 static void u32_mark_invalid(HWND hwnd);
@@ -183,6 +216,7 @@ static UINT u32_resource_id(LPCWSTR ptr);
 #define U32_CTRL_EDIT      6
 #define U32_CTRL_GROUPBOX  7
 #define U32_CTRL_STATUS    8
+#define U32_CTRL_MENUPOPUP 9
 
 #ifndef BS_GROUPBOX
 #define BS_GROUPBOX        0x00000007L
@@ -342,6 +376,20 @@ static void u32_wide_to_ansi(LPCWSTR src, char *dst, int max_chars) {
     while (src[i] && i < max_chars - 1) {
         WCHAR ch = src[i];
         dst[i] = (char)((ch >= 32 && ch < 127) ? ch : '?');
+        i++;
+    }
+    dst[i] = 0;
+}
+
+static void u32_ansi_to_wide(LPCSTR src, WCHAR *dst, int max_chars) {
+    int i = 0;
+    if (!dst || max_chars <= 0) return;
+    if (!src) {
+        dst[0] = 0;
+        return;
+    }
+    while (src[i] && i < max_chars - 1) {
+        dst[i] = (unsigned char)src[i];
         i++;
     }
     dst[i] = 0;
@@ -535,7 +583,9 @@ static int u32_client_offset_x(const U32_WINDOW *win) {
 static int u32_client_offset_y(const U32_WINDOW *win) {
     if (!win) return 0;
     if (win->style & WS_CAPTION) {
-        return U32_FRAME_THICKNESS + U32_TITLEBAR_HEIGHT + U32_EDGE_THICKNESS;
+        int y = U32_FRAME_THICKNESS + U32_TITLEBAR_HEIGHT + U32_EDGE_THICKNESS;
+        if (win->top_level && win->menu) y += U32_MENU_HEIGHT;
+        return y;
     }
     return U32_FRAME_THICKNESS;
 }
@@ -663,6 +713,51 @@ static HWND u32_hit_test_child(HWND parent, int x, int y) {
     return NULL;
 }
 
+static int u32_get_descendant_pos_in_ancestor_client(HWND ancestor, HWND descendant, int *out_x, int *out_y) {
+    U32_WINDOW *win = u32_lookup_window(descendant);
+    int x = 0;
+    int y = 0;
+    if (!ancestor || !descendant || !out_x || !out_y) return 0;
+    while (win) {
+        if (win->hwnd == ancestor) {
+            *out_x = x;
+            *out_y = y;
+            return 1;
+        }
+        x += win->rect.left;
+        y += win->rect.top;
+        if (!win->parent) break;
+        win = u32_lookup_window(win->parent);
+    }
+    return 0;
+}
+
+static HWND u32_route_mouse_target(HWND root, int x, int y) {
+    HWND child = u32_hit_test_child(root, x, y);
+    U32_WINDOW *walk;
+    if (!child || child == root) return child;
+    walk = u32_lookup_window(child);
+    while (walk && walk->hwnd != root) {
+        if (walk->ctrl_type == U32_CTRL_TAB) {
+            int rel_x = 0;
+            int rel_y = 0;
+            int width;
+            int height;
+            if (u32_get_descendant_pos_in_ancestor_client(root, walk->hwnd, &rel_x, &rel_y)) {
+                width = walk->rect.right - walk->rect.left;
+                height = walk->rect.bottom - walk->rect.top;
+                if (x >= rel_x && x < rel_x + width &&
+                    y >= rel_y && y < rel_y + height &&
+                    y < rel_y + 20) {
+                    return walk->hwnd;
+                }
+            }
+        }
+        walk = walk->parent ? u32_lookup_window(walk->parent) : 0;
+    }
+    return child;
+}
+
 static void u32_get_absolute_rect(U32_WINDOW *win, RECT *out) {
     RECT rc;
     if (!win || !out) return;
@@ -752,6 +847,246 @@ static uint32_t u32_pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
 static int u32_ico_row_bytes(int width, int bpp) {
     int bits = width * bpp;
     return ((bits + 31) / 32) * 4;
+}
+
+static int u32_menu_text_copy(LPCWSTR src, WCHAR *dst, int max_chars, int strip_tab) {
+    int si = 0;
+    int di = 0;
+    if (!dst || max_chars <= 0) return 0;
+    if (!src) {
+        dst[0] = 0;
+        return 0;
+    }
+    while (src[si] && di < max_chars - 1) {
+        WCHAR ch = src[si++];
+        if (strip_tab && ch == L'\t') break;
+        if (ch == L'&') continue;
+        dst[di++] = ch;
+    }
+    dst[di] = 0;
+    return di;
+}
+
+static int u32_menu_bar_item_width(LPCWSTR text) {
+    WCHAR buf[64];
+    int len = u32_menu_text_copy(text, buf, 64, 1);
+    return (len * 8) + 14;
+}
+
+static int u32_popup_item_height(const U32_MENU_ITEM *item) {
+    if (!item) return 0;
+    return (item->flags & MF_SEPARATOR) ? 8 : 18;
+}
+
+static void u32_destroy_subtree(HWND hwnd) {
+    int i;
+    for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd) {
+            u32_destroy_subtree(g_windows[i].hwnd);
+        }
+    }
+    DestroyWindow(hwnd);
+}
+
+static HWND u32_find_menu_root(HWND hwnd) {
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    while (win) {
+        if (win->top_level) return win->hwnd;
+        if (win->ctrl_type == U32_CTRL_MENUPOPUP && win->menu_owner) return win->menu_owner;
+        if (!win->parent) break;
+        win = u32_lookup_window(win->parent);
+    }
+    return hwnd;
+}
+
+static void u32_close_popup_chain(HWND owner_hwnd) {
+    U32_WINDOW *owner = u32_lookup_window(owner_hwnd);
+    if (!owner) return;
+    if (owner->popup_menu) {
+        HWND popup = owner->popup_menu;
+        owner->popup_menu = NULL;
+        u32_destroy_subtree(popup);
+    }
+    owner->active_menu_index = -1;
+    owner->hot_index = -1;
+    if (owner->top_level) {
+        SendMessageW(owner_hwnd, WM_EXITMENULOOP, 0, 0);
+        g_open_menu_popup = NULL;
+    }
+    u32_mark_invalid(owner_hwnd);
+}
+
+static int u32_menu_bar_hit_test(U32_WINDOW *win, int x, int y) {
+    U32_MENU *menu;
+    int i;
+    int left = 6;
+    if (!win || !win->menu || y < 0 || y >= U32_MENU_HEIGHT) return -1;
+    menu = u32_lookup_menu(win->menu);
+    if (!menu) return -1;
+    for (i = 0; i < menu->count; i++) {
+        int width = u32_menu_bar_item_width(menu->items[i].text);
+        if (x >= left && x < left + width) return i;
+        left += width;
+    }
+    return -1;
+}
+
+static int u32_popup_item_at(U32_MENU *menu, int y) {
+    int i;
+    int top = 2;
+    if (!menu) return -1;
+    for (i = 0; i < menu->count; i++) {
+        int h = u32_popup_item_height(&menu->items[i]);
+        if (y >= top && y < top + h) return i;
+        top += h;
+    }
+    return -1;
+}
+
+static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu, int x, int y) {
+    U32_WINDOW *pwin = u32_lookup_window(parent);
+    U32_WINDOW *owner = u32_lookup_window(owner_hwnd);
+    U32_MENU *menu = u32_lookup_menu(hMenu);
+    U32_WINDOW *win;
+    int i;
+    int width = 64;
+    int height = 4;
+    if (!pwin || !owner || !menu) return NULL;
+    for (i = 0; i < menu->count; i++) {
+        WCHAR text[64];
+        int len = u32_menu_text_copy(menu->items[i].text, text, 64, 1);
+        int item_width = (len * 8) + 24 + (menu->items[i].submenu ? 12 : 0);
+        if (item_width > width) width = item_width;
+        height += u32_popup_item_height(&menu->items[i]);
+    }
+    win = u32_alloc_window();
+    if (!win) return NULL;
+    win->hwnd = (HWND)win;
+    win->parent = parent;
+    win->owner = owner_hwnd;
+    win->top_level = 0;
+    win->visible = 1;
+    win->enabled = 1;
+    win->owner_pid = owner->owner_pid;
+    win->style = WS_CHILD | WS_VISIBLE | WS_BORDER;
+    win->ctrl_type = U32_CTRL_MENUPOPUP;
+    win->menu = hMenu;
+    win->popup_menu = NULL;
+    win->menu_owner = owner_hwnd;
+    win->hot_index = -1;
+    win->active_menu_index = -1;
+    u32_set_rect(win, x, y, width, height);
+    u32_mark_invalid(parent);
+    SendMessageW(owner_hwnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
+    return win->hwnd;
+}
+
+static HWND u32_open_submenu(HWND owner_hwnd, HWND parent_popup_hwnd, int item_index) {
+    U32_WINDOW *popup_win = u32_lookup_window(parent_popup_hwnd);
+    U32_MENU *menu;
+    int yoff = 2;
+    int i;
+    if (!popup_win || popup_win->ctrl_type != U32_CTRL_MENUPOPUP) return NULL;
+    menu = u32_lookup_menu(popup_win->menu);
+    if (!menu || item_index < 0 || item_index >= menu->count) return NULL;
+    if (!menu->items[item_index].submenu) return NULL;
+    if (popup_win->popup_menu && popup_win->active_menu_index == item_index) return popup_win->popup_menu;
+    if (popup_win->popup_menu) u32_close_popup_chain(parent_popup_hwnd);
+    for (i = 0; i < item_index; i++) yoff += u32_popup_item_height(&menu->items[i]);
+    popup_win->active_menu_index = item_index;
+    popup_win->popup_menu = u32_create_menu_popup(parent_popup_hwnd, owner_hwnd, menu->items[item_index].submenu,
+                                                  popup_win->rect.right - popup_win->rect.left - 1, yoff - 1);
+    return popup_win->popup_menu;
+}
+
+static HWND u32_open_menu_bar_popup(HWND owner_hwnd, int menu_index) {
+    U32_WINDOW *owner = u32_lookup_window(owner_hwnd);
+    U32_MENU *menu;
+    int i;
+    int left = 6;
+    if (!owner || !owner->menu) return NULL;
+    menu = u32_lookup_menu(owner->menu);
+    if (!menu || menu_index < 0 || menu_index >= menu->count) return NULL;
+    if (!menu->items[menu_index].submenu) return NULL;
+    if (owner->popup_menu) u32_close_popup_chain(owner_hwnd);
+    SendMessageW(owner_hwnd, WM_ENTERMENULOOP, 0, 0);
+    for (i = 0; i < menu_index; i++) left += u32_menu_bar_item_width(menu->items[i].text);
+    owner->popup_menu = u32_create_menu_popup(owner_hwnd, owner_hwnd, menu->items[menu_index].submenu,
+                                              left, U32_MENU_HEIGHT);
+    owner->active_menu_index = menu_index;
+    owner->hot_index = menu_index;
+    g_open_menu_popup = owner->popup_menu;
+    u32_mark_invalid(owner_hwnd);
+    return owner->popup_menu;
+}
+
+static void u32_draw_menu_bar(HDC hdc, U32_WINDOW *win, const RECT *rc) {
+    U32_MENU *menu;
+    int i;
+    int x = 6;
+    RECT bar_rc;
+    if (!hdc || !win || !rc || !win->menu) return;
+    menu = u32_lookup_menu(win->menu);
+    if (!menu) return;
+
+    bar_rc.left = 0;
+    bar_rc.top = 0;
+    bar_rc.right = rc->right;
+    bar_rc.bottom = U32_MENU_HEIGHT;
+    FillRect(hdc, &bar_rc, (HBRUSH)GetStockObject(0));
+    MoveToEx(hdc, 0, U32_MENU_HEIGHT - 1, 0);
+    LineTo(hdc, rc->right, U32_MENU_HEIGHT - 1);
+
+    for (i = 0; i < menu->count; i++) {
+        WCHAR text[64];
+        int width = u32_menu_bar_item_width(menu->items[i].text);
+        RECT item_rc;
+        u32_menu_text_copy(menu->items[i].text, text, 64, 1);
+        item_rc.left = x - 2;
+        item_rc.top = 2;
+        item_rc.right = x + width - 4;
+        item_rc.bottom = U32_MENU_HEIGHT - 2;
+        if (win->active_menu_index == i) {
+            FillRect(hdc, &item_rc, (HBRUSH)GetStockObject(0));
+            Rectangle(hdc, item_rc.left, item_rc.top, item_rc.right, item_rc.bottom);
+        }
+        TextOutW(hdc, x, 4, text, -1);
+        x += width;
+    }
+}
+
+static void u32_draw_menu_popup(HDC hdc, U32_WINDOW *win, const RECT *rc) {
+    U32_MENU *menu;
+    int i;
+    int top = 2;
+    if (!hdc || !win || !rc || !win->menu) return;
+    menu = u32_lookup_menu(win->menu);
+    if (!menu) return;
+    FillRect(hdc, rc, (HBRUSH)GetStockObject(0));
+    Rectangle(hdc, 0, 0, rc->right, rc->bottom);
+    for (i = 0; i < menu->count; i++) {
+        const U32_MENU_ITEM *item = &menu->items[i];
+        int h = u32_popup_item_height(item);
+        if (item->flags & MF_SEPARATOR) {
+            MoveToEx(hdc, 4, top + 3, 0);
+            LineTo(hdc, rc->right - 4, top + 3);
+        } else {
+            WCHAR text[64];
+            RECT item_rc;
+            u32_menu_text_copy(item->text, text, 64, 1);
+            item_rc.left = 2;
+            item_rc.top = top;
+            item_rc.right = rc->right - 2;
+            item_rc.bottom = top + h;
+            if (win->hot_index == i || win->active_menu_index == i) {
+                FillRect(hdc, &item_rc, (HBRUSH)GetStockObject(0));
+                Rectangle(hdc, item_rc.left, item_rc.top, item_rc.right, item_rc.bottom);
+            }
+            TextOutW(hdc, 6, top + 4, text, -1);
+            if (item->submenu) TextOutW(hdc, rc->right - 12, top + 4, L">", 1);
+        }
+        top += h;
+    }
 }
 
 static int u32_ico_decode_bitmap(DISCOUNT_ICON *icon, const uint8_t *data, uint32_t size) {
@@ -924,7 +1259,11 @@ static HICON u32_try_load_icon_by_name(LPCWSTR name, int width, int height) {
 
 static LRESULT u32_dispatch(U32_WINDOW *win, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (!win) return 0;
-    if (win->dlgproc) return win->dlgproc(win->hwnd, msg, wParam, lParam);
+    if (win->dlgproc) {
+        INT_PTR handled = win->dlgproc(win->hwnd, msg, wParam, lParam);
+        if (handled) return handled;
+        return DefWindowProcW(win->hwnd, msg, wParam, lParam);
+    }
     if (win->proc) return win->proc(win->hwnd, msg, wParam, lParam);
     return DefWindowProcW(win->hwnd, msg, wParam, lParam);
 }
@@ -993,62 +1332,84 @@ static HWND u32_create_child_control(HWND parent, LPCWSTR class_name, LPCWSTR ti
     return win->hwnd;
 }
 
-static void u32_taskmgr_create_dialog_children(UINT tmpl_id, HWND hwnd) {
-    switch (tmpl_id) {
-    case 102:
-        u32_create_child_control(hwnd, L"SysTabControl32", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 1015, 3, 3, 257, 228);
-        break;
-    case 106:
-        u32_create_child_control(hwnd, L"SysListView32", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 1016, 4, 4, 239, 180);
-        u32_create_child_control(hwnd, L"Button", L"&New Task...", WS_CHILD | WS_VISIBLE, 0, 1014, 175, 189, 68, 14);
-        u32_create_child_control(hwnd, L"Button", L"&Switch To", WS_CHILD | WS_VISIBLE | WS_DISABLED, 0, 1013, 104, 189, 68, 14);
-        u32_create_child_control(hwnd, L"Button", L"&End Task", WS_CHILD | WS_VISIBLE | WS_DISABLED, 0, 1012, 33, 189, 68, 14);
-        break;
-    case 133:
-        u32_create_child_control(hwnd, L"SysListView32", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA, 0, 1018, 4, 4, 239, 180);
-        u32_create_child_control(hwnd, L"Button", L"&End Process", WS_CHILD | WS_VISIBLE, 0, 1017, 165, 189, 78, 14);
-        u32_create_child_control(hwnd, L"Button", L"&Show processes from all users", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 1021, 4, 191, 160, 10);
-        break;
-    case 134:
-        u32_create_child_control(hwnd, L"Button", L"CPU usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | WS_TABSTOP, 0, 1043, 5, 5, 60, 54);
-        u32_create_child_control(hwnd, L"Button", L"Mem usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1044, 5, 63, 60, 54);
-        u32_create_child_control(hwnd, L"Button", L"Totals", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1037, 5, 122, 111, 39);
-        u32_create_child_control(hwnd, L"Button", L"Commit charge (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1038, 5, 166, 111, 39);
-        u32_create_child_control(hwnd, L"Button", L"Physical memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1040, 126, 122, 116, 39);
-        u32_create_child_control(hwnd, L"Button", L"Kernel memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1039, 126, 166, 116, 39);
-        u32_create_child_control(hwnd, L"Static", L"Handles", WS_CHILD | WS_VISIBLE, 0, 1060, 12, 131, 43, 8);
-        u32_create_child_control(hwnd, L"Static", L"Threads", WS_CHILD | WS_VISIBLE, 0, 1061, 12, 140, 43, 8);
-        u32_create_child_control(hwnd, L"Static", L"Processes", WS_CHILD | WS_VISIBLE, 0, 1062, 12, 149, 43, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 65, 131, 45, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 65, 140, 45, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 65, 149, 45, 8);
-        u32_create_child_control(hwnd, L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1063, 12, 175, 43, 8);
-        u32_create_child_control(hwnd, L"Static", L"Limit", WS_CHILD | WS_VISIBLE, 0, 1064, 12, 184, 43, 8);
-        u32_create_child_control(hwnd, L"Static", L"Peak", WS_CHILD | WS_VISIBLE, 0, 1065, 12, 193, 43, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 65, 174, 45, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 65, 184, 45, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 65, 193, 45, 8);
-        u32_create_child_control(hwnd, L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1066, 132, 131, 53, 8);
-        u32_create_child_control(hwnd, L"Static", L"Available", WS_CHILD | WS_VISIBLE, 0, 1067, 132, 140, 53, 8);
-        u32_create_child_control(hwnd, L"Static", L"System Cache", WS_CHILD | WS_VISIBLE, 0, 1068, 132, 149, 53, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 185, 131, 48, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 185, 140, 48, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 185, 149, 48, 8);
-        u32_create_child_control(hwnd, L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1069, 132, 174, 53, 8);
-        u32_create_child_control(hwnd, L"Static", L"Paged", WS_CHILD | WS_VISIBLE, 0, 1070, 132, 184, 53, 8);
-        u32_create_child_control(hwnd, L"Static", L"Nonpaged", WS_CHILD | WS_VISIBLE, 0, 1071, 132, 193, 53, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 185, 174, 48, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 185, 184, 48, 8);
-        u32_create_child_control(hwnd, L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 185, 193, 48, 8);
-        u32_create_child_control(hwnd, L"Button", L"CPU usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1045, 74, 5, 168, 54);
-        u32_create_child_control(hwnd, L"Button", L"Memory usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1046, 74, 63, 168, 54);
-        u32_create_child_control(hwnd, L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1047, 12, 17, 47, 37);
-        u32_create_child_control(hwnd, L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1048, 12, 75, 47, 37);
-        u32_create_child_control(hwnd, L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1050, 81, 17, 153, 37);
-        u32_create_child_control(hwnd, L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1049, 81, 75, 153, 37);
-        break;
-    default:
-        break;
+static const U32_TEMPLATE_CONTROL u32_dlg_102_controls[] = {
+    {L"SysTabControl32", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 1015, 3, 3, 257, 228},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_106_controls[] = {
+    {L"SysListView32", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 1016, 4, 4, 239, 180},
+    {L"Button", L"&New Task...", WS_CHILD | WS_VISIBLE, 0, 1014, 175, 189, 68, 14},
+    {L"Button", L"&Switch To", WS_CHILD | WS_VISIBLE | WS_DISABLED, 0, 1013, 104, 189, 68, 14},
+    {L"Button", L"&End Task", WS_CHILD | WS_VISIBLE | WS_DISABLED, 0, 1012, 33, 189, 68, 14},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_133_controls[] = {
+    {L"SysListView32", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_OWNERDATA, 0, 1018, 4, 4, 239, 180},
+    {L"Button", L"&End Process", WS_CHILD | WS_VISIBLE, 0, 1017, 165, 189, 78, 14},
+    {L"Button", L"&Show processes from all users", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 1021, 4, 191, 160, 10},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_134_controls[] = {
+    {L"Button", L"CPU usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | WS_TABSTOP, 0, 1043, 5, 5, 60, 54},
+    {L"Button", L"Mem usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1044, 5, 63, 60, 54},
+    {L"Button", L"Totals", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1037, 5, 122, 111, 39},
+    {L"Button", L"Commit charge (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1038, 5, 166, 111, 39},
+    {L"Button", L"Physical memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1040, 126, 122, 116, 39},
+    {L"Button", L"Kernel memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1039, 126, 166, 116, 39},
+    {L"Static", L"Handles", WS_CHILD | WS_VISIBLE, 0, 1060, 12, 131, 43, 8},
+    {L"Static", L"Threads", WS_CHILD | WS_VISIBLE, 0, 1061, 12, 140, 43, 8},
+    {L"Static", L"Processes", WS_CHILD | WS_VISIBLE, 0, 1062, 12, 149, 43, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 65, 131, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 65, 140, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 65, 149, 45, 8},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1063, 12, 175, 43, 8},
+    {L"Static", L"Limit", WS_CHILD | WS_VISIBLE, 0, 1064, 12, 184, 43, 8},
+    {L"Static", L"Peak", WS_CHILD | WS_VISIBLE, 0, 1065, 12, 193, 43, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 65, 174, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 65, 184, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 65, 193, 45, 8},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1066, 132, 131, 53, 8},
+    {L"Static", L"Available", WS_CHILD | WS_VISIBLE, 0, 1067, 132, 140, 53, 8},
+    {L"Static", L"System Cache", WS_CHILD | WS_VISIBLE, 0, 1068, 132, 149, 53, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 185, 131, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 185, 140, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 185, 149, 48, 8},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1069, 132, 174, 53, 8},
+    {L"Static", L"Paged", WS_CHILD | WS_VISIBLE, 0, 1070, 132, 184, 53, 8},
+    {L"Static", L"Nonpaged", WS_CHILD | WS_VISIBLE, 0, 1071, 132, 193, 53, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 185, 174, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 185, 184, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 185, 193, 48, 8},
+    {L"Button", L"CPU usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1045, 74, 5, 168, 54},
+    {L"Button", L"Memory usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1046, 74, 63, 168, 54},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1047, 12, 17, 47, 37},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1048, 12, 75, 47, 37},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1050, 81, 17, 153, 37},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1049, 81, 75, 153, 37},
+};
+
+static const U32_DIALOG_TEMPLATE_DEF u32_builtin_dialogs[] = {
+    {102, L"Task Manager", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 540, 420, 0, u32_dlg_102_controls, (int)(sizeof(u32_dlg_102_controls)/sizeof(u32_dlg_102_controls[0]))},
+    {106, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_106_controls, (int)(sizeof(u32_dlg_106_controls)/sizeof(u32_dlg_106_controls[0]))},
+    {133, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_133_controls, (int)(sizeof(u32_dlg_133_controls)/sizeof(u32_dlg_133_controls[0]))},
+    {134, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_134_controls, (int)(sizeof(u32_dlg_134_controls)/sizeof(u32_dlg_134_controls[0]))},
+};
+
+static const U32_DIALOG_TEMPLATE_DEF *u32_find_builtin_dialog(UINT tmpl_id) {
+    int i;
+    for (i = 0; i < (int)(sizeof(u32_builtin_dialogs)/sizeof(u32_builtin_dialogs[0])); i++) {
+        if (u32_builtin_dialogs[i].tmpl_id == tmpl_id) return &u32_builtin_dialogs[i];
+    }
+    return 0;
+}
+
+static void u32_create_builtin_dialog_children(const U32_DIALOG_TEMPLATE_DEF *tmpl, HWND hwnd) {
+    int i;
+    if (!tmpl) return;
+    for (i = 0; i < tmpl->control_count; i++) {
+        const U32_TEMPLATE_CONTROL *ctl = &tmpl->controls[i];
+        u32_create_child_control(hwnd, ctl->class_name, ctl->title, ctl->style, ctl->exstyle,
+                                 ctl->id, ctl->x, ctl->y, ctl->w, ctl->h);
     }
 }
 
@@ -1294,6 +1655,12 @@ ATOM RegisterClassW(const WNDCLASSW *lpWndClass) {
     cls->hCursor = lpWndClass->hCursor;
     cls->hbrBackground = lpWndClass->hbrBackground;
     cls->hInstance = lpWndClass->hInstance;
+    cls->menu_res_id = 0;
+    cls->menu_name[0] = 0;
+    if (lpWndClass->lpszMenuName) {
+        if (u32_is_int_resource(lpWndClass->lpszMenuName)) cls->menu_res_id = u32_resource_id(lpWndClass->lpszMenuName);
+        else u32_wstrcpy(cls->menu_name, lpWndClass->lpszMenuName, 64);
+    }
     u32_wstrcpy(cls->name, lpWndClass->lpszClassName, 64);
     u32_wide_to_ansi(cls->name, class_name, 64);
     cls->win32k_class = Win32kRegisterClass(class_name, 0, u32_win32k_callback);
@@ -1358,6 +1725,7 @@ BOOL GetClassInfoW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSW lpWndCl
     lpWndClass->hIcon = cls->hIcon;
     lpWndClass->hCursor = cls->hCursor;
     lpWndClass->hbrBackground = cls->hbrBackground;
+    lpWndClass->lpszMenuName = cls->menu_res_id ? MAKEINTRESOURCEW(cls->menu_res_id) : cls->menu_name;
     lpWndClass->lpszClassName = cls->name;
     return TRUE;
 }
@@ -1374,6 +1742,7 @@ BOOL GetClassInfoExW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSEXW lpw
     lpwcx->hIcon = cls->hIcon;
     lpwcx->hCursor = cls->hCursor;
     lpwcx->hbrBackground = cls->hbrBackground;
+    lpwcx->lpszMenuName = cls->menu_res_id ? MAKEINTRESOURCEW(cls->menu_res_id) : cls->menu_name;
     lpwcx->lpszClassName = cls->name;
     lpwcx->hIconSm = cls->hIconSm ? cls->hIconSm : cls->hIcon;
     return TRUE;
@@ -1385,14 +1754,114 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     HDC hdc;
     RECT rc;
     RECT line;
+    int x = (short)(lParam & 0xFFFF);
+    int y = (short)((lParam >> 16) & 0xFFFF);
     (void)wParam;
-    (void)lParam;
     if (Msg == WM_CLOSE) {
+        if (win && win->popup_menu) u32_close_popup_chain(hWnd);
         if (win && win->dialog) {
             win->ended = 1;
             win->dialog_result = IDCANCEL;
         } else if (win) {
             DestroyWindow(hWnd);
+        }
+    } else if (win && Msg == WM_LBUTTONDOWN) {
+        if (win->top_level && win->menu) {
+            int menu_index = u32_menu_bar_hit_test(win, x, y);
+            if (menu_index >= 0) {
+                u32_open_menu_bar_popup(hWnd, menu_index);
+                return 0;
+            }
+            if (win->popup_menu) {
+                u32_close_popup_chain(hWnd);
+                return 0;
+            }
+        }
+        switch (win->ctrl_type) {
+        case U32_CTRL_BUTTON:
+            SerialPutString("[USER32] button down\r\n");
+            win->pressed = 1;
+            u32_mark_invalid(hWnd);
+            return 0;
+        case U32_CTRL_TAB:
+            SerialPutString("[USER32] tab down\r\n");
+            if (y >= 0 && y < 20) {
+                int index = (x - 6) / 76;
+                if (x >= 6 && index >= 0 && index < win->tab_count) {
+                    SerialPutString("[USER32] tab setcurfocus\r\n");
+                    SendMessageW(hWnd, TCM_SETCURFOCUS, (WPARAM)index, 0);
+                    return 0;
+                }
+            }
+            break;
+        case U32_CTRL_MENUPOPUP:
+            {
+                U32_MENU *menu = u32_lookup_menu(win->menu);
+                int index = u32_popup_item_at(menu, y);
+                win->hot_index = index;
+                if (index >= 0 && menu && menu->items[index].submenu) {
+                    u32_open_submenu(win->menu_owner, hWnd, index);
+                } else if (win->popup_menu) {
+                    u32_close_popup_chain(hWnd);
+                }
+                u32_mark_invalid(hWnd);
+                return 0;
+            }
+        default:
+            break;
+        }
+    } else if (win && Msg == WM_MOUSEMOVE) {
+        if (win->ctrl_type == U32_CTRL_MENUPOPUP) {
+            U32_MENU *menu = u32_lookup_menu(win->menu);
+            int index = u32_popup_item_at(menu, y);
+            if (win->hot_index != index) {
+                win->hot_index = index;
+                if (index >= 0 && menu && menu->items[index].submenu) {
+                    u32_open_submenu(win->menu_owner, hWnd, index);
+                } else if (win->popup_menu) {
+                    u32_close_popup_chain(hWnd);
+                }
+                u32_mark_invalid(hWnd);
+            }
+            return 0;
+        }
+    } else if (win && Msg == WM_LBUTTONUP) {
+        switch (win->ctrl_type) {
+        case U32_CTRL_BUTTON:
+            if (win->pressed) {
+                SerialPutString("[USER32] button up\r\n");
+                win->pressed = 0;
+                GetClientRect(hWnd, &rc);
+                if (x >= 0 && y >= 0 && x < rc.right && y < rc.bottom && win->parent) {
+                    if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
+                        win->check_state = (win->check_state == BST_CHECKED) ? BST_UNCHECKED : BST_CHECKED;
+                    }
+                    SerialPutString("[USER32] button command sent\r\n");
+                    SendMessageW(win->parent, WM_COMMAND, MAKEWPARAM(win->id, BN_CLICKED), (LPARAM)hWnd);
+                }
+                u32_mark_invalid(hWnd);
+            }
+            return 0;
+        case U32_CTRL_MENUPOPUP:
+            {
+                U32_MENU *menu = u32_lookup_menu(win->menu);
+                int index = u32_popup_item_at(menu, y);
+                if (menu && index >= 0 && index < menu->count) {
+                    U32_MENU_ITEM *item = &menu->items[index];
+                    if (!(item->flags & MF_SEPARATOR)) {
+                        if (item->submenu) {
+                            u32_open_submenu(win->menu_owner, hWnd, index);
+                        } else if (win->menu_owner) {
+                            HWND root = u32_find_menu_root(win->menu_owner);
+                            SendMessageW(win->menu_owner, WM_COMMAND, item->id, 0);
+                            u32_close_popup_chain(root);
+                        }
+                    }
+                }
+                return 0;
+            }
+        default:
+            break;
         }
     } else if (Msg == WM_PAINT && win) {
         if (win->painting) return 0;
@@ -1402,6 +1871,12 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         switch (win->ctrl_type) {
         case U32_CTRL_DIALOG:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+            if (win->top_level && win->menu) {
+                u32_draw_menu_bar(hdc, win, &rc);
+            }
+            break;
+        case U32_CTRL_MENUPOPUP:
+            u32_draw_menu_popup(hdc, win, &rc);
             break;
         case U32_CTRL_TAB:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
@@ -1417,9 +1892,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                     tab_rc.bottom = (i == win->tab_cur_sel) ? 19 : 17;
                     FillRect(hdc, &tab_rc, (HBRUSH)GetStockObject(0));
                     Rectangle(hdc, tx, 0, tx + 72, (i == win->tab_cur_sel) ? 20 : 18);
-                    if (i == 0) TextOutW(hdc, tx + 6, 5, L"Applications", -1);
-                    else if (i == 1) TextOutW(hdc, tx + 6, 5, L"Processes", -1);
-                    else if (i == 2) TextOutW(hdc, tx + 6, 5, L"Performance", -1);
+                    if (win->tab_text[i][0]) TextOutW(hdc, tx + 6, 5, win->tab_text[i], -1);
                 }
             }
             break;
@@ -1466,7 +1939,21 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         case U32_CTRL_BUTTON:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             Rectangle(hdc, 0, 0, rc.right, rc.bottom);
-            if (win->title[0]) TextOutW(hdc, 4, (rc.bottom > 12) ? ((rc.bottom - 8) / 2) - 2 : 0, win->title, -1);
+            if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
+                Rectangle(hdc, 1, 1, 11, 11);
+                if (win->check_state == BST_CHECKED) {
+                    MoveToEx(hdc, 3, 6, 0);
+                    LineTo(hdc, 5, 8);
+                    LineTo(hdc, 9, 3);
+                }
+            }
+            if (win->pressed) {
+                MoveToEx(hdc, 1, 1, 0);
+            }
+            if (win->title[0]) TextOutW(hdc,
+                                        ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX ? 14 : 4) + (win->pressed ? 1 : 0),
+                                        ((rc.bottom > 12) ? ((rc.bottom - 8) / 2) - 2 : 0) + (win->pressed ? 1 : 0),
+                                        win->title, -1);
             break;
         case U32_CTRL_STATIC:
             if (win->title[0]) TextOutW(hdc, 0, 0, win->title, -1);
@@ -1662,6 +2149,10 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
         win->id = (UINT)(UINT_PTR)hMenu;
     } else {
         win->top_level = 1;
+        if (!win->menu) {
+            if (cls->menu_res_id) win->menu = LoadMenuW(cls->hInstance, MAKEINTRESOURCEW(cls->menu_res_id));
+            else if (cls->menu_name[0]) win->menu = LoadMenuW(cls->hInstance, cls->menu_name);
+        }
         u32_wide_to_ansi(cls->name, class_name, 64);
         u32_wide_to_ansi(win->title, title, 128);
         if (nWidth <= 0) nWidth = 480;
@@ -1687,31 +2178,69 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
 HWND CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc) {
     U32_WINDOW *win;
     UINT tmpl_id = u32_is_int_resource(lpTemplate) ? u32_resource_id(lpTemplate) : 0;
+    const U32_DIALOG_TEMPLATE_DEF *tmpl = u32_find_builtin_dialog(tmpl_id);
     HWND actual_parent = hWndParent;
-    if ((tmpl_id == 106 || tmpl_id == 133 || tmpl_id == 134) && hWndParent) {
+    const WCHAR *caption = L"Dialog";
+    DWORD style = WS_CHILD | WS_VISIBLE;
+    int width = 247;
+    int height = 210;
+    if (tmpl && tmpl->attach_to_tab_of_parent && hWndParent) {
         HWND tab = GetDlgItem(hWndParent, 1015);
         if (tab) actual_parent = tab;
     }
-    HWND hwnd = CreateWindowExW(0, L"#32770", L"Dialog", WS_CHILD | WS_VISIBLE, 15, 30,
-                                (tmpl_id == 134) ? 247 : 247, (tmpl_id == 134) ? 210 : 210,
+    if (tmpl) {
+        if (tmpl->caption) caption = tmpl->caption;
+        style = tmpl->style;
+        width = tmpl->width;
+        height = tmpl->height;
+    }
+    HWND hwnd = CreateWindowExW(0, L"#32770", caption, style, 15, 30,
+                                width, height,
                                 actual_parent, 0, hInstance, NULL);
     win = u32_lookup_window(hwnd);
     if (!win) return NULL;
     win->dialog = TRUE;
     win->dlgproc = lpDialogFunc;
-    u32_taskmgr_create_dialog_children(tmpl_id, hwnd);
+    u32_create_builtin_dialog_children(tmpl, hwnd);
     SendMessageW(hwnd, WM_INITDIALOG, 0, 0);
     UpdateWindow(hwnd);
     return hwnd;
+}
+
+HWND CreateDialogIndirectParamW(HINSTANCE hInstance, LPCVOID lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)lpTemplate;
+    (void)dwInitParam;
+    return CreateDialogW(hInstance, MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
+}
+
+HWND CreateDialogParamW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)dwInitParam;
+    return CreateDialogW(hInstance, lpTemplate, hWndParent, lpDialogFunc);
+}
+
+HWND CreateDialogParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)dwInitParam;
+    return CreateDialogW(hInstance, (ULONG_PTR)lpTemplate <= 0xFFFFu ? (LPCWSTR)lpTemplate : MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
 }
 
 INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc) {
     HWND hwnd;
     U32_WINDOW *win;
     UINT tmpl_id = u32_is_int_resource(lpTemplate) ? u32_resource_id(lpTemplate) : 0;
+    const U32_DIALOG_TEMPLATE_DEF *tmpl = u32_find_builtin_dialog(tmpl_id);
+    const WCHAR *caption = L"Dialog";
+    DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
+    int width = 540;
+    int height = 420;
     SerialPutString("[USER32] DialogBoxW begin\r\n");
-    hwnd = CreateWindowExW(0, L"#32770", L"Task Manager", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                           40, 40, 540, 420, hWndParent, 0, hInstance, NULL);
+    if (tmpl) {
+        if (tmpl->caption) caption = tmpl->caption;
+        style = tmpl->style;
+        width = tmpl->width;
+        height = tmpl->height;
+    }
+    hwnd = CreateWindowExW(0, L"#32770", caption, style,
+                           40, 40, width, height, hWndParent, 0, hInstance, NULL);
     if (!hwnd) {
         SerialPutString("[USER32] DialogBoxW create failed\r\n");
         return 0;
@@ -1723,7 +2252,7 @@ INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
     }
     win->dialog = TRUE;
     win->dlgproc = lpDialogFunc;
-    u32_taskmgr_create_dialog_children(tmpl_id, hwnd);
+    u32_create_builtin_dialog_children(tmpl, hwnd);
     SerialPutString("[USER32] DialogBoxW init\r\n");
     SendMessageW(hwnd, WM_INITDIALOG, 0, 0);
     ShowWindow(hwnd, SW_SHOW);
@@ -1736,6 +2265,39 @@ INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
     }
     SerialPutString("[USER32] DialogBoxW end\r\n");
     return win->dialog_result;
+}
+
+INT_PTR DialogBoxIndirectParamW(HINSTANCE hInstance, LPCVOID lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)lpTemplate;
+    (void)dwInitParam;
+    return DialogBoxW(hInstance, MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
+}
+
+INT_PTR DialogBoxParamW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)dwInitParam;
+    return DialogBoxW(hInstance, lpTemplate, hWndParent, lpDialogFunc);
+}
+
+INT_PTR DialogBoxParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    (void)dwInitParam;
+    return DialogBoxW(hInstance, (ULONG_PTR)lpTemplate <= 0xFFFFu ? (LPCWSTR)lpTemplate : MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
+}
+
+LRESULT DefDlgProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    switch (Msg) {
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
+            EndDialog(hWnd, LOWORD(wParam));
+            return TRUE;
+        }
+        break;
+    case WM_CLOSE:
+        EndDialog(hWnd, IDCANCEL);
+        return TRUE;
+    default:
+        break;
+    }
+    return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
 
 static void u32_lv_copy_out(WCHAR *dst, int max_chars, const WCHAR *src) {
@@ -1762,18 +2324,24 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         return SendMessageW(g_focus, Msg, wParam, lParam);
     }
 
-    if ((Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP) && win->top_level) {
+    if (Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP) {
         int x = (short)(lParam & 0xFFFF);
         int y = (short)((lParam >> 16) & 0xFFFF);
-        HWND child = u32_hit_test_child(hWnd, x, y);
+        HWND child = win->top_level ? u32_route_mouse_target(hWnd, x, y) : u32_hit_test_child(hWnd, x, y);
         if (child && child != hWnd) {
             U32_WINDOW *child_win = u32_lookup_window(child);
             if (Msg == WM_LBUTTONDOWN) {
                 SetFocus(child);
             }
             if (child_win) {
-                int child_x = x - child_win->rect.left;
-                int child_y = y - child_win->rect.top;
+                int child_left = 0;
+                int child_top = 0;
+                if (!u32_get_descendant_pos_in_ancestor_client(hWnd, child, &child_left, &child_top)) {
+                    child_left = child_win->rect.left;
+                    child_top = child_win->rect.top;
+                }
+                int child_x = x - child_left;
+                int child_y = y - child_top;
                 return SendMessageW(child, Msg, wParam, MAKELPARAM(child_x, child_y));
             }
         }
@@ -1784,6 +2352,14 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     }
 
     switch (Msg) {
+    case WM_ENABLE:
+        win->enabled = wParam ? TRUE : FALSE;
+        u32_mark_invalid(hWnd);
+        return 0;
+    case WM_SHOWWINDOW:
+        win->visible = wParam ? TRUE : FALSE;
+        u32_mark_invalid(hWnd);
+        return 0;
     case WM_SETFONT:
         win->hFont = (HFONT)wParam;
         if (lParam) u32_mark_invalid(hWnd);
@@ -1871,14 +2447,40 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case BM_SETCHECK:
         win->check_state = (int)wParam;
+        u32_mark_invalid(hWnd);
         return 0;
     case BM_GETCHECK:
         return (LRESULT)win->check_state;
+    case BM_CLICK:
+        SendMessageW(hWnd, WM_LBUTTONDOWN, 0, MAKELPARAM(1, 1));
+        SendMessageW(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(1, 1));
+        return 0;
     case TCM_INSERTITEMW:
-        if (win->tab_count < MAX_TAB_ITEMS) win->tab_count++;
-        return (LRESULT)(win->tab_count - 1);
+        if (win->tab_count < MAX_TAB_ITEMS) {
+            const TCITEMW *item = (const TCITEMW*)lParam;
+            int index = win->tab_count++;
+            if (item && (item->mask & TCIF_TEXT) && item->pszText) {
+                u32_wstrcpy(win->tab_text[index], item->pszText, 64);
+            } else {
+                win->tab_text[index][0] = 0;
+            }
+            u32_mark_invalid(hWnd);
+            return (LRESULT)index;
+        }
+        return -1;
+    case TCM_GETITEMW:
+        {
+            TCITEMW *item = (TCITEMW*)lParam;
+            int index = (int)wParam;
+            if (!item || index < 0 || index >= win->tab_count) return FALSE;
+            if ((item->mask & TCIF_TEXT) && item->pszText && item->cchTextMax > 0) {
+                u32_wstrcpy(item->pszText, win->tab_text[index], item->cchTextMax);
+            }
+            return TRUE;
+        }
     case TCM_SETCURFOCUS:
         if (win->tab_cur_sel != (int)wParam) {
+            SerialPutString("[USER32] TCM_SETCURFOCUS\r\n");
             win->tab_cur_sel = (int)wParam;
             if (win->parent) {
                 NMHDR hdr;
@@ -1886,6 +2488,7 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 hdr.hwndFrom = hWnd;
                 hdr.idFrom = (UINT_PTR)win->id;
                 hdr.code = TCN_SELCHANGE;
+                SerialPutString("[USER32] send WM_NOTIFY TCN_SELCHANGE\r\n");
                 SendMessageW(win->parent, WM_NOTIFY, (WPARAM)win->id, (LPARAM)&hdr);
             }
             u32_mark_invalid(hWnd);

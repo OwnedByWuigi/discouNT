@@ -135,6 +135,7 @@ typedef NMLVDISPINFOW LV_DISPINFOW;
 #define LVN_GETDISPINFOW      (LVN_FIRST - 77)
 #define TCIF_TEXT             0x0001
 #define TCM_INSERTITEMW       (WM_USER + 62)
+#define TCM_GETITEMW          (WM_USER + 60)
 #define TCM_GETCURSEL         (WM_USER + 12)
 #define TCM_SETCURFOCUS       (WM_USER + 48)
 

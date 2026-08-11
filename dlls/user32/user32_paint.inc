@@ -78,6 +78,38 @@ int MapWindowPoints(HWND hWndFrom, HWND hWndTo, LPPOINT lpPoints, UINT cPoints) 
     return (int)cPoints;
 }
 
+BOOL ClientToScreen(HWND hWnd, LPPOINT lpPoint) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    RECT rc;
+    if (!lpPoint) return FALSE;
+    if (!win) return FALSE;
+    u32_get_absolute_rect(win, &rc);
+    lpPoint->x += rc.left + u32_client_offset_x(win);
+    lpPoint->y += rc.top + u32_client_offset_y(win);
+    return TRUE;
+}
+
+BOOL ScreenToClient(HWND hWnd, LPPOINT lpPoint) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    RECT rc;
+    if (!lpPoint) return FALSE;
+    if (!win) return FALSE;
+    u32_get_absolute_rect(win, &rc);
+    lpPoint->x -= rc.left + u32_client_offset_x(win);
+    lpPoint->y -= rc.top + u32_client_offset_y(win);
+    return TRUE;
+}
+
+BOOL MapDialogRect(HWND hDlg, LPRECT lpRect) {
+    (void)hDlg;
+    if (!lpRect) return FALSE;
+    lpRect->left   = lpRect->left * 2;
+    lpRect->right  = lpRect->right * 2;
+    lpRect->top    = lpRect->top * 2;
+    lpRect->bottom = lpRect->bottom * 2;
+    return TRUE;
+}
+
 BOOL SetWindowTextW(HWND hWnd, LPCWSTR lpString) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win) return FALSE;
