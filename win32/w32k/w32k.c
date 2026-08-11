@@ -924,6 +924,10 @@ int Win32kIsDragging(void) {
     return dragging;
 }
 
+int Win32kIsResizing(void) {
+    return resizing;
+}
+
 HANDLE Win32kGetActiveWindow(void) {
     return active_window;
 }

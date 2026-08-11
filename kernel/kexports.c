@@ -105,6 +105,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"Win32kRedrawAll", Win32kRedrawAll},
     {"Win32kRefreshCursor", Win32kRefreshCursor},
     {"Win32kIsDragging", Win32kIsDragging},
+    {"Win32kIsResizing", Win32kIsResizing},
     {"Win32kGetActiveWindow", Win32kGetActiveWindow},
     {"Win32kActivateWindow", Win32kActivateWindow},
     {"KeAttachCurrentThread", KeAttachCurrentThread},

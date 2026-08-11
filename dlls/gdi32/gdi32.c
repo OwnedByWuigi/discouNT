@@ -170,6 +170,7 @@ static GDIBRUSH *gdi_get_brush(HGDIOBJ obj) {
 static void gdi_put_pixel(GDIDC *dc, int x, int y, COLORREF color) {
     GDIBITMAP *bmp;
     if (!dc) return;
+    if (x < dc->clip.left || y < dc->clip.top || x >= dc->clip.right || y >= dc->clip.bottom) return;
     if (dc->is_screen) {
         int ox = 0, oy = 0;
         if (dc->has_custom_origin) {
@@ -199,6 +200,10 @@ static COLORREF gdi_get_pixel(GDIDC *dc, int x, int y) {
 static void gdi_fill_rect_dc(GDIDC *dc, int left, int top, int right, int bottom, COLORREF color) {
     int x, y;
     if (!dc) return;
+    if (left < dc->clip.left) left = dc->clip.left;
+    if (top < dc->clip.top) top = dc->clip.top;
+    if (right > dc->clip.right) right = dc->clip.right;
+    if (bottom > dc->clip.bottom) bottom = dc->clip.bottom;
     if (right <= left || bottom <= top) return;
     if (dc->is_screen) {
         int ox = 0, oy = 0;

@@ -660,7 +660,6 @@ void CsrssSessionRun(void *mb_info) {
         HalPutString("Failed to launch CMD.EXE from SYSTEM32.\n", 0x0C);
         return;
     }
-    csrss_spawn_gui_instance("/SYSTEM32/TASKMGR.EXE");
 
     MouseGetState(&mouse_state);
     last_x = mouse_state.x;
@@ -680,7 +679,9 @@ void CsrssSessionRun(void *mb_info) {
                     Win32kHandleMouseMove(mouse_state.x, mouse_state.y);
                     last_x = mouse_state.x;
                     last_y = mouse_state.y;
-                    Win32kRefreshCursor();
+                    if (!Win32kIsDragging() && !Win32kIsResizing()) {
+                        Win32kRefreshCursor();
+                    }
                 }
 
                 if ((mouse_state.buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT)) {

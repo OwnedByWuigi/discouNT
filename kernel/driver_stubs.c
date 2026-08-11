@@ -93,6 +93,7 @@ static void (*pWin32kHandleMouseMove)(int x, int y) = 0;
 static void (*pWin32kRedrawAll)(void) = 0;
 static void (*pWin32kRefreshCursor)(void) = 0;
 static int (*pWin32kIsDragging)(void) = 0;
+static int (*pWin32kIsResizing)(void) = 0;
 static HANDLE (*pWin32kGetActiveWindow)(void) = 0;
 static void (*pWin32kActivateWindow)(HANDLE hwnd) = 0;
 
@@ -190,6 +191,7 @@ void Win32kHandleMouseMove(int x, int y) { if (pWin32kHandleMouseMove) pWin32kHa
 void Win32kRedrawAll(void) { if (pWin32kRedrawAll) pWin32kRedrawAll(); }
 void Win32kRefreshCursor(void) { if (pWin32kRefreshCursor) pWin32kRefreshCursor(); }
 int Win32kIsDragging(void) { return pWin32kIsDragging ? pWin32kIsDragging() : 0; }
+int Win32kIsResizing(void) { return pWin32kIsResizing ? pWin32kIsResizing() : 0; }
 HANDLE Win32kGetActiveWindow(void) { return pWin32kGetActiveWindow ? pWin32kGetActiveWindow() : INVALID_HANDLE; }
 void Win32kActivateWindow(HANDLE hwnd) { if (pWin32kActivateWindow) pWin32kActivateWindow(hwnd); }
 
@@ -289,6 +291,7 @@ void DriverInstallWin32k(void *image) {
     RESOLVE(pWin32kRedrawAll, image, "Win32kRedrawAll");
     RESOLVE(pWin32kRefreshCursor, image, "Win32kRefreshCursor");
     RESOLVE(pWin32kIsDragging, image, "Win32kIsDragging");
+    RESOLVE(pWin32kIsResizing, image, "Win32kIsResizing");
     RESOLVE(pWin32kGetActiveWindow, image, "Win32kGetActiveWindow");
     RESOLVE(pWin32kActivateWindow, image, "Win32kActivateWindow");
 

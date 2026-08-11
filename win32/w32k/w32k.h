@@ -58,6 +58,7 @@ void Win32kHandleMouseMove(int x, int y);
 void Win32kRedrawAll(void);
 void Win32kRefreshCursor(void);
 int Win32kIsDragging(void);
+int Win32kIsResizing(void);
 HANDLE Win32kGetActiveWindow(void);
 void Win32kActivateWindow(HANDLE hwnd);
 

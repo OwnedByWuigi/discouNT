@@ -14,6 +14,7 @@ extern void *Win32kRegisterClass(const char *className, uint32_t style, void (*w
 extern void *Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
 extern void Win32kShowWindow(void *hwnd);
 extern void Win32kUpdateWindow(void *hwnd);
+extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kDestroyWindow(void *hwnd);
 extern void Win32kActivateWindow(void *hwnd);
 extern void Win32kRedrawAll(void);
@@ -277,7 +278,12 @@ static int u32_client_offset_y(const U32_WINDOW *win) {
     return U32_FRAME_THICKNESS;
 }
 
-static void u32_sync_top_level(U32_WINDOW *win) { (void)win; }
+static void u32_sync_top_level(U32_WINDOW *win) {
+    RECT rc;
+    if (!win || !win->top_level || !win->hwnd) return;
+    Win32kGetWindowRect((HANDLE)win->hwnd, &rc);
+    win->rect = rc;
+}
 
 static HWND u32_get_root_window(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
@@ -288,10 +294,12 @@ static HWND u32_get_root_window(HWND hwnd) {
 static void u32_get_absolute_rect(U32_WINDOW *win, RECT *out) {
     RECT rc;
     if (!win || !out) return;
+    if (win->top_level) u32_sync_top_level(win);
     rc = win->rect;
     while (win->parent) {
         U32_WINDOW *parent = u32_lookup_window(win->parent);
         if (!parent) break;
+        if (parent->top_level) u32_sync_top_level(parent);
         rc.left += parent->rect.left;
         rc.top += parent->rect.top;
         rc.right += parent->rect.left;
@@ -348,6 +356,7 @@ static LRESULT u32_dispatch(U32_WINDOW *win, UINT msg, WPARAM wParam, LPARAM lPa
 static void u32_win32k_callback(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
     U32_WINDOW *win = u32_lookup_window((HWND)hwnd);
     if (!win) return;
+    if (win->top_level) u32_sync_top_level(win);
     u32_dispatch(win, msg, (WPARAM)wParam, (LPARAM)lParam);
     if (msg == WM_PAINT && win->top_level) {
         u32_paint_children((HWND)hwnd);
@@ -492,6 +501,18 @@ static void u32_mark_invalid(HWND hwnd) {
         win->invalidated = 1;
         if (!win->parent) break;
         win = u32_lookup_window(win->parent);
+    }
+}
+
+static void u32_mark_invalid_descendants(HWND hwnd) {
+    int i;
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    if (!win) return;
+    win->invalidated = 1;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd) {
+            u32_mark_invalid_descendants(g_windows[i].hwnd);
+        }
     }
 }
 
@@ -731,7 +752,6 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (win->title[0]) TextOutW(hdc, 4, (rc.bottom > 12) ? ((rc.bottom - 8) / 2) - 2 : 0, win->title, -1);
             break;
         case U32_CTRL_STATIC:
-            FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             if (win->title[0]) TextOutW(hdc, 0, 0, win->title, -1);
             break;
         case U32_CTRL_EDIT:
@@ -798,6 +818,7 @@ int ShowWindow(HWND hWnd, int nCmdShow) {
     win->visible = 1;
     if (win->top_level) Win32kShowWindow((HANDLE)hWnd);
     else {
+        u32_mark_invalid_descendants(hWnd);
         u32_mark_invalid(hWnd);
         if (win->parent) u32_mark_invalid(win->parent);
     }
@@ -1235,6 +1256,7 @@ BOOL GetClientRect(HWND hWnd, LPRECT lpRect) {
     int width;
     int height;
     if (!win || !lpRect) return FALSE;
+    if (win->top_level) u32_sync_top_level(win);
     width = win->rect.right - win->rect.left;
     height = win->rect.bottom - win->rect.top;
     lpRect->left = 0;
@@ -1253,7 +1275,12 @@ BOOL GetClientRect(HWND hWnd, LPRECT lpRect) {
 BOOL GetWindowRect(HWND hWnd, LPRECT lpRect) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win || !lpRect) return FALSE;
-    *lpRect = win->rect;
+    if (win->top_level) {
+        u32_sync_top_level(win);
+        *lpRect = win->rect;
+    } else {
+        u32_get_absolute_rect(win, lpRect);
+    }
     return TRUE;
 }
 
@@ -1418,7 +1445,18 @@ BOOL InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, 
 }
 
 BOOL DrawMenuBar(HWND hWnd) { (void)hWnd; return TRUE; }
-BOOL BringWindowToTop(HWND hWnd) { Win32kActivateWindow((HANDLE)hWnd); return TRUE; }
+BOOL BringWindowToTop(HWND hWnd) {
+    U32_WINDOW *win = u32_lookup_window(hWnd);
+    if (!win) return FALSE;
+    if (win->top_level) {
+        Win32kActivateWindow((HANDLE)hWnd);
+    } else {
+        u32_mark_invalid_descendants(hWnd);
+        u32_mark_invalid(hWnd);
+        if (win->parent) u32_mark_invalid(win->parent);
+    }
+    return TRUE;
+}
 HWND SetFocus(HWND hWnd) { HWND old = g_focus; g_focus = hWnd; return old; }
 HMENU CreatePopupMenu(void) { U32_MENU *menu = u32_alloc_menu(); return menu ? menu->handle : NULL; }
 DWORD FormatMessageW(DWORD dwFlags, LPCVOID lpSource, DWORD dwMessageId, DWORD dwLanguageId,
