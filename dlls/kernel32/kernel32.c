@@ -13,6 +13,7 @@ extern void KeResetEvent(uint32_t event_handle);
 extern void KeWaitEvent(uint32_t event_handle);
 extern uint32_t KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size);
 extern void *PeGetProcAddress(void *dll_base, const char *func_name);
+extern void *PeLoadDll(const char *dll_name);
 extern void *PeGetLoadedModuleHandle(const char *name);
 extern uint32_t strlen(const char *s);
 extern void *memset(void *dest, int c, uint32_t n);
@@ -230,10 +231,21 @@ void ExitProcess(uint32_t code) {
     for (;;) KeYield();
 }
 
-void *HeapAlloc(void *heap, uint32_t flags, uint32_t size) {
+void *HeapAlloc(void *heap, uint32_t flags, SIZE_T size) {
     (void)heap;
     (void)flags;
     return kmalloc(size);
+}
+
+HLOCAL LocalAlloc(UINT flags, SIZE_T bytes) {
+    void *memory = kmalloc((uint32_t)bytes);
+    if (memory && (flags & 0x0040U)) memset(memory, 0, (uint32_t)bytes);
+    return (HLOCAL)memory;
+}
+
+HLOCAL LocalFree(HLOCAL memory) {
+    if (memory) kfree(memory);
+    return (HLOCAL)0;
 }
 
 int HeapFree(void *heap, uint32_t flags, void *ptr) {
@@ -259,6 +271,20 @@ void *GetModuleHandleW(LPCWSTR name) {
     if (!name) return g_process_image_base ? g_process_image_base : (void*)0x400000;
     k32_wide_to_ansi_name(name, upper_name, sizeof(upper_name));
     return PeGetLoadedModuleHandle(upper_name);
+}
+
+HMODULE LoadLibraryW(LPCWSTR name) {
+    char ansi_name[128];
+    k32_wide_to_ansi_name(name, ansi_name, sizeof(ansi_name));
+    if (!ansi_name[0]) return 0;
+    return (HMODULE)PeLoadDll(ansi_name);
+}
+
+HMODULE LoadLibraryA(const char *name) {
+    char upper_name[128];
+    k32_uppercase_copy(name, upper_name, sizeof(upper_name));
+    if (!upper_name[0]) return 0;
+    return (HMODULE)PeLoadDll(upper_name);
 }
 
 __attribute__((stdcall)) void Kernel32SetProcessImageBase(void *image_base) {
