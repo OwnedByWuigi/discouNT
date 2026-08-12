@@ -30,7 +30,7 @@ jobs:
 
       - name: Build x86 ISO
         run: |
-          make x86
+          make
           
       - name: Upload x86 ISO artifact
         uses: actions/upload-artifact@v4
