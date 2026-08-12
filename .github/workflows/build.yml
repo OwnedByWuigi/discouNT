@@ -21,7 +21,8 @@ jobs:
             grub-pc-bin \
             grub-common \
             gcc \
-            make
+            make \
+            mtools
 
       - name: Build x86 ISO
         run: |
@@ -49,7 +50,8 @@ jobs:
             grub-pc-bin \
             grub-common \
             gcc \
-            make
+            make \
+            mtools
 
       - name: Build AMD64 ISO
         run: |
@@ -109,7 +111,6 @@ jobs:
           body: |
             ## Rolling Release
             Built from commit: ${{ github.sha }}
-            Date: $(date)
             
             ### Includes:
             - ntos-x86.iso (x86 architecture)
