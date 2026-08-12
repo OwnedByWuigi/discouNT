@@ -65,6 +65,9 @@ typedef WCHAR *PWSTR;
 typedef const WCHAR *PCWSTR;
 typedef LONG HRESULT;
 typedef void *FARPROC;
+#ifndef __cdecl
+#define __cdecl
+#endif
 typedef void *LPUNKNOWN;
 typedef WCHAR *BSTR;
 

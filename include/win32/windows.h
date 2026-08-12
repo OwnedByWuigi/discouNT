@@ -99,6 +99,15 @@ typedef struct _CPINFOEXW {
 } CPINFOEXW, *LPCPINFOEXW;
 
 DWORD WINAPI GetLastError(void);
+#define STD_INPUT_HANDLE  ((DWORD)-10)
+#define STD_OUTPUT_HANDLE ((DWORD)-11)
+#define STD_ERROR_HANDLE   ((DWORD)-12)
+#define ERROR_MORE_DATA 234
+BOOL WINAPI WriteConsoleW(HANDLE handle, LPCVOID buffer, DWORD length, PDWORD written, LPVOID reserved);
+UINT WINAPI GetOEMCP(void);
+HANDLE WINAPI GetStdHandle(DWORD handle);
+void *malloc(SIZE_T size);
+void free(void *ptr);
 void WINAPI SetLastError(DWORD dwErrCode);
 HANDLE WINAPI OpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId);
 BOOL WINAPI CloseHandle(HANDLE hObject);
@@ -288,6 +297,7 @@ SHORT WINAPI GetKeyState(int key);
 SIZE_T WINAPI wcslen(LPCWSTR s);
 LPWSTR WINAPI wcscpy(LPWSTR d, LPCWSTR s);
 int WINAPI _wcsicmp(LPCWSTR a, LPCWSTR b);
+#define wcsicmp _wcsicmp
 int WINAPI wcscmp(LPCWSTR a, LPCWSTR b);
 BOOL WINAPI SetWindowText(HWND hwnd, LPCWSTR text);
 UINT WINAPI GetUserDefaultLangID(void);

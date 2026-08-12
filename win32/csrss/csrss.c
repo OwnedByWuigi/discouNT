@@ -31,6 +31,7 @@ typedef void (*User32InjectKeyboardFn)(GUI_HANDLE hWnd, uint32_t key, int presse
 typedef void (*User32InjectMouseFn)(GUI_HANDLE hWnd, uint32_t msg, uint32_t wParam, uint32_t lParam);
 typedef void (*User32SetProcessIdFn)(uint32_t pid);
 typedef void (*Kernel32SetProcessImageBaseFn)(void *image_base);
+typedef void (*Kernel32SetConsoleSinkFn)(void (*sink)(const char *, uint32_t));
 typedef int (*WlxNegotiateFn)(uint32_t version, uint32_t *dll_version);
 typedef int (*WlxInitializeFn)(void *station, void *dispatch, void *context,
                                void *options, void **gina_context);
@@ -169,6 +170,7 @@ static User32InjectKeyboardFn g_user32_inject_keyboard = 0;
 static User32InjectMouseFn g_user32_inject_mouse = 0;
 static User32SetProcessIdFn g_user32_set_process_id = 0;
 static Kernel32SetProcessImageBaseFn g_kernel32_set_process_image_base = 0;
+static Kernel32SetConsoleSinkFn g_kernel32_set_console_sink = 0;
 static WlxNegotiateFn g_wlx_negotiate = 0;
 static WlxInitializeFn g_wlx_initialize = 0;
 static WlxLoggedOnSASFn g_wlx_logged_on_sas = 0;
@@ -1001,6 +1003,15 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         return 0;
     }
 
+    /* A custom GUI console can provide the sink used by standard console
+     * programs launched from it.  This keeps stdout attached to the owning
+     * command window instead of silently dropping it in Kernel32. */
+    if (g_kernel32_set_console_sink) {
+        void (*sink)(const char *, uint32_t) =
+            (void (*)(const char *, uint32_t))PeGetProcAddress(app->image, "CmdAppWriteConsole");
+        if (sink) g_kernel32_set_console_sink(sink);
+    }
+
     app->reset_exit();
     g_current_gui_pid = app->pid;
     app->window = create_window_fn();
@@ -1100,6 +1111,8 @@ void CsrssSessionRun(void *mb_info) {
         if (kernel32_image) {
             g_kernel32_set_process_image_base =
                 (Kernel32SetProcessImageBaseFn)PeGetProcAddress(kernel32_image, "Kernel32SetProcessImageBase");
+            g_kernel32_set_console_sink =
+                (Kernel32SetConsoleSinkFn)PeGetProcAddress(kernel32_image, "Kernel32SetConsoleSink");
         }
     }
     PeLoadDll("ADVAPI32.DLL");
@@ -1422,6 +1435,10 @@ void CsrssSessionRun(void *mb_info) {
             }
 
             if (remove) {
+                if (g_kernel32_set_console_sink &&
+                    g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM &&
+                    strcmp(g_gui_apps[i].path, "/SYSTEM32/CMD.EXE") == 0)
+                    g_kernel32_set_console_sink(0);
                 if (g_gui_apps[i].image) {
                     PeFreeImage(g_gui_apps[i].image);
                     g_gui_apps[i].image = 0;

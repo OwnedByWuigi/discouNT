@@ -50,6 +50,8 @@ typedef struct _LUID_AND_ATTRIBUTES {
 typedef void *PSID;
 typedef struct _SID_IDENTIFIER_AUTHORITY { BYTE Value[6]; } SID_IDENTIFIER_AUTHORITY, *PSID_IDENTIFIER_AUTHORITY;
 typedef struct _SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } SID_AND_ATTRIBUTES, *PSID_AND_ATTRIBUTES;
+typedef struct _SID { BYTE Revision; BYTE SubAuthorityCount; SID_IDENTIFIER_AUTHORITY IdentifierAuthority; DWORD SubAuthority[1]; } SID, *PSID_STRUCT;
+typedef struct _TOKEN_USER { SID_AND_ATTRIBUTES User; } TOKEN_USER, *PTOKEN_USER;
 typedef struct _TOKEN_GROUPS { DWORD GroupCount; SID_AND_ATTRIBUTES Groups[1]; } TOKEN_GROUPS, *PTOKEN_GROUPS;
 typedef enum _TOKEN_INFORMATION_CLASS { TokenUser = 1, TokenGroups = 2, TokenPrivileges = 3, TokenStatistics = 10 } TOKEN_INFORMATION_CLASS;
 typedef enum _SECURITY_IMPERSONATION_LEVEL { SecurityAnonymous, SecurityIdentification, SecurityImpersonation, SecurityDelegation } SECURITY_IMPERSONATION_LEVEL;
@@ -99,6 +101,7 @@ typedef LONG KPRIORITY;
 #define SE_GROUP_ENABLED          0x00000004
 #define SE_GROUP_ENABLED_BY_DEFAULT 0x00000002
 #define SE_GROUP_OWNER            0x00000008
+#define SE_GROUP_LOGON_ID         0xC0000000
 #define MAXIMUM_ALLOWED           0x02000000
 #define RtlCopyMemory(d,s,n) memcpy((d),(s),(n))
 #define STATUS_LOGON_FAILURE      ((NTSTATUS)0xC000006D)

@@ -20,6 +20,9 @@ extern void *memcpy(void *dest, const void *src, uint32_t n);
 extern void SerialPutString(const char *str);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 
+typedef void (*K32_CONSOLE_SINK)(const char *buffer, uint32_t length);
+static K32_CONSOLE_SINK g_console_sink;
+
 static int k32_wstrlen(LPCWSTR s) {
     int n = 0;
     if (!s) return 0;
@@ -213,9 +216,11 @@ void *GetStdHandle(uint32_t handle) {
 }
 
 int WriteConsoleA(void *handle, const char *buf, uint32_t len, uint32_t *written, void *reserved) {
-    (void)handle;
     (void)reserved;
     if (!buf) return 0;
+    if (g_console_sink && ((uintptr_t)handle == (uintptr_t)GetStdHandle((uint32_t)-11) ||
+                          (uintptr_t)handle == (uintptr_t)GetStdHandle((uint32_t)-12)))
+        g_console_sink(buf, len);
     if (written) *written = len;
     return 1;
 }
@@ -258,6 +263,10 @@ void *GetModuleHandleW(LPCWSTR name) {
 
 __attribute__((stdcall)) void Kernel32SetProcessImageBase(void *image_base) {
     g_process_image_base = image_base;
+}
+
+__attribute__((stdcall)) void Kernel32SetConsoleSink(K32_CONSOLE_SINK sink) {
+    g_console_sink = sink;
 }
 
 void *GetProcAddress(void *hModule, const char *name) {
@@ -530,10 +539,13 @@ BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
 
 BOOL WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
                DWORD *lpNumberOfBytesWritten, LPVOID lpOverlapped) {
-    (void)hFile;
-    (void)lpBuffer;
-    (void)nNumberOfBytesToWrite;
     (void)lpOverlapped;
+    if (g_console_sink && ((uintptr_t)hFile == (uintptr_t)GetStdHandle((uint32_t)-11) ||
+                           (uintptr_t)hFile == (uintptr_t)GetStdHandle((uint32_t)-12))) {
+        g_console_sink((const char *)lpBuffer, nNumberOfBytesToWrite);
+        if (lpNumberOfBytesWritten) *lpNumberOfBytesWritten = nNumberOfBytesToWrite;
+        return 1;
+    }
     if (lpNumberOfBytesWritten) *lpNumberOfBytesWritten = 0;
     g_last_error = 5;
     return 0;

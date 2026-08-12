@@ -89,6 +89,7 @@ TASKMGR_SRCS := $(filter %.c,$(wildcard apps/taskmgr/*.c))
 NOTEPAD_APP := $(BUILD_DIR)/apps/notepad/notepad.exe
 NOTEPAD_SRCS := apps/notepad/main.c apps/notepad/dialog.c
 WINVER_APP := $(BUILD_DIR)/apps/winver/winver.exe
+WHOAMI_APP := $(BUILD_DIR)/apps/whoami/whoami.exe
 WINVER_SRCS := apps/winver/winver.c
 RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
 RESOURCE_MENU_OUTPUTS := $(patsubst apps/%/%.rc,$(BUILD_DIR)/apps/%/%.menu.bin,$(RESOURCE_MENU_SRCS))
@@ -117,7 +118,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(W32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -257,6 +258,12 @@ $(WINVER_APP): $(WINVER_SRCS) kernel/util.c $(WINVER_MENU_RES)
 		$(WINVER_SRCS) kernel/util.c
 	@objcopy --add-section .disres=$(WINVER_MENU_RES) --set-section-flags .disres=readonly,data $@
 
+$(WHOAMI_APP): apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/util.c include/win32/security.h include/win32/sddl.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,-e,main -o $@ \
+		apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/util.c
+
 $(TASKMGR_MENU_RES): apps/taskmgr/taskmgr.rc tools/rc_menu_gen.py
 	@mkdir -p $(@D)
 	python3 tools/rc_menu_gen.py $< $@
@@ -315,7 +322,7 @@ $(USB_SYS): drivers/usb/usb.c drivers/usb/usb.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/usb/usb.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)
@@ -354,6 +361,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 	fi
 	@if [ -f "$(WINVER_APP)" ]; then \
 		cp "$(WINVER_APP)" "$(SYSTEM32_DIR)/WINVER.EXE"; \
+	fi
+	@if [ -f "$(WHOAMI_APP)" ]; then \
+		cp "$(WHOAMI_APP)" "$(SYSTEM32_DIR)/WHOAMI.EXE"; \
 	fi
 	@for sys in $(DRIVER_SYS_FILES); do \
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \

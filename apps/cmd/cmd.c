@@ -323,6 +323,31 @@ static void cmd_clear_lines(void) {
     cmd_scroll = 0;
 }
 
+/* Kernel32 routes stdout/stderr from standard console programs here while
+ * this GUI command prompt owns the console. */
+__attribute__((visibility("default"))) void CmdAppWriteConsole(const char *text, uint32_t length) {
+    char line[CMD_COLS + 1];
+    uint32_t i;
+    int n = 0;
+    if (!text) return;
+    for (i = 0; i < length; i++) {
+        char c = text[i];
+        if (c == '\r') continue;
+        if (c == '\n') {
+            line[n] = 0;
+            cmd_append_line(line);
+            n = 0;
+        } else if (n < CMD_COLS) {
+            line[n++] = c;
+        }
+    }
+    if (n) {
+        line[n] = 0;
+        cmd_append_line(line);
+    }
+    cmd_redraw();
+}
+
 static const char *skip_spaces(const char *s) {
     while (s && *s == ' ') s++;
     return s;
@@ -334,7 +359,6 @@ static void cmd_process_input(void) {
     char *args = 0;
     int i;
     char pathbuf[256];
-    char buf[32];
 
     cmd_prompt_line();
 
@@ -462,19 +486,13 @@ static void cmd_process_input(void) {
         }
     } else if (strcmp(cmd, "EXEC") == 0 && args && *args) {
         if (resolve_exec_path(args, pathbuf)) {
-            int ret = g_api->ExecuteImage(pathbuf);
-            strcpy(buf, "Exit code ");
-            itoa(ret, buf + 10, 10);
-            cmd_append_line(buf);
+            g_api->ExecuteImage(pathbuf);
         } else {
             cmd_append_line("File not found in current directory or PATH");
         }
     } else if (cmd[0] != 0) {
         if (resolve_exec_path(raw, pathbuf)) {
-            int ret = g_api->ExecuteImage(pathbuf);
-            strcpy(buf, "Exit code ");
-            itoa(ret, buf + 10, 10);
-            cmd_append_line(buf);
+            g_api->ExecuteImage(pathbuf);
         } else {
             cmd_append_line("Bad command or file name");
         }
