@@ -80,7 +80,7 @@ jobs:
             - ntos.iso (x86 architecture)
             **AMD64 excluded for now due to the fact that my AMD64 impl broke dll imports for x86**
           files: |
-            ./artifacts/ntos-x86.iso
+            ./artifacts/ntos.iso
           draft: false
           prerelease: true
         env:
