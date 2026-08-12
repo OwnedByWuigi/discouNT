@@ -3,3 +3,6 @@ build/
 *wine/
 .*/
 *.o
+
+# Explicitly include .github directory
+!.github/

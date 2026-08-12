@@ -1,0 +1,133 @@
+name: Build and Release discouNT
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-x86:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            nasm \
+            xorriso \
+            grub-pc-bin \
+            grub-common \
+            gcc \
+            make
+
+      - name: Build x86 ISO
+        run: |
+          make x86
+          
+      - name: Upload x86 ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntos-x86
+          path: ntos-x86.iso
+          retention-days: 1
+
+  build-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            nasm \
+            xorriso \
+            grub-pc-bin \
+            grub-common \
+            gcc \
+            make
+
+      - name: Build AMD64 ISO
+        run: |
+          make amd64
+          
+      - name: Upload AMD64 ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntos-amd64
+          path: ntos-amd64.iso
+          retention-days: 1
+
+  create-release:
+    needs: [build-x86, build-amd64]
+    runs-on: ubuntu-latest
+    if: always() && !failure() && !cancelled()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download x86 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: ntos-x86
+          path: ./artifacts
+
+      - name: Download AMD64 ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: ntos-amd64
+          path: ./artifacts
+
+      - name: Verify both ISOs exist
+        run: |
+          if [ ! -f ./artifacts/ntos-x86.iso ]; then
+            echo "Error: ntos-x86.iso not found!"
+            exit 1
+          fi
+          if [ ! -f ./artifacts/ntos-amd64.iso ]; then
+            echo "Error: ntos-amd64.iso not found!"
+            exit 1
+          fi
+          echo "Both ISOs verified successfully"
+
+      - name: Create rolling release tag
+        id: tag
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+          TAG_NAME="rolling-${TIMESTAMP}"
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Rolling Release - ${{ steps.tag.outputs.tag_name }}"
+          body: |
+            ## Rolling Release
+            Built from commit: ${{ github.sha }}
+            Date: $(date)
+            
+            ### Includes:
+            - ntos-x86.iso (x86 architecture)
+            - ntos-amd64.iso (AMD64 architecture)
+          files: |
+            ./artifacts/ntos-x86.iso
+            ./artifacts/ntos-amd64.iso
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-failure:
+    needs: [build-x86, build-amd64]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Check which job failed
+        run: |
+          echo "One or both builds failed. No release will be created."
+          echo "Check the build logs for details."
