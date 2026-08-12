@@ -518,6 +518,18 @@ HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hgdiobj) {
     case GDI_OBJ_BITMAP:
         old = dc->selected_bitmap;
         dc->selected_bitmap = hgdiobj;
+        /* Memory DCs have no window client rectangle to initialize their
+         * clip from.  A selected bitmap is their drawable surface, so make
+         * the clip follow it just like a real compatible DC does. */
+        if (!dc->is_screen) {
+            GDIBITMAP *bmp = (GDIBITMAP *)hgdiobj;
+            if (bmp->width > 0 && bmp->height > 0) {
+                dc->clip.left = 0;
+                dc->clip.top = 0;
+                dc->clip.right = bmp->width;
+                dc->clip.bottom = bmp->height;
+            }
+        }
         return old;
     case GDI_OBJ_FONT:
         old = dc->selected_font;
@@ -657,7 +669,10 @@ BOOL BitBlt(HDC hdcDest, int xDest, int yDest, int w, int h, HDC hdcSrc, int xSr
     if (dst->is_screen && w >= 100 && h >= 20 && logged_screen_blt <= 8) {
         SerialPutString("[GDI] BitBlt screen end\r\n");
     }
-    if (dst->is_screen) Win32kRefreshCursor();
+    /* Do not present here.  Complex controls (notably Task Manager's graph
+     * control) compose several BitBlt operations into one frame.  Presenting
+     * after each copy exposes black/grid/intermediate frames and causes
+     * visible flicker.  USER32 presents once painting is complete. */
     return TRUE;
 }
 
@@ -865,6 +880,19 @@ HICON CreateIconIndirect(PICONINFO piconinfo) {
         }
     }
     return (HICON)icon;
+}
+
+/* CreateIconIndirect returns a GDI-owned icon, while Win32 applications
+ * correctly release it through USER32's DestroyIcon.  Keep the ownership
+ * boundary explicit so USER32 can dispose of icons created here. */
+BOOL GdiDestroyIcon(HICON hIcon) {
+    DISCOUNT_ICON *icon = (DISCOUNT_ICON*)hIcon;
+    if (!icon || icon->magic != DISCOUNT_ICON_MAGIC) return FALSE;
+    if (icon->pixels) kfree(icon->pixels);
+    icon->pixels = NULL;
+    icon->magic = 0;
+    kfree(icon);
+    return TRUE;
 }
 
 BOOL Rectangle(HDC hdc, int left, int top, int right, int bottom) {

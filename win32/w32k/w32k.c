@@ -42,6 +42,7 @@
 static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
 static HANDLE active_window = INVALID_HANDLE;
+static int redraw_in_progress;
 
 static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
@@ -1056,6 +1057,8 @@ void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon) {
 }
 
 void Win32kRedrawAll(void) {
+    if (redraw_in_progress) return;
+    redraw_in_progress = 1;
     MouseEraseCursor();
 
     FbClearScreen(DESKTOP_COLOR);
@@ -1073,4 +1076,5 @@ void Win32kRedrawAll(void) {
 
     MouseDrawCursor();
     FbSwapBuffers();
+    redraw_in_progress = 0;
 }

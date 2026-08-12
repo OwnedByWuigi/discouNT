@@ -31,6 +31,9 @@ HDC BeginPaint(HWND hWnd, LPPAINTSTRUCT lpPaint) {
 BOOL EndPaint(HWND hWnd, const PAINTSTRUCT *lpPaint) {
     (void)hWnd;
     if (lpPaint && lpPaint->hdc) GdiDestroyScreenDC(lpPaint->hdc);
+    /* Commit the completed paint.  Background roots are excluded from the
+     * invalidation pump, so this remains a cheap cursor/present operation. */
+    Win32kRefreshCursor();
     return TRUE;
 }
 
@@ -130,6 +133,9 @@ BOOL DestroyIcon(HICON hIcon) {
             icon->icon.pixels = 0;
         }
         memset(icon, 0, sizeof(*icon));
+        return TRUE;
     }
-    return TRUE;
+    /* Icons made by GDI32 (notably tray icons from CreateIconIndirect) are
+     * not present in USER32's icon table. */
+    return GdiDestroyIcon(hIcon);
 }

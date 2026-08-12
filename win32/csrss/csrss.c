@@ -1389,7 +1389,14 @@ void CsrssSessionRun(void *mb_info) {
                                                         key_event.pressed ? WM_KEYDOWN : WM_KEYUP,
                                                         key_wparam,
                                                         key_event.scancode);
-                    if (key_event.pressed) Win32kRedrawAll();
+                    if (key_event.pressed && active_hwnd != INVALID_HANDLE) {
+                        /* Keyboard input invalidates controls in the active
+                         * USER32 tree only.  Repainting the entire desktop
+                         * here made Task Manager redraw all performance
+                         * graphs for every typed character. */
+                        Win32kUpdateWindow(active_hwnd);
+                        Win32kRefreshCursor();
+                    }
                 }
             }
         }

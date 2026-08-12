@@ -17,6 +17,8 @@
 #include "bugcheck.h"
 
 extern void CsrssGinaShowLogon(void);
+extern uint32_t KeGetProcessorCount(void);
+extern uint32_t KeGetPhysicalMemoryPages(void);
 
 typedef struct _KERNEL_EXPORT {
     const char *name;
@@ -28,6 +30,8 @@ uint8_t back_buffer[640 * 480];
 static KERNEL_EXPORT kernel_exports[] = {
     {"kmalloc", kmalloc},
     {"kfree", kfree},
+    {"MmGetHeapUsed", MmGetHeapUsed},
+    {"MmGetHeapTotal", MmGetHeapTotal},
     {"memset", memset},
     {"memcpy", memcpy},
     {"strlen", strlen},
@@ -115,6 +119,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"KeCreateThread", KeCreateThread},
     {"KeYield", KeYield},
     {"KeGetSchedulerTicks", KeGetSchedulerTicks},
+    {"KeGetProcessorCount", KeGetProcessorCount},
+    {"KeGetPhysicalMemoryPages", KeGetPhysicalMemoryPages},
     {"KeCreateEvent", KeCreateEvent},
     {"KeSetEvent", KeSetEvent},
     {"KeResetEvent", KeResetEvent},

@@ -90,3 +90,16 @@ void kfree(void *ptr) {
     block->free = 1;
     mm_coalesce();
 }
+
+uint32_t MmGetHeapUsed(void) {
+    HEAP_BLOCK *block;
+    uint32_t used = 0;
+    mm_init();
+    for (block = heap_head; block; block = block->next)
+        if (!block->free) used += block->size;
+    return used;
+}
+
+uint32_t MmGetHeapTotal(void) {
+    return KERNEL_HEAP_SIZE;
+}

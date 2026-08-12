@@ -353,13 +353,13 @@ HMENU LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName) {
             }
         } else if (line + 3 <= end && u32_menu_has_prefix(line, "SEP", 3)) {
             if (selected && depth >= 0) AppendMenuW(stack[depth]->handle, MF_SEPARATOR, 0, L"");
-        } else if (line + 3 <= end && u32_menu_has_prefix(line, "END", 3)) {
-            if (selected && depth > 0) depth--;
         } else if (line + 7 <= end && u32_menu_has_prefix(line, "ENDMENU", 7)) {
             if (selected && root) return root->handle;
             selected = 0;
             root = 0;
             depth = -1;
+        } else if (line + 3 <= end && u32_menu_has_prefix(line, "END", 3)) {
+            if (selected && depth > 0) depth--;
         }
         p = u32_menu_next_line(p, end);
     }

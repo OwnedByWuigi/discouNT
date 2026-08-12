@@ -173,6 +173,11 @@ endef
 
 $(foreach name,$(DLL_NAMES),$(eval $(call BUILD_DLL_template,$(name))))
 
+# These files are included by user32.c rather than compiled as independent
+# translation units.  Keep the DLL target aware of them so menu/control
+# changes cannot be hidden behind a stale user32.dll.
+$(BUILD_DIR)/dlls/user32.dll: dlls/user32/user32_menu.inc dlls/user32/user32_paint.inc dlls/user32/user32_resources.inc
+
 $(MSGINA_LOGO_OBJ): dlls/msgina/resources/reactos.bmp
 	@mkdir -p $(@D)
 	$(LD) -r -m elf_i386 -b binary -o $@ $<
@@ -232,7 +237,7 @@ $(DESK_CPL): apps/control/desk/desk.c
 		-o $@ \
 		$< kernel/util.c
 
-$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c $(TASKMGR_MENU_RES) apps/taskmgr/taskmgr.ico
+$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c $(TASKMGR_MENU_RES) apps/taskmgr/taskmgr.ico include/win32/commctrl.h include/win32/windows.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \

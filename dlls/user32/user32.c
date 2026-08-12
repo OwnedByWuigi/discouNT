@@ -23,12 +23,14 @@ extern void Win32kUpdateWindow(void *hwnd);
 extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kDestroyWindow(void *hwnd);
 extern void Win32kActivateWindow(void *hwnd);
+extern void *Win32kGetActiveWindow(void);
 extern void Win32kSetWindowIcons(void *hwnd, HANDLE big_icon, HANDLE small_icon);
 extern void Win32kRedrawAll(void);
 extern void Win32kRefreshCursor(void);
 extern HDC GdiCreateScreenDC(HWND hwnd);
 extern HDC GdiCreateScreenDCEx(HWND hwnd, int origin_x, int origin_y, int width, int height);
 extern void GdiDestroyScreenDC(HDC hdc);
+extern BOOL GdiDestroyIcon(HICON hIcon);
 
 static const uint8_t *u32_get_embedded_blob(HINSTANCE hInstance, const char *section_name, uint32_t *out_size);
 
@@ -117,6 +119,7 @@ typedef struct _U32_WINDOW {
     int invalidated;
     int painting;
     int edit_limit;
+    int edit_capacity;
     int edit_len;
     int edit_sel_start;
     int edit_sel_end;
@@ -143,6 +146,7 @@ typedef struct _U32_WINDOW {
 #define U32_SCROLLBAR_SIZE 14
 
 static void u32_mark_invalid(HWND hwnd);
+static int u32_effectively_visible(HWND hwnd);
 
 static int u32_scroll_bar_index(int bar) {
     return bar == SB_HORZ ? 0 : 1;
@@ -469,10 +473,15 @@ static WCHAR *u32_ensure_edit_buffer(U32_WINDOW *win, int min_chars) {
     if (!win) return NULL;
     if (win->edit_limit <= 0) win->edit_limit = 65535;
     if (min_chars < 64) min_chars = 64;
-    alloc_chars = win->edit_limit + 1;
+    /* Do not allocate the edit limit up front.  A normal Win32 edit may
+     * have a 64K limit, but most controls contain only a few characters.
+     * The old code allocated 64K WCHARs for every empty edit, exhausting
+     * the small kernel heap when applications created several controls. */
+    if (win->edit_text && win->edit_capacity >= min_chars) return win->edit_text;
+    alloc_chars = win->edit_capacity > 0 ? win->edit_capacity * 2 : 64;
     if (alloc_chars < min_chars) alloc_chars = min_chars;
-    if (alloc_chars > 65536) alloc_chars = 65536;
-    if (win->edit_text && alloc_chars <= win->edit_limit + 1) return win->edit_text;
+    if (alloc_chars > win->edit_limit + 1) alloc_chars = win->edit_limit + 1;
+    if (alloc_chars <= 0) return win->edit_text;
     newbuf = (WCHAR*)kmalloc((uint32_t)(alloc_chars * sizeof(WCHAR)));
     if (!newbuf) return win->edit_text;
     memset(newbuf, 0, (uint32_t)(alloc_chars * sizeof(WCHAR)));
@@ -481,6 +490,7 @@ static WCHAR *u32_ensure_edit_buffer(U32_WINDOW *win, int min_chars) {
         kfree(win->edit_text);
     }
     win->edit_text = newbuf;
+    win->edit_capacity = alloc_chars;
     return win->edit_text;
 }
 
@@ -927,7 +937,8 @@ static HWND u32_hit_test_child(HWND parent, int x, int y) {
     for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
         U32_WINDOW *child = &g_windows[i];
         int cx, cy, cw, ch;
-        if (!child->used || child->parent != parent || !child->visible) continue;
+        if (!child->used || child->parent != parent ||
+            !u32_effectively_visible(child->hwnd)) continue;
         cx = child->rect.left;
         cy = child->rect.top;
         cw = child->rect.right - child->rect.left;
@@ -975,7 +986,9 @@ static HWND u32_route_mouse_target(HWND root, int x, int y) {
                 height = walk->rect.bottom - walk->rect.top;
                 if (x >= rel_x && x < rel_x + width &&
                     y >= rel_y && y < rel_y + height &&
-                    y < rel_y + 20) {
+                    /* The themed/3-D tab bevel can extend a few pixels
+                     * below the nominal 20-pixel header. */
+                    y < rel_y + 28) {
                     return walk->hwnd;
                 }
             }
@@ -1590,7 +1603,7 @@ static HWND u32_create_child_control(HWND parent, LPCWSTR class_name, LPCWSTR ti
 }
 
 static const U32_TEMPLATE_CONTROL u32_dlg_102_controls[] = {
-    {L"SysTabControl32", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 1015, 3, 3, 257, 228},
+    {L"SysTabControl32", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 1015, 3, 3, 510, 350},
 };
 
 static const U32_TEMPLATE_CONTROL u32_dlg_106_controls[] = {
@@ -1616,27 +1629,27 @@ static const U32_TEMPLATE_CONTROL u32_dlg_134_controls[] = {
     {L"Static", L"Handles", WS_CHILD | WS_VISIBLE, 0, 1060, 12, 131, 43, 8},
     {L"Static", L"Threads", WS_CHILD | WS_VISIBLE, 0, 1061, 12, 140, 43, 8},
     {L"Static", L"Processes", WS_CHILD | WS_VISIBLE, 0, 1062, 12, 149, 43, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 65, 131, 45, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 65, 140, 45, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 65, 149, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 65, 130, 45, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 65, 140, 45, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 65, 150, 45, 10},
     {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1063, 12, 175, 43, 8},
     {L"Static", L"Limit", WS_CHILD | WS_VISIBLE, 0, 1064, 12, 184, 43, 8},
     {L"Static", L"Peak", WS_CHILD | WS_VISIBLE, 0, 1065, 12, 193, 43, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 65, 174, 45, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 65, 184, 45, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 65, 193, 45, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 65, 173, 45, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 65, 184, 45, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 65, 195, 45, 10},
     {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1066, 132, 131, 53, 8},
     {L"Static", L"Available", WS_CHILD | WS_VISIBLE, 0, 1067, 132, 140, 53, 8},
     {L"Static", L"System Cache", WS_CHILD | WS_VISIBLE, 0, 1068, 132, 149, 53, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 185, 131, 48, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 185, 140, 48, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 185, 149, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 185, 130, 48, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 185, 140, 48, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 185, 150, 48, 10},
     {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1069, 132, 174, 53, 8},
     {L"Static", L"Paged", WS_CHILD | WS_VISIBLE, 0, 1070, 132, 184, 53, 8},
     {L"Static", L"Nonpaged", WS_CHILD | WS_VISIBLE, 0, 1071, 132, 193, 53, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 185, 174, 48, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 185, 184, 48, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 185, 193, 48, 8},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 185, 173, 48, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 185, 184, 48, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 185, 195, 48, 10},
     {L"Button", L"CPU usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1045, 74, 5, 168, 54},
     {L"Button", L"Memory usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1046, 74, 63, 168, 54},
     {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1047, 12, 17, 47, 37},
@@ -1647,9 +1660,9 @@ static const U32_TEMPLATE_CONTROL u32_dlg_134_controls[] = {
 
 static const U32_DIALOG_TEMPLATE_DEF u32_builtin_dialogs[] = {
     {102, L"Task Manager", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 540, 420, 0, u32_dlg_102_controls, (int)(sizeof(u32_dlg_102_controls)/sizeof(u32_dlg_102_controls[0]))},
-    {106, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_106_controls, (int)(sizeof(u32_dlg_106_controls)/sizeof(u32_dlg_106_controls[0]))},
-    {133, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_133_controls, (int)(sizeof(u32_dlg_133_controls)/sizeof(u32_dlg_133_controls[0]))},
-    {134, L"Dialog", WS_CHILD | WS_VISIBLE, 247, 210, 1, u32_dlg_134_controls, (int)(sizeof(u32_dlg_134_controls)/sizeof(u32_dlg_134_controls[0]))},
+    {106, L"Dialog", WS_CHILD | WS_VISIBLE, 510, 350, 1, u32_dlg_106_controls, (int)(sizeof(u32_dlg_106_controls)/sizeof(u32_dlg_106_controls[0]))},
+    {133, L"Dialog", WS_CHILD | WS_VISIBLE, 510, 350, 1, u32_dlg_133_controls, (int)(sizeof(u32_dlg_133_controls)/sizeof(u32_dlg_133_controls[0]))},
+    {134, L"Dialog", WS_CHILD | WS_VISIBLE, 510, 350, 1, u32_dlg_134_controls, (int)(sizeof(u32_dlg_134_controls)/sizeof(u32_dlg_134_controls[0]))},
 };
 
 static const U32_DIALOG_TEMPLATE_DEF *u32_find_builtin_dialog(UINT tmpl_id) {
@@ -1687,13 +1700,25 @@ static void u32_create_builtin_dialog_children(const U32_DIALOG_TEMPLATE_DEF *tm
     }
 }
 
+static int u32_effectively_visible(HWND hwnd) {
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    int guard = 0;
+    while (win && guard++ < MAX_U32_WINDOWS) {
+        if (!win->visible) return 0;
+        if (!win->parent) break;
+        win = u32_lookup_window(win->parent);
+    }
+    return win != NULL;
+}
+
 static void u32_paint_window(HWND hwnd) {
     int i;
     U32_WINDOW *win = u32_lookup_window(hwnd);
-    if (!win || !win->visible) return;
+    if (!win || !u32_effectively_visible(hwnd)) return;
     SendMessageW(hwnd, WM_PAINT, 0, 0);
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
-        if (g_windows[i].used && g_windows[i].parent == hwnd && g_windows[i].visible) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd &&
+            u32_effectively_visible(g_windows[i].hwnd)) {
             u32_paint_window(g_windows[i].hwnd);
         }
     }
@@ -1702,7 +1727,8 @@ static void u32_paint_window(HWND hwnd) {
 static void u32_paint_children(HWND hwnd) {
     int i;
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
-        if (g_windows[i].used && g_windows[i].parent == hwnd && g_windows[i].visible) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd &&
+            u32_effectively_visible(g_windows[i].hwnd)) {
             u32_paint_window(g_windows[i].hwnd);
         }
     }
@@ -1765,9 +1791,16 @@ static int u32_dequeue_message(LPMSG lpMsg, HWND hWnd, UINT min_msg, UINT max_ms
 static int u32_find_invalid_window(HWND filter) {
     int i;
     DWORD current_pid = u32_current_process_id();
+    HWND active = (HWND)Win32kGetActiveWindow();
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
-        if (g_windows[i].used && g_windows[i].visible && g_windows[i].invalidated &&
+        if (g_windows[i].used && u32_effectively_visible(g_windows[i].hwnd) &&
+            g_windows[i].invalidated &&
             g_windows[i].owner_pid == current_pid) {
+            /* USER32 paints into one shared framebuffer.  A background
+             * window must not paint over the foreground window; leave it
+             * dirty and repaint it when it becomes active. */
+            if (active && u32_get_root_window(g_windows[i].hwnd) != active)
+                continue;
             if (!filter || g_windows[i].hwnd == filter) return (int)i;
         }
     }
@@ -1776,11 +1809,13 @@ static int u32_find_invalid_window(HWND filter) {
 
 static void u32_mark_invalid(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
-    while (win) {
-        win->invalidated = 1;
-        if (!win->parent) break;
-        win = u32_lookup_window(win->parent);
-    }
+    /* A child owns its own paint region.  Do not bubble ordinary child
+     * invalidation to the top-level window: doing so turns a small graph
+     * update into a complete scene redraw, briefly exposing the intermediate
+     * framebuffer and disturbing z-order in the lightweight compositor.
+     * Explicit callers still invalidate the parent when layout changes. */
+    if (win && !u32_effectively_visible(hwnd)) return;
+    if (win) win->invalidated = 1;
 }
 
 static void u32_mark_invalid_descendants(HWND hwnd) {
@@ -1817,7 +1852,7 @@ static void u32_flush_invalid_window(HWND hwnd) {
     int i;
     U32_WINDOW *win = u32_lookup_window(hwnd);
     static int logged_flush = 0;
-    if (!win || !win->visible) return;
+    if (!win || !u32_effectively_visible(hwnd)) return;
     if (win->invalidated && !win->painting) {
         if (logged_flush < 12) {
             logged_flush++;
@@ -1831,7 +1866,8 @@ static void u32_flush_invalid_window(HWND hwnd) {
         return;
     }
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
-        if (g_windows[i].used && g_windows[i].parent == hwnd && g_windows[i].visible) {
+        if (g_windows[i].used && g_windows[i].parent == hwnd &&
+            u32_effectively_visible(g_windows[i].hwnd)) {
             u32_flush_invalid_window(g_windows[i].hwnd);
         }
     }
@@ -2071,11 +2107,15 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case U32_CTRL_TAB:
             SerialPutString("[USER32] tab down\r\n");
-            if (y >= 0 && y < 20) {
+            if (y >= 0 && y < 28) {
                 int index = (x - 6) / 76;
                 if (x >= 6 && index >= 0 && index < win->tab_count) {
                     SerialPutString("[USER32] tab setcurfocus\r\n");
-                    SendMessageW(hWnd, TCM_SETCURFOCUS, (WPARAM)index, 0);
+                    /* A mouse click changes the selected page.  CURFOCUS is
+                     * only the keyboard-focus operation; using it here made
+                     * applications such as Task Manager lose their page
+                     * selection during the next repaint. */
+                    SendMessageW(hWnd, TCM_SETCURSEL, (WPARAM)index, 0);
                     return 0;
                 }
             }
@@ -2133,6 +2173,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
     } else if (win && Msg == WM_LBUTTONUP) {
+        /* Some applications receive the release after the native window
+         * manager has completed its click dispatch.  Treat the tab header as
+         * a committed selection on release as well, so selection cannot be
+         * lost merely because the down event was consumed by the parent. */
+        if (win->ctrl_type == U32_CTRL_TAB && y >= 0 && y < 40) {
+            int index = (x - 6) / 76;
+            if (x >= 6 && index >= 0 && index < win->tab_count) {
+                SendMessageW(hWnd, TCM_SETCURSEL, (WPARAM)index, 0);
+                return 0;
+            }
+        }
         if (win->scroll_drag_bar) {
             int bar = win->scroll_drag_bar;
             int i = u32_scroll_bar_index(bar);
@@ -2322,7 +2373,11 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                                     if (p++ >= first_col) text_line[k++] = win->edit_text[i - col + p - 1];
                                 }
                                 text_line[k] = 0;
-                                TextOutW(hdc, 2, line * 10 - win->scroll_pos[1], text_line, -1);
+                                /* Leave one pixel for the edit border.  The
+                                 * old y=0 placement put the 8px glyph row
+                                 * exactly under the border on small native
+                                 * controls, making valid values invisible. */
+                                TextOutW(hdc, 2, 1 + line * 10 - win->scroll_pos[1], text_line, -1);
                             }
                         }
                         line++; col = 0;
@@ -2551,6 +2606,10 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     SendMessageW(win->hwnd, WM_SIZE, SIZE_RESTORED,
                  MAKELPARAM(win->rect.right - win->rect.left, win->rect.bottom - win->rect.top));
     if (win->visible && win->top_level) {
+        /* A newly shown application window receives the foreground once at
+         * creation time.  Subsequent repaint/refresh operations must not
+         * reactivate it. */
+        Win32kActivateWindow((HANDLE)win->hwnd);
         Win32kShowWindow((HANDLE)win->hwnd);
         Win32kRedrawAll();
     }
@@ -2566,9 +2625,23 @@ HWND CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
     DWORD style = WS_CHILD | WS_VISIBLE;
     int width = 247;
     int height = 210;
+    int child_x = 15;
+    int child_y = 30;
     if (tmpl && tmpl->attach_to_tab_of_parent && hWndParent) {
         HWND tab = GetDlgItem(hWndParent, 1015);
-        if (tab) actual_parent = tab;
+        if (tab) {
+            RECT tab_client;
+            actual_parent = tab;
+            /* These are tab pages, not independent dialogs.  Position them
+             * in the tab content area and keep them inside the tab control. */
+            child_x = 0;
+            child_y = 20;
+            if (GetClientRect(tab, &tab_client)) {
+                width = tab_client.right;
+                height = tab_client.bottom - child_y;
+                if (height < 1) height = 1;
+            }
+        }
     }
     if (tmpl) {
         if (tmpl->caption) caption = tmpl->caption;
@@ -2576,15 +2649,41 @@ HWND CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
         width = tmpl->width;
         height = tmpl->height;
     }
-    HWND hwnd = CreateWindowExW(0, L"#32770", caption, style, 15, 30,
+    if (tmpl && tmpl->attach_to_tab_of_parent && actual_parent) {
+        RECT tab_client;
+        child_x = 0;
+        child_y = 20;
+        if (GetClientRect(actual_parent, &tab_client)) {
+            width = tab_client.right;
+            height = tab_client.bottom - child_y;
+            if (height < 1) height = 1;
+        }
+    }
+    HWND hwnd = CreateWindowExW(0, L"#32770", caption, style, child_x, child_y,
                                 width, height,
                                 actual_parent, 0, hInstance, NULL);
     win = u32_lookup_window(hwnd);
     if (!win) return NULL;
     win->dialog = TRUE;
     win->dlgproc = lpDialogFunc;
+    /* The real Task Manager dialog carries IDR_TASKMANAGER in its dialog
+     * resource.  Our compact builtin template has to attach that resource
+     * explicitly or only menus added later (such as Windows) are visible. */
+    if (tmpl_id == 102) {
+        win->menu = LoadMenuW(hInstance, MAKEINTRESOURCEW(130));
+        if (win->menu) u32_mark_invalid(hwnd);
+    }
     u32_create_builtin_dialog_children(tmpl, hwnd);
     SendMessageW(hwnd, WM_INITDIALOG, 0, 0);
+    /* Controls and child pages are created during WM_INITDIALOG.  Give the
+     * dialog one layout notification after initialization as Win32 does;
+     * otherwise pages remain at their small template fallback size. */
+    {
+        RECT client;
+        GetClientRect(hwnd, &client);
+        SendMessageW(hwnd, WM_SIZE, SIZE_RESTORED,
+                     MAKELPARAM(client.right, client.bottom));
+    }
     UpdateWindow(hwnd);
     return hwnd;
 }
@@ -2910,6 +3009,7 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             }
             return TRUE;
         }
+    case TCM_SETCURSEL:
     case TCM_SETCURFOCUS:
         if (win->tab_cur_sel != (int)wParam) {
             SerialPutString("[USER32] TCM_SETCURFOCUS\r\n");
@@ -2927,15 +3027,14 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case TCM_GETCURSEL:
-        return (LRESULT)win->tab_cur_sel;
-    case SB_SETPARTS:
+        /* These controls share the numeric message value. */
+        if (Msg == TCM_GETCURSEL && win->ctrl_type == U32_CTRL_TAB)
+            return (LRESULT)win->tab_cur_sel;
         {
-            const int *parts = (const int*)lParam;
-            int i;
-            win->status_parts_count = (int)wParam;
-            if (win->status_parts_count > 8) win->status_parts_count = 8;
-            for (i = 0; i < win->status_parts_count; i++) {
-                win->status_part_right[i] = parts ? parts[i] : 0;
+            int part = (int)(wParam & 0xFF);
+            if (part >= 0 && part < 8) {
+                const WCHAR *text = (const WCHAR*)lParam;
+                u32_wstrcpy(win->status_text[part], text ? text : L"", 64);
             }
             u32_mark_invalid(hWnd);
             return TRUE;
@@ -2946,6 +3045,18 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (part >= 0 && part < 8) {
                 const WCHAR *text = (const WCHAR*)lParam;
                 u32_wstrcpy(win->status_text[part], text ? text : L"", 64);
+            }
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case SB_SETPARTS:
+        {
+            const int *parts = (const int*)lParam;
+            int i;
+            win->status_parts_count = (int)wParam;
+            if (win->status_parts_count > 8) win->status_parts_count = 8;
+            for (i = 0; i < win->status_parts_count; i++) {
+                win->status_part_right[i] = parts ? parts[i] : 0;
             }
             u32_mark_invalid(hWnd);
             return TRUE;
@@ -3209,9 +3320,10 @@ BOOL BringWindowToTop(HWND hWnd) {
     if (win->top_level) {
         Win32kActivateWindow((HANDLE)hWnd);
     } else {
+        /* BringWindowToTop on a child changes child ordering only; it must
+         * never activate the application's top-level window. */
         u32_mark_invalid_descendants(hWnd);
         u32_mark_invalid(hWnd);
-        if (win->parent) u32_mark_invalid(win->parent);
     }
     return TRUE;
 }

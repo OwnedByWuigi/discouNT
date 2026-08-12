@@ -125,6 +125,8 @@ typedef NMLVDISPINFOW LV_DISPINFOW;
 #define SB_SETPARTS           (WM_USER + 4)
 #define SB_SETTEXTW           (WM_USER + 11)
 
+#define TCM_FIRST             0x1300
+
 #define TCN_FIRST             (0U - 550U)
 #define TCN_SELCHANGE         (TCN_FIRST - 1)
 #define NM_CLICK              ((UINT)-2)
@@ -134,10 +136,11 @@ typedef NMLVDISPINFOW LV_DISPINFOW;
 #define LVN_ITEMCHANGED       (LVN_FIRST - 1)
 #define LVN_GETDISPINFOW      (LVN_FIRST - 77)
 #define TCIF_TEXT             0x0001
-#define TCM_INSERTITEMW       (WM_USER + 62)
-#define TCM_GETITEMW          (WM_USER + 60)
-#define TCM_GETCURSEL         (WM_USER + 12)
-#define TCM_SETCURFOCUS       (WM_USER + 48)
+#define TCM_INSERTITEMW       (TCM_FIRST + 62)
+#define TCM_GETITEMW          (TCM_FIRST + 60)
+#define TCM_GETCURSEL         (TCM_FIRST + 11)
+#define TCM_SETCURSEL         (TCM_FIRST + 12)
+#define TCM_SETCURFOCUS       (TCM_FIRST + 48)
 
 #define LVM_FIRST             0x1000
 #define LVM_GETITEMCOUNT      (LVM_FIRST + 4)

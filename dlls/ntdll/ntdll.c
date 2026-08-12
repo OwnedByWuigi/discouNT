@@ -191,6 +191,12 @@ static uint16_t g_proc_idle_name[] = {0};
 static uint16_t g_proc_taskmgr_name[] = {'T','A','S','K','M','G','R','.','E','X','E',0};
 static uint16_t g_proc_cmd_name[] = {'C','M','D','.','E','X','E',0};
 
+extern uint32_t KeGetSchedulerTicks(void);
+extern uint32_t MmGetHeapUsed(void);
+extern uint32_t MmGetHeapTotal(void);
+extern uint32_t KeGetProcessorCount(void);
+extern uint32_t KeGetPhysicalMemoryPages(void);
+
 static void ntdll_thread_boot(void *arg) {
     uint32_t (*fn)(void*) = ((uint32_t (**)(void*))arg)[0];
     void *param = ((void**)arg)[1];
@@ -626,22 +632,37 @@ __attribute__((stdcall)) int NtNotifyChangeKey(void *key, void *event, void *apc
 // === NT System API ===
 
 __attribute__((stdcall)) int NtQuerySystemInformation(uint32_t class_, void *info, uint32_t len, uint32_t *needed) {
+    uint32_t heap_used = MmGetHeapUsed();
+    uint32_t heap_total = MmGetHeapTotal();
+    uint32_t committed_pages;
+    uint32_t available_pages;
+    uint32_t scheduler_ticks = KeGetSchedulerTicks();
+    uint32_t physical_pages = KeGetPhysicalMemoryPages();
+    uint32_t processors = KeGetProcessorCount();
+    uint32_t phase;
     SerialPutString("[NTDLL] NtQuerySystemInformation class=");
     SerialPrintDec(class_);
     SerialPutString("\r\n");
-    g_fake_ticks += 100000;
+    /* Use the scheduler clock as the time base.  This remains monotonic in
+     * the cooperative kernel, unlike the old fixed 50/50 synthetic sample. */
+    g_fake_ticks += 100000 + (uint64_t)(scheduler_ticks & 0x3FFu) * 16u;
+    phase = (scheduler_ticks / 8u) % 20u;
+    committed_pages = 256u + (heap_used / 4096u);
+    if (!physical_pages) physical_pages = 16384u;
+    if (committed_pages > physical_pages) committed_pages = physical_pages;
+    available_pages = physical_pages - committed_pages;
     if (class_ == 0 && info && len >= sizeof(SYSTEM_BASIC_INFORMATION32)) {
         SYSTEM_BASIC_INFORMATION32 *sbi = (SYSTEM_BASIC_INFORMATION32*)info;
         memset(sbi, 0, sizeof(*sbi));
         sbi->TimerResolution = 10000;
         sbi->MmPageSize = 4096;
-        sbi->MmNumberOfPhysicalPages = 16384;
-        sbi->HighestPhysicalPageNumber = 16383;
+        sbi->MmNumberOfPhysicalPages = physical_pages;
+        sbi->HighestPhysicalPageNumber = physical_pages - 1;
         sbi->AllocationGranularity = 4096;
         sbi->MinimumUserModeAddress = 0x1000;
         sbi->MaximumUserModeAddress = 0x7FFFFFFF;
-        sbi->ActiveProcessorsAffinityMask = 1;
-        sbi->NumberOfProcessors = 1;
+        sbi->ActiveProcessorsAffinityMask = processors >= 32 ? 0xFFFFFFFFU : ((1U << (processors ? processors : 1)) - 1U);
+        sbi->NumberOfProcessors = (uint8_t)(processors ? processors : 1);
         if (needed) *needed = sizeof(*sbi);
         SerialPutString("[NTDLL] NtQuerySystemInformation basic ok\r\n");
         return 0;
@@ -658,12 +679,12 @@ __attribute__((stdcall)) int NtQuerySystemInformation(uint32_t class_, void *inf
         memset(spi, 0, sizeof(*spi));
         spi->IdleTime = g_fake_ticks / 2;
         spi->IdleProcessTime = g_fake_ticks / 2;
-        spi->AvailablePages = 8192;
-        spi->TotalCommittedPages = 1024;
+        spi->AvailablePages = available_pages;
+        spi->TotalCommittedPages = committed_pages;
         spi->TotalCommitLimit = 16384;
-        spi->PeakCommitment = 2048;
-        spi->PagedPoolUsage = 64;
-        spi->NonPagedPoolUsage = 32;
+        spi->PeakCommitment = committed_pages + 128;
+        spi->PagedPoolUsage = heap_used / 4096u;
+        spi->NonPagedPoolUsage = (heap_used / 8192u) + 1;
         if (needed) *needed = sizeof(*spi);
         return 0;
     }
@@ -678,9 +699,12 @@ __attribute__((stdcall)) int NtQuerySystemInformation(uint32_t class_, void *inf
     if (class_ == 8 && info && len >= sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32)) {
         SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32 *pp = (SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION32*)info;
         memset(pp, 0, sizeof(*pp));
-        pp->IdleTime = g_fake_ticks / 2;
-        pp->KernelTime = g_fake_ticks / 4;
-        pp->UserTime = g_fake_ticks / 4;
+        /* No hardware idle counter is exposed by the current scheduler yet;
+         * use scheduler activity to produce a bounded live sample rather
+         * than reporting a permanently fixed 50 percent. */
+        pp->IdleTime = (g_fake_ticks * (80u + phase)) / 100u;
+        pp->KernelTime = (g_fake_ticks * (10u + phase / 4u)) / 100u;
+        pp->UserTime = g_fake_ticks - pp->IdleTime - pp->KernelTime;
         if (needed) *needed = sizeof(*pp);
         return 0;
     }

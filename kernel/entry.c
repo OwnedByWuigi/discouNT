@@ -40,6 +40,9 @@ static int BootDebugRequested(void *mb_info_ptr) {
     return 0;
 }
 
+static uint32_t g_cpu_core_count = 1;
+static uint32_t g_physical_pages = 16384;
+
 static void BootPutAt(int col, int row, const char *text, uint8_t color) {
     HalSetCursor(col, row);
     HalPutString(text, color);
@@ -96,11 +99,20 @@ static uint32_t DetectRamMb(void *mb_info_ptr) {
     return (total_kb + 1023) / 1024;
 }
 
+uint32_t KeGetProcessorCount(void) { return g_cpu_core_count; }
+uint32_t KeGetPhysicalMemoryPages(void) { return g_physical_pages; }
+
 static void ShowBootScreen(void *mb_info_ptr) {
     char line2[64];
     char numbuf[16];
     uint32_t cpu_cores = DetectCpuCoreCount();
     uint32_t ram_mb = DetectRamMb(mb_info_ptr);
+    MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
+    g_cpu_core_count = cpu_cores ? cpu_cores : 1;
+    if (mbi && (mbi->flags & 1U)) {
+        uint32_t total_kb = mbi->mem_lower + mbi->mem_upper;
+        if (total_kb) g_physical_pages = ((total_kb * 1024U) + 4095U) / 4096U;
+    }
 
     HalClearScreen(0x1F);
     BootPutAt(0, 0, DISCOUNT_NAME " (Version " DISCOUNT_VERSION ")", 0x1F);
