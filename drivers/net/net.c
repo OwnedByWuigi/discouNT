@@ -171,15 +171,8 @@ static void pci_enable_busmaster(const PCI_DEVICE_INFO *pci) {
 }
 
 static int pci_find_first(PCI_DEVICE_INFO *out, uint16_t vendor, uint16_t device) {
-    /* The firmware-visible NICs supported here are on the root bus in QEMU,
-       VirtualBox, and VMware.  Avoid spending seconds probing every possible
-       PCI bus during the single-threaded boot path. */
-    for (uint16_t bus = 0; bus < 1; bus++) {
-        /* QEMU's emulated NICs use slot 3; probing that slot first keeps
-           startup responsive on the very slow port-I/O path. */
-        for (uint8_t pass = 0; pass < 2; pass++) {
-            uint8_t slot = pass ? 0 : 3;
-            if (pass && slot == 3) continue;
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
             for (uint8_t func = 0; func < 8; func++) {
                 uint32_t id = pci_read32((uint8_t)bus, slot, func, 0x00);
                 if (id == 0xFFFFFFFFU) {
@@ -848,8 +841,6 @@ void NetInit(void) {
     nic_ready = 0;
     nic_ops = 0;
 
-    SerialPutString("[NET] Probing PCI NICs\r\n");
-
     for (unsigned i = 0; i < sizeof(probe)/sizeof(probe[0]); i++) {
         if (pci_find_first(&pci, probe[i].vendor, probe[i].device) && probe[i].ops->init(&pci)) {
             nic_ops = probe[i].ops;
@@ -873,14 +864,12 @@ void NetInit(void) {
 
     dhcp_reset_offer_state();
     send_dhcp_packet(1, 0, 0);
-    /* DHCP must not hold the boot/session-manager path hostage.  A failed
-       lease is already handled by the static fallback below. */
-    for (volatile int i = 0; i < 2000000 && !dhcp_offer_valid; i++) {
+    for (volatile int i = 0; i < 30000000 && !dhcp_offer_valid; i++) {
         if ((i & 0x7FF) == 0) NetPoll();
     }
     if (dhcp_offer_valid) {
         send_dhcp_packet(3, dhcp_offer_ip, dhcp_server_ip);
-        for (volatile int i = 0; i < 2000000 && !dhcp_ack_valid; i++) {
+        for (volatile int i = 0; i < 30000000 && !dhcp_ack_valid; i++) {
             if ((i & 0x7FF) == 0) NetPoll();
         }
     }
