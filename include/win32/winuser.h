@@ -56,6 +56,7 @@ typedef struct tagMINMAXINFO {
     POINT ptMinTrackSize;
     POINT ptMaxTrackSize;
 } MINMAXINFO, *PMINMAXINFO, *LPMINMAXINFO;
+typedef struct tagDRAWITEMSTRUCT { UINT CtlType; UINT CtlID; UINT itemID; UINT itemAction; UINT itemState; HWND hwndItem; HDC hDC; RECT rcItem; ULONG_PTR itemData; } DRAWITEMSTRUCT, *PDRAWITEMSTRUCT, *LPDRAWITEMSTRUCT;
 
 #define CW_USEDEFAULT ((int)0x80000000)
 
@@ -157,6 +158,7 @@ typedef struct tagSCROLLINFO {
 #define WM_HSCROLL          0x0114
 #define WM_VSCROLL          0x0115
 #define WM_INITDIALOG       0x0110
+#define WM_NEXTDLGCTL       0x0028
 #define WM_NOTIFY           0x004E
 #define WM_USER             0x0400
 #define WM_APP              0x8000
@@ -232,6 +234,13 @@ typedef struct tagSCROLLINFO {
 #define IDNO 7
 #define IDIGNORE 5
 #define IDHELP 9
+#define BM_CLICK 0x00F5
+#define CB_RESETCONTENT 0x014B
+#define CB_FINDSTRINGEXACT 0x0158
+#define LANG_CHINESE 0x04
+#define LANG_JAPANESE 0x11
+#define LANG_KOREAN 0x12
+#define PRIMARYLANGID(lid) ((WORD)(lid) & 0x3ff)
 
 #define SW_HIDE            0
 #define SW_SHOWNORMAL      1
@@ -301,9 +310,20 @@ typedef struct tagSCROLLINFO {
 
 #define ES_LEFT            0x0000L
 #define ES_MULTILINE       0x0004L
+#define ES_PASSWORD        0x0020L
 #define ES_AUTOVSCROLL     0x0040L
 #define ES_AUTOHSCROLL     0x0080L
 #define ES_NOHIDESEL       0x0100L
+
+#define BS_PUSHBUTTON      0x00000000L
+#define BS_DEFPUSHBUTTON   0x00000001L
+#define BS_CHECKBOX        0x00000002L
+#define BS_AUTOCHECKBOX    0x00000003L
+#define BS_GROUPBOX        0x00000007L
+
+#define CBS_SIMPLE         0x0001L
+#define CBS_DROPDOWN       0x0002L
+#define CBS_DROPDOWNLIST   0x0003L
 
 #define EM_GETSEL          0x00B0
 #define EM_SETSEL          0x00B1

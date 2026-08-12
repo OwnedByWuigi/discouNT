@@ -2,3 +2,4 @@ build/
 *.iso
 *wine/
 .*/
+*.o

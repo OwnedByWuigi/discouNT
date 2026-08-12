@@ -145,10 +145,12 @@ void KeyboardHandleData(uint8_t data) {
     event.shift = kbd_shift;
     event.ctrl = kbd_ctrl;
     event.alt = kbd_alt;
+    event.extended = kbd_extended;
 
-    if (!kbd_extended) {
-        kbd_queue_push(&event);
-    }
+    /* Preserve E0-prefixed keys.  CSRSS needs E0 53 (Delete) for the
+     * Ctrl+Alt+Delete secure-attention sequence; applications can ignore
+     * extended events they do not understand. */
+    kbd_queue_push(&event);
 
     kbd_extended = 0;
 }

@@ -73,6 +73,8 @@ typedef struct _SECURITY_ATTRIBUTES {
     LPVOID lpSecurityDescriptor;
     BOOL bInheritHandle;
 } SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
+typedef HKEY *PHKEY;
+typedef WCHAR *PWCHAR;
 
 typedef struct _WIN32_FIND_DATAW {
     DWORD dwFileAttributes;
@@ -205,6 +207,32 @@ void WINAPI ExitProcess(UINT uExitCode);
 #define REG_SZ                   1
 #define REG_BINARY               3
 #define REG_DWORD                4
+#define REG_EXPAND_SZ            2
+#define KEY_QUERY_VALUE          0x0001
+#define KEY_SET_VALUE            0x0002
+#define UNICODE_NULL             ((WCHAR)0)
+#define S_OK                     ((HRESULT)0)
+#define DLL_PROCESS_ATTACH       1
+#define DLL_PROCESS_DETACH       0
+#define LMEM_FIXED               0x0000
+#define LMEM_ZEROINIT            0x0040
+#define LPTR                     (LMEM_FIXED | LMEM_ZEROINIT)
+#define HEAP_ZERO_MEMORY         0x00000008
+#define STARTF_USESHOWWINDOW     0x00000001
+#define CREATE_UNICODE_ENVIRONMENT 0x00000400
+#define ERROR_FILE_NOT_FOUND     2
+#define GWLP_USERDATA            (-21)
+#define IMAGE_BITMAP             0
+#define LR_DEFAULTCOLOR          0
+#define DST_BITMAP               0x00000004
+#define DUPLICATE_SAME_ACCESS    0x00000002
+#define DATE_SHORTDATE           0x00000001
+#define KEY_CREATE_SUB_KEY       0x0004
+#define MAX_COMPUTERNAME_LENGTH  15
+#define VK_CONTROL               0x11
+#define SM_REMOTESESSION         0x1000
+#define VK_SHIFT                 0x10
+#define ASSERT(x) do { (void)sizeof(x); } while (0)
 
 #define HKEY_CURRENT_USER        ((HKEY)(ULONG_PTR)0x80000001)
 #define HKEY_LOCAL_MACHINE       ((HKEY)(ULONG_PTR)0x80000002)
@@ -231,5 +259,45 @@ int WINAPI GetTimeFormatW(DWORD Locale, DWORD dwFlags, const SYSTEMTIME *lpTime,
 int WINAPI GetDateFormatW(DWORD Locale, DWORD dwFlags, const SYSTEMTIME *lpDate, LPCWSTR lpFormat, LPWSTR lpDateStr, int cchDate);
 BOOL WINAPI IsTextUnicode(const void *buf, int len, int *flags);
 WORD WINAPI RtlUshortByteSwap(WORD s);
+HMODULE WINAPI LoadLibraryW(LPCWSTR name);
+HLOCAL WINAPI LocalAlloc(UINT flags, SIZE_T bytes);
+HLOCAL WINAPI LocalFree(HLOCAL mem);
+DWORD WINAPI GetWindowsDirectoryW(LPWSTR buffer, DWORD size);
+BOOL WINAPI DuplicateTokenEx(HANDLE existing, DWORD access, LPSECURITY_ATTRIBUTES attrs,
+                             SECURITY_IMPERSONATION_LEVEL level, TOKEN_TYPE type, PHANDLE token);
+BOOL WINAPI CreateProcessAsUserW(HANDLE token, LPCWSTR app, LPWSTR cmd,
+                                 LPSECURITY_ATTRIBUTES pa, LPSECURITY_ATTRIBUTES ta,
+                                 BOOL inherit, DWORD flags, LPVOID env, LPCWSTR cwd,
+                                 LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi);
+DWORD WINAPI ExpandEnvironmentStringsW(LPCWSTR src, LPWSTR dst, DWORD size);
+BOOL WINAPI GetTokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS cls, LPVOID info, DWORD len, PDWORD ret);
+HANDLE WINAPI OpenThreadToken(HANDLE thread, DWORD access, BOOL openAsSelf, PHANDLE token);
+HANDLE WINAPI GetCurrentThread(void);
+BOOL WINAPI AllocateLocallyUniqueId(PLUID luid);
+BOOL WINAPI GetComputerNameW(LPWSTR name, PDWORD size);
+BOOL WINAPI RtlEqualSid(PSID a, PSID b);
+PSID WINAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY auth, BYTE count,
+                                        DWORD s1, DWORD s2, DWORD s3, DWORD s4, DWORD s5,
+                                        DWORD s6, DWORD s7, DWORD s8, PSID *sid);
+PVOID WINAPI RtlFreeSid(PSID sid);
+#ifndef ZeroMemory
+void WINAPI ZeroMemory(void *p, SIZE_T n);
+#endif
+void WINAPI SecureZeroMemory(void *p, SIZE_T n);
+SHORT WINAPI GetKeyState(int key);
+SIZE_T WINAPI wcslen(LPCWSTR s);
+LPWSTR WINAPI wcscpy(LPWSTR d, LPCWSTR s);
+int WINAPI _wcsicmp(LPCWSTR a, LPCWSTR b);
+int WINAPI wcscmp(LPCWSTR a, LPCWSTR b);
+BOOL WINAPI SetWindowText(HWND hwnd, LPCWSTR text);
+UINT WINAPI GetUserDefaultLangID(void);
+BOOL WINAPI AdjustWindowRectEx(LPRECT rect, DWORD style, BOOL menu, DWORD exstyle);
+BOOL WINAPI DuplicateHandle(HANDLE source_process, HANDLE source, HANDLE target_process,
+                            HANDLE *target, DWORD access, BOOL inherit, DWORD options);
+BOOL WINAPI SetThreadDesktop(HDESK desktop);
+BOOL WINAPI DrawStateW(HDC dc, HBRUSH brush, void *draw, LPARAM data,
+                       WPARAM wparam, int x, int y, int cx, int cy, UINT flags);
+int WINAPI GetWindowTextLength(HWND hwnd);
+BOOL WINAPI PostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 #endif

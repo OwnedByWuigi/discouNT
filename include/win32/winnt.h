@@ -4,11 +4,14 @@
 #include "windef.h"
 
 typedef LONG NTSTATUS;
+typedef NTSTATUS *PNTSTATUS;
+typedef char CHAR;
 typedef uint64_t ULONGLONG;
 typedef int64_t LONGLONG;
 typedef uint16_t USHORT;
 typedef uint8_t UCHAR;
 typedef uint32_t ACCESS_MASK;
+typedef ACCESS_MASK REGSAM;
 
 typedef struct _LARGE_INTEGER {
     LONGLONG QuadPart;
@@ -23,6 +26,11 @@ typedef struct _UNICODE_STRING {
     USHORT MaximumLength;
     PWSTR  Buffer;
 } UNICODE_STRING, *PUNICODE_STRING;
+typedef struct _ANSI_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    char *Buffer;
+} ANSI_STRING, *PANSI_STRING;
 
 typedef struct _LIST_ENTRY {
     struct _LIST_ENTRY *Flink;
@@ -38,6 +46,16 @@ typedef struct _LUID_AND_ATTRIBUTES {
     LUID  Luid;
     DWORD Attributes;
 } LUID_AND_ATTRIBUTES, *PLUID_AND_ATTRIBUTES;
+
+typedef void *PSID;
+typedef struct _SID_IDENTIFIER_AUTHORITY { BYTE Value[6]; } SID_IDENTIFIER_AUTHORITY, *PSID_IDENTIFIER_AUTHORITY;
+typedef struct _SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } SID_AND_ATTRIBUTES, *PSID_AND_ATTRIBUTES;
+typedef struct _TOKEN_GROUPS { DWORD GroupCount; SID_AND_ATTRIBUTES Groups[1]; } TOKEN_GROUPS, *PTOKEN_GROUPS;
+typedef enum _TOKEN_INFORMATION_CLASS { TokenUser = 1, TokenGroups = 2, TokenPrivileges = 3, TokenStatistics = 10 } TOKEN_INFORMATION_CLASS;
+typedef enum _SECURITY_IMPERSONATION_LEVEL { SecurityAnonymous, SecurityIdentification, SecurityImpersonation, SecurityDelegation } SECURITY_IMPERSONATION_LEVEL;
+typedef enum _TOKEN_TYPE { TokenPrimary = 1, TokenImpersonation = 2 } TOKEN_TYPE;
+typedef struct _TOKEN_SOURCE { CHAR SourceName[8]; LUID SourceIdentifier; } TOKEN_SOURCE, *PTOKEN_SOURCE;
+typedef struct _TOKEN_STATISTICS { LUID TokenId; LUID AuthenticationId; LARGE_INTEGER ExpirationTime; DWORD TokenType; DWORD ImpersonationLevel; DWORD DynamicCharged; DWORD DynamicAvailable; DWORD GroupCount; DWORD PrivilegeCount; LUID ModifiedId; } TOKEN_STATISTICS, *PTOKEN_STATISTICS;
 
 typedef struct _TOKEN_PRIVILEGES {
     DWORD PrivilegeCount;
@@ -72,6 +90,26 @@ typedef LONG KPRIORITY;
 #define STATUS_SUCCESS            ((NTSTATUS)0x00000000)
 #define STATUS_NOT_IMPLEMENTED    ((NTSTATUS)0xC0000002)
 #define STATUS_NO_MORE_ENTRIES    ((NTSTATUS)0x8000001A)
+#define STATUS_BUFFER_TOO_SMALL   ((NTSTATUS)0xC0000023)
+#define SECURITY_NT_AUTHORITY     {0,0,0,0,0,5}
+#define SECURITY_BUILTIN_DOMAIN_RID 0x20
+#define DOMAIN_ALIAS_RID_ADMINS   0x220
+#define SECURITY_NULL_RID         0
+#define SE_GROUP_MANDATORY        0x00000001
+#define SE_GROUP_ENABLED          0x00000004
+#define SE_GROUP_ENABLED_BY_DEFAULT 0x00000002
+#define SE_GROUP_OWNER            0x00000008
+#define MAXIMUM_ALLOWED           0x02000000
+#define RtlCopyMemory(d,s,n) memcpy((d),(s),(n))
+#define STATUS_LOGON_FAILURE      ((NTSTATUS)0xC000006D)
+#define STATUS_ACCOUNT_RESTRICTION ((NTSTATUS)0xC000006E)
+#define STATUS_ACCOUNT_DISABLED    ((NTSTATUS)0xC0000072)
+#define STATUS_ACCOUNT_LOCKED_OUT  ((NTSTATUS)0xC0000234)
+#define STATUS_PASSWORD_MUST_CHANGE ((NTSTATUS)0xC0000224)
+#define STATUS_PASSWORD_EXPIRED    ((NTSTATUS)0xC0000071)
+#define STATUS_ACCOUNT_EXPIRED     ((NTSTATUS)0xC0000193)
+#define STATUS_INVALID_LOGON_HOURS ((NTSTATUS)0xC000006F)
+#define STATUS_INVALID_WORKSTATION ((NTSTATUS)0xC0000070)
 
 #define PROCESS_TERMINATE            0x0001
 #define PROCESS_CREATE_THREAD        0x0002

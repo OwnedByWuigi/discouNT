@@ -68,10 +68,13 @@ BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 ISR_STUBS_OBJ := $(BUILD_DIR)/kernel/isr_stubs.o
 KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ) $(ISR_STUBS_OBJ)
 
-DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine
+DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine dlls/msgina
 DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(filter $(d),$(DLL_EXCLUDE_DIRS)),,$(if $(wildcard $(d)/*.c),$(d),))))
 DLL_NAMES := $(notdir $(DLL_DIRS))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
+MSGINA_DLL := $(BUILD_DIR)/dlls/msgina.dll
+MSGINA_LOGO_OBJ := $(BUILD_DIR)/dlls/msgina/reactos_logo.bmp.o
+MSGINA_BAR_OBJ := $(BUILD_DIR)/dlls/msgina/line.bmp.o
 W32K_DLL := $(BUILD_DIR)/win32/w32k/w32k.dll
 
 APP_SRC_FILES := $(wildcard apps/*.c)
@@ -112,7 +115,7 @@ all: $(ISO_NAME)
 
 kernel: $(KERNEL_ELF)
 
-dlls: $(DLL_OUTPUTS) $(W32K_DLL)
+dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(W32K_DLL)
 
 apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DRIVER_SYS_FILES) $(W32K_DLL)
 
@@ -168,6 +171,33 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 endef
 
 $(foreach name,$(DLL_NAMES),$(eval $(call BUILD_DLL_template,$(name))))
+
+$(MSGINA_LOGO_OBJ): dlls/msgina/resources/reactos.bmp
+	@mkdir -p $(@D)
+	$(LD) -r -m elf_i386 -b binary -o $@ $<
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_reactos_bmp_start=msgina_logo_start $@
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_reactos_bmp_end=msgina_logo_end $@
+
+$(MSGINA_BAR_OBJ): dlls/msgina/resources/line.bmp
+	@mkdir -p $(@D)
+	$(LD) -r -m elf_i386 -b binary -o $@ $<
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_line_bmp_start=msgina_bar_start $@
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_line_bmp_end=msgina_bar_end $@
+
+$(MSGINA_DLL): dlls/msgina/msgina.c dlls/msgina/gui.c dlls/msgina/compat/reactos_port.c dlls/msgina/compat/ui_port.c include/win32/discount_dialog.h dlls/msgina/resources/reactos.bmp dlls/msgina/resources/line.bmp $(MSGINA_LOGO_OBJ) $(MSGINA_BAR_OBJ) $(KERNEL_ELF)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles \
+		-Idlls/msgina/compat -Idlls/msgina \
+		-fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,--export-dynamic -o $@ \
+		dlls/msgina/msgina.c \
+		dlls/msgina/compat/reactos_port.c \
+		dlls/msgina/gui.c \
+		dlls/msgina/compat/ui_port.c \
+		$(MSGINA_LOGO_OBJ) \
+		$(MSGINA_BAR_OBJ)
+	@objcopy --add-section .disbmp_logo=dlls/msgina/resources/reactos.bmp --set-section-flags .disbmp_logo=readonly,data $@
+	@objcopy --add-section .disbmp_bar=dlls/msgina/resources/line.bmp --set-section-flags .disbmp_bar=readonly,data $@
 
 $(W32K_DLL): win32/w32k/w32k.c
 	@mkdir -p $(@D)
@@ -285,7 +315,7 @@ $(USB_SYS): drivers/usb/usb.c drivers/usb/usb.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/usb/usb.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(W32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)
@@ -296,6 +326,7 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_A
 	@for dll in $(DLL_OUTPUTS); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
+	@cp "$(MSGINA_DLL)" "$(SYSTEM32_DIR)/MSGINA.DLL"
 	@if [ -f "$(W32K_DLL)" ]; then \
 		cp "$(W32K_DLL)" "$(SYSTEM32_DIR)/WIN32K.DLL"; \
 	fi

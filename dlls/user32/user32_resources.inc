@@ -66,6 +66,19 @@ HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT
     int height;
     (void)hinst;
     (void)fuLoad;
+    /* MSGINA's dialog resources refer to the logo and separator as bitmap
+     * resources.  They are not icons and must not go through the ICO path.
+     * The PE resource reader currently exposes the resource identity here;
+     * MSGINA's GDI compatibility layer uses that identity to paint the
+     * corresponding built-in bitmap. */
+    if (type == IMAGE_BITMAP && u32_is_int_resource(name)) {
+        const char *section = u32_resource_id(name) == 1007 ? ".disbmp_logo" : ".disbmp_bar";
+        uint32_t bitmap_size = 0;
+        const uint8_t *bitmap_data = u32_get_embedded_blob(hinst, section, &bitmap_size);
+        extern HBITMAP GdiCreateBitmapFromBmp(const void *, uint32_t);
+        if (bitmap_data) return (HANDLE)GdiCreateBitmapFromBmp(bitmap_data, bitmap_size);
+        return 0;
+    }
     if (type != IMAGE_ICON) return 0;
     width = cx > 0 ? cx : 32;
     height = cy > 0 ? cy : 32;

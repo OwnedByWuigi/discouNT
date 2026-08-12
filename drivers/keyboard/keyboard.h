@@ -10,6 +10,7 @@ typedef struct _KEYBOARD_EVENT {
     uint8_t shift;
     uint8_t ctrl;
     uint8_t alt;
+    uint8_t extended;
 } KEYBOARD_EVENT;
 
 void KeyboardInit(void);

@@ -4,6 +4,9 @@
 #include "windef.h"
 
 typedef DWORD COLORREF;
+typedef struct tagBITMAP { LONG bmType; LONG bmWidth; LONG bmHeight; LONG bmWidthBytes; WORD bmPlanes; WORD bmBitsPixel; LPVOID bmBits; } BITMAP, *PBITMAP;
+int WINAPI GetObject(HGDIOBJ object, int bytes, LPVOID buffer);
+int WINAPI GetObjectW(HGDIOBJ object, int bytes, LPVOID buffer);
 
 typedef struct tagLOGFONTW {
     LONG lfHeight;

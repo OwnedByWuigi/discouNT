@@ -16,6 +16,8 @@
 #include "peloader.h"
 #include "bugcheck.h"
 
+extern void CsrssGinaShowLogon(void);
+
 typedef struct _KERNEL_EXPORT {
     const char *name;
     void *addr;
@@ -122,6 +124,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"PeGetLoadedModuleHandle", PeGetLoadedModuleHandle},
     {"PeGetImagePath", PeGetImagePath},
     {"PeGetProcAddress", PeGetProcAddress},
+    {"CsrssGinaShowLogon", CsrssGinaShowLogon},
 };
 
 void *KernelResolveSymbol(const char *name) {

@@ -3,10 +3,14 @@
 
 #include <stdint.h>
 #include <stddef.h>
+void *memcpy(void *dst, const void *src, uint32_t bytes);
 
 typedef int BOOL;
 typedef uint8_t BYTE;
+typedef BYTE *PBYTE;
 typedef uint16_t WORD;
+typedef int16_t SHORT;
+typedef uint8_t BOOLEAN;
 typedef uint32_t DWORD;
 typedef uint32_t ULONG;
 typedef int32_t LONG;
@@ -27,6 +31,7 @@ typedef void *HANDLE;
 typedef void *PVOID;
 typedef void VOID;
 typedef HANDLE HWND;
+typedef HANDLE HDESK;
 typedef HANDLE HINSTANCE;
 typedef HANDLE HMODULE;
 typedef HANDLE HICON;
@@ -52,12 +57,15 @@ typedef wchar_t *LPWSTR;
 typedef const void *LPCVOID;
 typedef void *LPVOID;
 typedef ULONG *PULONG;
+typedef DWORD *PDWORD;
+typedef HANDLE *PHANDLE;
 typedef BYTE *LPBYTE;
 typedef wchar_t WCHAR;
 typedef WCHAR *PWSTR;
 typedef const WCHAR *PCWSTR;
 typedef LONG HRESULT;
 typedef void *FARPROC;
+typedef void *LPUNKNOWN;
 typedef WCHAR *BSTR;
 
 typedef struct tagPOINT {
@@ -125,6 +133,20 @@ typedef struct tagMSG {
 #define PASCAL WINAPI
 #define CDECL
 #define STDAPICALLTYPE WINAPI
+#define IN
+#define OUT
+#define OPTIONAL
+#define _In_
+#define _In_opt_
+#define _Inout_
+#define _Out_
+#define _Out_opt_
+#define _Inout_opt_
+#define _Outptr_
+#define _Outptr_result_maybenull_
+#define UNREFERENCED_PARAMETER(x) (void)(x)
+#define C_ASSERT(x) typedef char __C_ASSERT__[(x) ? 1 : -1]
+#define _countof(a) (sizeof(a) / sizeof((a)[0]))
 
 #define MAX_PATH 260
 

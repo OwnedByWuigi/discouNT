@@ -96,6 +96,39 @@ static GDIFONT g_stock_font = {{GDI_OBJ_FONT}, {16, 0, 0, 0, FW_REGULAR, 0, 0, 0
 
 static GDIDC *gdi_alloc_dc(void);
 
+HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size) {
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t off, dib, colors, row_bytes;
+    int width, height, bpp, y, x;
+    GDIBITMAP *bmp;
+    if (!p || size < 54 || p[0] != 'B' || p[1] != 'M') return 0;
+    off = *(const uint32_t *)(p + 10);
+    dib = *(const uint32_t *)(p + 14);
+    width = *(const int32_t *)(p + 18);
+    height = *(const int32_t *)(p + 22);
+    bpp = *(const uint16_t *)(p + 28);
+    if (dib < 40 || width <= 0 || height == 0 || (bpp != 24 && bpp != 32)) return 0;
+    if (height < 0) height = -height;
+    row_bytes = ((uint32_t)width * (uint32_t)bpp + 31u) & ~31u;
+    row_bytes /= 8u;
+    if (off >= size || row_bytes * (uint32_t)height > size - off) return 0;
+    bmp = (GDIBITMAP *)kmalloc(sizeof(*bmp));
+    if (!bmp) return 0;
+    bmp->hdr.kind = GDI_OBJ_BITMAP;
+    bmp->width = width; bmp->height = height;
+    bmp->pixels = (COLORREF *)kmalloc((uint32_t)width * (uint32_t)height * sizeof(COLORREF));
+    if (!bmp->pixels) { kfree(bmp); return 0; }
+    colors = (bpp / 8);
+    for (y = 0; y < height; y++) {
+        const uint8_t *src = p + off + (uint32_t)(height - 1 - y) * row_bytes;
+        for (x = 0; x < width; x++) {
+            const uint8_t *q = src + x * colors;
+            bmp->pixels[y * width + x] = RGB(q[2], q[1], q[0]);
+        }
+    }
+    return (HBITMAP)bmp;
+}
+
 HDC GdiCreateScreenDC(HWND hwnd) {
     GDIDC *dc = gdi_alloc_dc();
     if (!dc) return 0;
@@ -348,6 +381,43 @@ BOOL TextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c) {
     buf[len] = 0;
     if (dc && dc->is_screen) gdi_draw_text_screen(dc, x, y, buf, len);
     else gdi_draw_text_mem(dc, x, y, buf, len);
+    return TRUE;
+}
+
+BOOL DrawStateW(HDC hdc, HBRUSH brush, void *draw, LPARAM data, WPARAM w,
+                int x, int y, int cx, int cy, UINT flags) {
+    RECT rc;
+    HBRUSH blue;
+    HBRUSH gray;
+    GDIBITMAP *bmp = gdi_get_bitmap((HGDIOBJ)(uintptr_t)data);
+    (void)brush; (void)draw; (void)w; (void)flags;
+    if (!hdc || !data) return FALSE;
+    if (bmp) {
+        GDIDC *dc = (GDIDC *)hdc;
+        int dy, dx;
+        int out_w = cx > 0 ? cx : bmp->width;
+        int out_h = cy > 0 ? cy : bmp->height;
+        for (dy = 0; dy < out_h; dy++) for (dx = 0; dx < out_w; dx++) {
+            int sx = dx * bmp->width / out_w;
+            int sy = dy * bmp->height / out_h;
+            gdi_put_pixel(dc, x + dx, y + dy, bmp->pixels[sy * bmp->width + sx]);
+        }
+        return TRUE;
+    }
+    rc.left = x; rc.top = y;
+    rc.right = x + (cx > 0 ? cx : 275);
+    rc.bottom = y + (cy > 0 ? cy : 54);
+    blue = CreateSolidBrush(RGB(0, 0, 128));
+    if (blue) {
+        FillRect(hdc, &rc, blue);
+        DeleteObject(blue);
+    }
+    if (((uint32_t)(uintptr_t)data & 0xFFFFu) == 20001u) {
+        gray = CreateSolidBrush(RGB(192, 192, 192));
+        if (gray) { FillRect(hdc, &rc, gray); DeleteObject(gray); }
+    } else {
+        TextOutW(hdc, x + 12, y + 18, L"discouNT", 8);
+    }
     return TRUE;
 }
 

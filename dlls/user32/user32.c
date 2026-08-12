@@ -3,6 +3,7 @@
 #include "windows.h"
 #include "commctrl.h"
 #include "icon.h"
+#include "discount_dialog.h"
 
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);
@@ -95,6 +96,7 @@ typedef struct _U32_WINDOW {
     U32_CLASS *klass;
     WNDPROC proc;
     DLGPROC dlgproc;
+    LONG_PTR user_data;
     HMENU menu;
     HMENU popup_menu;
     HWND header_hwnd;
@@ -366,8 +368,16 @@ static U32_MENU g_menus[MAX_U32_MENUS];
 static U32_MESSAGE g_messages[MAX_U32_MESSAGES];
 static U32_ICON g_icons[MAX_U32_ICONS];
 static U32_QUIT_STATE g_quit_states[MAX_U32_QUIT_STATES];
+static U32_DIALOG_TEMPLATE_DEF g_registered_dialog;
+static int g_registered_dialog_used;
 static HWND g_focus = NULL;
 static HWND g_active_window = NULL;
+static HWND g_mouse_capture_window = NULL;
+static DWORD g_user32_process_id = 1;
+
+static DWORD u32_current_process_id(void) {
+    return g_user32_process_id ? g_user32_process_id : GetCurrentProcessId();
+}
 static HWND g_open_menu_popup = NULL;
 
 static void u32_paint_children(HWND hwnd);
@@ -392,6 +402,7 @@ static UINT u32_resource_id(LPCWSTR ptr);
 #define U32_CTRL_GROUPBOX  7
 #define U32_CTRL_STATUS    8
 #define U32_CTRL_MENUPOPUP 9
+#define U32_CTRL_COMBO     10
 
 #ifndef BS_GROUPBOX
 #define BS_GROUPBOX        0x00000007L
@@ -837,6 +848,24 @@ static HWND u32_find_top_level_window_for_pid(DWORD pid) {
             return g_windows[i].hwnd;
         }
     }
+
+    /* Older discouNT processes report PID 1 until the native process-ID
+     * bridge is installed.  Their windows are still valid USER32 windows;
+     * refusing this fallback makes CSRSS lose the window and therefore lose
+     * all standard mouse/keyboard input.  Prefer the newest visible window
+     * with the legacy owner tag. */
+    if (pid != 1) {
+        for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+            if (g_windows[i].used && g_windows[i].top_level &&
+                g_windows[i].owner_pid == 1 && g_windows[i].visible)
+                return g_windows[i].hwnd;
+        }
+        for (i = MAX_U32_WINDOWS - 1; i >= 0; i--) {
+            if (g_windows[i].used && g_windows[i].top_level &&
+                g_windows[i].owner_pid == 1)
+                return g_windows[i].hwnd;
+        }
+    }
     return NULL;
 }
 
@@ -1006,6 +1035,7 @@ static int u32_pick_ctrl_type(LPCWSTR class_name, DWORD style) {
         }
         if (u32_wstrcmp(class_name, L"Static") == 0) return U32_CTRL_STATIC;
         if (u32_wstrcmp(class_name, L"Edit") == 0) return U32_CTRL_EDIT;
+        if (u32_wstrcmp(class_name, L"ComboBox") == 0) return U32_CTRL_COMBO;
         if (u32_wstrcmp(class_name, L"msctls_statusbar32") == 0) return U32_CTRL_STATUS;
     }
     return U32_CTRL_GENERIC;
@@ -1515,7 +1545,7 @@ static HWND u32_create_placeholder_child(HWND parent, UINT id) {
     win->visible = 1;
     win->enabled = 1;
     win->id = id;
-    win->owner_pid = pwin ? pwin->owner_pid : GetCurrentProcessId();
+    win->owner_pid = pwin ? pwin->owner_pid : u32_current_process_id();
     win->style = WS_CHILD | WS_VISIBLE;
     win->ctrl_type = U32_CTRL_GENERIC;
     if (pwin) u32_set_rect(win, 8, 8, 160, 24);
@@ -1623,11 +1653,28 @@ static const U32_DIALOG_TEMPLATE_DEF u32_builtin_dialogs[] = {
 };
 
 static const U32_DIALOG_TEMPLATE_DEF *u32_find_builtin_dialog(UINT tmpl_id) {
+    if (g_registered_dialog_used && g_registered_dialog.tmpl_id == tmpl_id)
+        return &g_registered_dialog;
     int i;
     for (i = 0; i < (int)(sizeof(u32_builtin_dialogs)/sizeof(u32_builtin_dialogs[0])); i++) {
         if (u32_builtin_dialogs[i].tmpl_id == tmpl_id) return &u32_builtin_dialogs[i];
     }
     return 0;
+}
+
+BOOL WINAPI User32RegisterDialogTemplate(const DISCOUNT_DIALOG_TEMPLATE *tmpl) {
+    if (!tmpl || !tmpl->controls || tmpl->control_count < 0) return FALSE;
+    memset(&g_registered_dialog, 0, sizeof(g_registered_dialog));
+    g_registered_dialog.tmpl_id = tmpl->id;
+    g_registered_dialog.caption = tmpl->caption;
+    g_registered_dialog.style = tmpl->style;
+    g_registered_dialog.width = tmpl->width;
+    g_registered_dialog.height = tmpl->height;
+    g_registered_dialog.attach_to_tab_of_parent = 0;
+    g_registered_dialog.controls = (const U32_TEMPLATE_CONTROL *)tmpl->controls;
+    g_registered_dialog.control_count = tmpl->control_count;
+    g_registered_dialog_used = 1;
+    return TRUE;
 }
 
 static void u32_create_builtin_dialog_children(const U32_DIALOG_TEMPLATE_DEF *tmpl, HWND hwnd) {
@@ -1673,7 +1720,7 @@ static int u32_message_matches(const MSG *msg, HWND hWnd, UINT min_msg, UINT max
 
 static int u32_enqueue_message(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     int i;
-    DWORD owner_pid = GetCurrentProcessId();
+    DWORD owner_pid = u32_current_process_id();
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (win && win->owner_pid) owner_pid = win->owner_pid;
     for (i = 0; i < MAX_U32_MESSAGES; i++) {
@@ -1695,7 +1742,7 @@ static int u32_enqueue_message(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 
 static int u32_dequeue_message(LPMSG lpMsg, HWND hWnd, UINT min_msg, UINT max_msg, int remove) {
     int i;
-    DWORD current_pid = GetCurrentProcessId();
+    DWORD current_pid = u32_current_process_id();
     if (!lpMsg) return FALSE;
     for (i = 0; i < MAX_U32_MESSAGES; i++) {
         if (g_messages[i].used &&
@@ -1717,7 +1764,7 @@ static int u32_dequeue_message(LPMSG lpMsg, HWND hWnd, UINT min_msg, UINT max_ms
 
 static int u32_find_invalid_window(HWND filter) {
     int i;
-    DWORD current_pid = GetCurrentProcessId();
+    DWORD current_pid = u32_current_process_id();
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
         if (g_windows[i].used && g_windows[i].visible && g_windows[i].invalidated &&
             g_windows[i].owner_pid == current_pid) {
@@ -2019,6 +2066,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         case U32_CTRL_BUTTON:
             SerialPutString("[USER32] button down\r\n");
             win->pressed = 1;
+            g_mouse_capture_window = hWnd;
             u32_mark_invalid(hWnd);
             return 0;
         case U32_CTRL_TAB:
@@ -2101,6 +2149,8 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (win->pressed) {
                 SerialPutString("[USER32] button up\r\n");
                 win->pressed = 0;
+                if (g_mouse_capture_window == hWnd)
+                    g_mouse_capture_window = NULL;
                 GetClientRect(hWnd, &rc);
                 if (x >= 0 && y >= 0 && x < rc.right && y < rc.bottom && win->parent) {
                     if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
@@ -2212,8 +2262,33 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (win->title[0]) TextOutW(hdc, 8, 0, win->title, -1);
             break;
         case U32_CTRL_BUTTON:
-            FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
-            Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+            {
+                RECT face = rc;
+                HBRUSH face_brush = (HBRUSH)GetStockObject(0);
+                HPEN light_pen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+                HPEN dark_pen = CreatePen(PS_SOLID, 1, RGB(64, 64, 64));
+                HPEN black_pen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+                FillRect(hdc, &face, face_brush);
+                if (win->pressed) {
+                    if (dark_pen) SelectObject(hdc, dark_pen);
+                    Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+                    if (light_pen) SelectObject(hdc, light_pen);
+                    MoveToEx(hdc, 1, 1, 0); LineTo(hdc, rc.right - 1, 1);
+                    MoveToEx(hdc, 1, 1, 0); LineTo(hdc, 1, rc.bottom - 1);
+                } else {
+                    if (light_pen) SelectObject(hdc, light_pen);
+                    MoveToEx(hdc, 0, rc.bottom - 1, 0); LineTo(hdc, 0, 0);
+                    LineTo(hdc, rc.right - 1, 0);
+                    if (dark_pen) SelectObject(hdc, dark_pen);
+                    MoveToEx(hdc, 1, rc.bottom - 1, 0); LineTo(hdc, rc.right - 1, rc.bottom - 1);
+                    MoveToEx(hdc, rc.right - 1, 1, 0); LineTo(hdc, rc.right - 1, rc.bottom - 1);
+                    if (black_pen) SelectObject(hdc, black_pen);
+                    Rectangle(hdc, 1, 1, rc.right - 1, rc.bottom - 1);
+                }
+                if (light_pen) DeleteObject(light_pen);
+                if (dark_pen) DeleteObject(dark_pen);
+                if (black_pen) DeleteObject(black_pen);
+            }
             if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
                 Rectangle(hdc, 1, 1, 11, 11);
                 if (win->check_state == BST_CHECKED) {
@@ -2221,9 +2296,6 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                     LineTo(hdc, 5, 8);
                     LineTo(hdc, 9, 3);
                 }
-            }
-            if (win->pressed) {
-                MoveToEx(hdc, 1, 1, 0);
             }
             if (win->title[0]) TextOutW(hdc,
                                         ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX ? 14 : 4) + (win->pressed ? 1 : 0),
@@ -2260,6 +2332,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 }
             } else if (win->title[0]) TextOutW(hdc, 2, 0, win->title, -1);
             break;
+        case U32_CTRL_COMBO:
+            FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+            Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+            MoveToEx(hdc, rc.right - 14, 1, 0);
+            LineTo(hdc, rc.right - 14, rc.bottom - 1);
+            MoveToEx(hdc, rc.right - 10, 5, 0);
+            LineTo(hdc, rc.right - 5, 5);
+            LineTo(hdc, rc.right - 8, 9);
+            LineTo(hdc, rc.right - 10, 5);
+            if (win->title[0]) TextOutW(hdc, 3, 2, win->title, -1);
+            break;
         case U32_CTRL_STATUS:
             {
                 int i;
@@ -2294,7 +2377,7 @@ BOOL GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax)
     DWORD current_pid;
     U32_QUIT_STATE *quit_state;
     if (!lpMsg) return FALSE;
-    current_pid = GetCurrentProcessId();
+    current_pid = u32_current_process_id();
     quit_state = u32_get_quit_state(current_pid, 1);
     for (;;) {
         int invalid_index;
@@ -2382,7 +2465,7 @@ BOOL UpdateWindow(HWND hWnd) {
 }
 
 void PostQuitMessage(int nExitCode) {
-    DWORD current_pid = GetCurrentProcessId();
+    DWORD current_pid = u32_current_process_id();
     U32_QUIT_STATE *quit_state = u32_get_quit_state(current_pid, 1);
     if (quit_state) {
         quit_state->exit_requested = 1;
@@ -2431,8 +2514,8 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     win->menu = hMenu;
     win->enabled = TRUE;
     win->visible = (dwStyle & WS_VISIBLE) ? TRUE : FALSE;
-    win->owner_pid = hWndParent ? (u32_lookup_window(hWndParent) ? u32_lookup_window(hWndParent)->owner_pid : GetCurrentProcessId())
-                                : GetCurrentProcessId();
+    win->owner_pid = hWndParent ? (u32_lookup_window(hWndParent) ? u32_lookup_window(hWndParent)->owner_pid : u32_current_process_id())
+                                : u32_current_process_id();
     win->klass = cls;
     win->proc = cls->proc;
     win->hIcon = cls->hIcon;
@@ -2522,7 +2605,8 @@ HWND CreateDialogParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent,
     return CreateDialogW(hInstance, (ULONG_PTR)lpTemplate <= 0xFFFFu ? (LPCWSTR)lpTemplate : MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
 }
 
-INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc) {
+static INT_PTR u32_dialog_box_w(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent,
+                                DLGPROC lpDialogFunc, LPARAM init_param) {
     HWND hwnd;
     U32_WINDOW *win;
     UINT tmpl_id = u32_is_int_resource(lpTemplate) ? u32_resource_id(lpTemplate) : 0;
@@ -2553,28 +2637,45 @@ INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
     win->dlgproc = lpDialogFunc;
     u32_create_builtin_dialog_children(tmpl, hwnd);
     SerialPutString("[USER32] DialogBoxW init\r\n");
-    SendMessageW(hwnd, WM_INITDIALOG, 0, 0);
+    SendMessageW(hwnd, WM_INITDIALOG, 0, init_param);
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
     SerialPutString("[USER32] DialogBoxW loop\r\n");
     while (!win->ended) {
-        u32_pump_timers(hwnd);
-        u32_flush_invalid_window(hwnd);
-        KeYield();
+        MSG msg;
+
+        /* A modal dialog still owns a normal GUI thread.  The old loop only
+         * repainted and yielded, which meant that keyboard/mouse messages
+         * queued for the dialog's child controls were never dispatched.  In
+         * practice that made MSGINA look frozen immediately after it opened.
+         * GetMessage(NULL, ...) is intentional: edit/button messages target
+         * children, while the dialog procedure receives the command routed
+         * back from those children. */
+        if (!GetMessageW(&msg, NULL, 0, 0)) break;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
-    SerialPutString("[USER32] DialogBoxW end\r\n");
-    return win->dialog_result;
+    /* EndDialog ends a modal dialog and removes its window.  Keeping the
+     * window object visible here leaves the logon dialog painted over the
+     * newly-created shell, even though the dialog procedure has returned. */
+    {
+        INT_PTR result = win->dialog_result;
+        DestroyWindow(hwnd);
+        SerialPutString("[USER32] DialogBoxW end\r\n");
+        return result;
+    }
+}
+
+INT_PTR DialogBoxW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc) {
+    return u32_dialog_box_w(hInstance, lpTemplate, hWndParent, lpDialogFunc, 0);
 }
 
 INT_PTR DialogBoxIndirectParamW(HINSTANCE hInstance, LPCVOID lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
-    (void)lpTemplate;
-    (void)dwInitParam;
-    return DialogBoxW(hInstance, MAKEINTRESOURCEW(0), hWndParent, lpDialogFunc);
+    return u32_dialog_box_w(hInstance, (LPCWSTR)lpTemplate, hWndParent, lpDialogFunc, dwInitParam);
 }
 
 INT_PTR DialogBoxParamW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
-    (void)dwInitParam;
-    return DialogBoxW(hInstance, lpTemplate, hWndParent, lpDialogFunc);
+    return u32_dialog_box_w(hInstance, lpTemplate, hWndParent, lpDialogFunc, dwInitParam);
 }
 
 INT_PTR DialogBoxParamA(HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam) {
@@ -2626,7 +2727,13 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     if (Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONDOWN || Msg == WM_LBUTTONUP || Msg == WM_MOUSEWHEEL) {
         int x = (short)(lParam & 0xFFFF);
         int y = (short)((lParam >> 16) & 0xFFFF);
-        HWND child = win->top_level ? u32_route_mouse_target(hWnd, x, y) : u32_hit_test_child(hWnd, x, y);
+        HWND child;
+        if (g_mouse_capture_window &&
+            (Msg == WM_MOUSEMOVE || Msg == WM_LBUTTONUP) &&
+            u32_is_descendant(hWnd, g_mouse_capture_window))
+            child = g_mouse_capture_window;
+        else
+            child = win->top_level ? u32_route_mouse_target(hWnd, x, y) : u32_hit_test_child(hWnd, x, y);
         if (child && child != hWnd) {
             U32_WINDOW *child_win = u32_lookup_window(child);
             if (Msg == WM_LBUTTONDOWN) {
@@ -2669,6 +2776,8 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         switch (win->ctrl_type) {
         case U32_CTRL_EDIT:
             return DLGC_WANTCHARS | DLGC_HASSETSEL;
+        case U32_CTRL_COMBO:
+            return DLGC_WANTCHARS;
         case U32_CTRL_BUTTON:
             return DLGC_BUTTON;
         case U32_CTRL_GROUPBOX:
@@ -2750,6 +2859,30 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case BM_GETCHECK:
         return (LRESULT)win->check_state;
+    case CB_RESETCONTENT:
+        if (win->ctrl_type == U32_CTRL_COMBO) {
+            win->title[0] = 0;
+            u32_mark_invalid(hWnd);
+            return 0;
+        }
+        return CB_ERR;
+    case CB_ADDSTRING:
+        if (win->ctrl_type == U32_CTRL_COMBO) {
+            if (!win->title[0] && lParam) u32_wstrcpy(win->title, (LPCWSTR)lParam, 128);
+            u32_mark_invalid(hWnd);
+            return 0;
+        }
+        return CB_ERR;
+    case CB_FINDSTRINGEXACT:
+        if (win->ctrl_type == U32_CTRL_COMBO && lParam &&
+            u32_wstrcmp(win->title, (LPCWSTR)lParam) == 0) return 0;
+        return CB_ERR;
+    case CB_SETCURSEL:
+        if (win->ctrl_type == U32_CTRL_COMBO) {
+            u32_mark_invalid(hWnd);
+            return wParam == (WPARAM)-1 ? CB_ERR : 0;
+        }
+        return CB_ERR;
     case BM_CLICK:
         SendMessageW(hWnd, WM_LBUTTONDOWN, 0, MAKELPARAM(1, 1));
         SendMessageW(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(1, 1));
@@ -3090,6 +3223,58 @@ HWND SetFocus(HWND hWnd) {
     if (hWnd) SendMessageW(hWnd, WM_SETFOCUS, (WPARAM)old, 0);
     return old;
 }
+
+/* Kernel/CSRSS input bridge.  Real USER32 queues are thread-owned; the
+ * current cooperative scheduler does not yet have separate native message
+ * queues, so a cross-thread PostMessage can otherwise sit undispatched. */
+void WINAPI User32InjectKeyboard(HWND hWnd, UINT key, BOOL pressed) {
+    HWND root, focus, next, button;
+    U32_WINDOW *focus_win;
+    if (!pressed) return;
+    if (!u32_lookup_window(hWnd)) {
+        if (g_active_window && u32_lookup_window(g_active_window))
+            hWnd = g_active_window;
+        else
+            hWnd = u32_find_top_level_window_for_pid(1);
+    }
+    if (!hWnd || !u32_lookup_window(hWnd)) return;
+    root = u32_get_root_window(hWnd);
+    focus = u32_dialog_focused_child(root);
+    focus_win = u32_lookup_window(focus);
+    if (key == VK_TAB) {
+        next = u32_dialog_find_next_tabstop(root, focus);
+        if (next) SetFocus(next);
+        return;
+    }
+    if (key == VK_RETURN) {
+        if (focus_win && focus_win->ctrl_type == U32_CTRL_BUTTON) {
+            u32_dialog_click_button(focus);
+            return;
+        }
+        button = u32_dialog_find_child_by_id(root, IDOK);
+        if (button) u32_dialog_click_button(button);
+        return;
+    }
+    if (key == 8 || key >= 32) {
+        SendMessageW(root, WM_CHAR, key, 0);
+    }
+}
+
+void WINAPI User32InjectMouse(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (!u32_lookup_window(hWnd)) {
+        if (g_active_window && u32_lookup_window(g_active_window))
+            hWnd = g_active_window;
+        else
+            hWnd = u32_find_top_level_window_for_pid(1);
+    }
+    if (!hWnd || !u32_lookup_window(hWnd)) return;
+    SendMessageW(hWnd, msg, wParam, lParam);
+}
+
+void WINAPI User32SetProcessId(DWORD pid) {
+    g_user32_process_id = pid ? pid : 1;
+}
+
 HWND GetActiveWindow(void) { return g_active_window; }
 HWND SetActiveWindow(HWND hWnd) {
     HWND old = g_active_window;
@@ -3126,6 +3311,7 @@ LONG_PTR GetWindowLongW(HWND hWnd, int nIndex) {
     if (nIndex == GWL_STYLE) return (LONG_PTR)win->style;
     if (nIndex == GWL_EXSTYLE) return (LONG_PTR)win->exstyle;
     if (nIndex == GWLP_WNDPROC) return (LONG_PTR)(win->dlgproc ? (LONG_PTR)win->dlgproc : (LONG_PTR)win->proc);
+    if (nIndex == GWLP_USERDATA) return win->user_data;
     if (nIndex == GWLP_ID) return (LONG_PTR)win->id;
     return 0;
 }
@@ -3136,6 +3322,7 @@ LONG SetWindowLongW(HWND hWnd, int nIndex, LONG dwNewLong) {
     if (nIndex == GWL_STYLE) { old = (LONG)win->style; win->style = (DWORD)dwNewLong; }
     else if (nIndex == GWL_EXSTYLE) { old = (LONG)win->exstyle; win->exstyle = (DWORD)dwNewLong; }
     else if (nIndex == GWLP_ID) { old = (LONG)win->id; win->id = (UINT)dwNewLong; }
+    else if (nIndex == GWLP_USERDATA) { old = (LONG)win->user_data; win->user_data = (LONG_PTR)dwNewLong; }
     return old;
 }
 LONG_PTR GetWindowLongPtrW(HWND hWnd, int nIndex) { return GetWindowLongW(hWnd, nIndex); }
@@ -3147,6 +3334,11 @@ LONG_PTR SetWindowLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong) {
         old = (LONG_PTR)(win->dlgproc ? (LONG_PTR)win->dlgproc : (LONG_PTR)win->proc);
         win->dlgproc = NULL;
         win->proc = (WNDPROC)dwNewLong;
+        return old;
+    }
+    if (nIndex == GWLP_USERDATA) {
+        old = win->user_data;
+        win->user_data = dwNewLong;
         return old;
     }
     return (LONG_PTR)SetWindowLongW(hWnd, nIndex, (LONG)dwNewLong);

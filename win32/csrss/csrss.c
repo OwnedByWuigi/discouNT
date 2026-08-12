@@ -27,7 +27,98 @@ typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLin
 typedef int (*GuiMainFn)(void);
 typedef int (*User32PostMessageWFn)(GUI_HANDLE hWnd, uint32_t Msg, uint32_t wParam, uint32_t lParam);
 typedef GUI_HANDLE (*User32FindTopLevelWindowForProcessIdFn)(uint32_t pid);
+typedef void (*User32InjectKeyboardFn)(GUI_HANDLE hWnd, uint32_t key, int pressed);
+typedef void (*User32InjectMouseFn)(GUI_HANDLE hWnd, uint32_t msg, uint32_t wParam, uint32_t lParam);
+typedef void (*User32SetProcessIdFn)(uint32_t pid);
 typedef void (*Kernel32SetProcessImageBaseFn)(void *image_base);
+typedef int (*WlxNegotiateFn)(uint32_t version, uint32_t *dll_version);
+typedef int (*WlxInitializeFn)(void *station, void *dispatch, void *context,
+                               void *options, void **gina_context);
+typedef int (*WlxLoggedOnSASFn)(void *gina_context, uint32_t sas_type, void *info);
+typedef int (*WlxLoggedOutSASFn)(void *gina_context, uint32_t sas_type, void *info,
+                                void *logon_sid, void *options, void *token,
+                                void *mpr_notify, void *profile);
+typedef int (*WlxLogoffFn)(void *gina_context);
+typedef int (*WlxShutdownFn)(void *gina_context, uint32_t action);
+typedef void (*WlxDisplaySASNoticeFn)(void *gina_context);
+typedef intptr_t (*User32DialogBoxParamFn)(void *, const void *, void *, void *, intptr_t);
+void CsrssGinaShowLogon(void);
+
+static int csrss_wlx_dialog_box_param(void *hWlx, void *instance,
+                                       const void *template_name,
+                                       void *parent, void *dialog_proc,
+                                       intptr_t init_param) {
+    static User32DialogBoxParamFn dialog_box;
+    if (!dialog_box) {
+        void *user32 = PeGetLoadedModuleHandle("USER32.DLL");
+        if (user32)
+            dialog_box = (User32DialogBoxParamFn)PeGetProcAddress(user32, "DialogBoxParamW");
+    }
+    if (dialog_box)
+        return (int)dialog_box(instance, template_name, parent, dialog_proc, init_param);
+    (void)hWlx;
+    CsrssGinaShowLogon();
+    return 0;
+}
+
+static int csrss_wlx_use_ctrl_alt_del(void *hWlx) {
+    (void)hWlx;
+    return 1;
+}
+
+static void csrss_wlx_sas_notify(void *hWlx, uint32_t sasType) {
+    (void)hWlx;
+    (void)sasType;
+}
+
+static int csrss_wlx_message_box(void *hWlx, void *hwnd, const void *text,
+                                  const void *caption, uint32_t type) {
+    (void)hWlx; (void)hwnd; (void)text; (void)caption; (void)type;
+    return 1;
+}
+
+/* The first members match WLX_DISPATCH_VERSION_1_3.  Keeping this table in
+ * CSRSS gives a real GINA the Winlogon callbacks it expects during init. */
+static struct {
+    int (*WlxUseCtrlAltDel)(void *);
+    void *WlxSetContextPointer;
+    void (*WlxSasNotify)(void *, uint32_t);
+    void *WlxSetTimeout;
+    void *WlxAssignShellProtection;
+    void *WlxMessageBox;
+    void *WlxDialogBox;
+    void *WlxDialogBoxParam;
+    void *WlxDialogBoxIndirect;
+    void *WlxDialogBoxIndirectParam;
+    void *WlxSwitchDesktopToUser;
+    void *WlxSwitchDesktopToWinlogon;
+    void *WlxChangePasswordNotify;
+    void *WlxGetSourceDesktop;
+    void *WlxSetReturnDesktop;
+    void *WlxCreateUserDesktop;
+    void *WlxChangePasswordNotifyEx;
+    void *WlxCloseUserDesktop;
+    void *WlxSetOption;
+    void *WlxGetOption;
+    void *WlxWin31Migrate;
+    void *WlxQueryClientCredentials;
+    void *WlxQueryInetConnectorCredentials;
+    void *WlxDisconnect;
+    void *WlxQueryTerminalServicesData;
+} g_wlx_dispatch = {
+    .WlxUseCtrlAltDel = csrss_wlx_use_ctrl_alt_del,
+    .WlxSasNotify = csrss_wlx_sas_notify,
+    .WlxMessageBox = csrss_wlx_message_box,
+    .WlxDialogBoxParam = csrss_wlx_dialog_box_param
+};
+
+typedef enum _CSRSS_SESSION_STATE {
+    CSRSS_SESSION_BOOTING = 0,
+    CSRSS_SESSION_LOGGED_ON,
+    CSRSS_SESSION_LOCKED,
+    CSRSS_SESSION_LOGGING_OFF,
+    CSRSS_SESSION_SHUTTING_DOWN
+} CSRSS_SESSION_STATE;
 
 typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
@@ -74,7 +165,34 @@ static int g_pending_launch = 0;
 static char g_pending_launch_path[256];
 static User32PostMessageWFn g_user32_post_message = 0;
 static User32FindTopLevelWindowForProcessIdFn g_user32_find_top_level_window = 0;
+static User32InjectKeyboardFn g_user32_inject_keyboard = 0;
+static User32InjectMouseFn g_user32_inject_mouse = 0;
+static User32SetProcessIdFn g_user32_set_process_id = 0;
 static Kernel32SetProcessImageBaseFn g_kernel32_set_process_image_base = 0;
+static WlxNegotiateFn g_wlx_negotiate = 0;
+static WlxInitializeFn g_wlx_initialize = 0;
+static WlxLoggedOnSASFn g_wlx_logged_on_sas = 0;
+static WlxLoggedOutSASFn g_wlx_logged_out_sas = 0;
+static WlxLogoffFn g_wlx_logoff = 0;
+static WlxShutdownFn g_wlx_shutdown = 0;
+static WlxDisplaySASNoticeFn g_wlx_display_sas_notice = 0;
+static void *g_gina_context = 0;
+static GUI_HANDLE g_session_class = INVALID_HANDLE;
+static GUI_HANDLE g_lock_window = INVALID_HANDLE;
+static GUI_HANDLE g_logon_window = INVALID_HANDLE;
+static CSRSS_SESSION_STATE g_session_state = CSRSS_SESSION_BOOTING;
+static uint8_t g_ctrl_down = 0;
+static uint8_t g_alt_down = 0;
+static int g_logon_field = 0;
+static int g_shell_started = 0;
+static char g_logon_user[32];
+static char g_logon_password[32];
+
+#define WLX_VERSION_1_3             0x00010003U
+#define WLX_SAS_TYPE_CTRL_ALT_DEL   0x00000001U
+#define WLX_SAS_TYPE_TIMEOUT        0x00000002U
+#define WLX_SHUTDOWN_LOGOFF        0x00000001U
+#define WLX_SHUTDOWN_REBOOT        0x00000004U
 
 #define WM_KEYDOWN      0x0100
 #define WM_KEYUP        0x0101
@@ -82,6 +200,7 @@ static Kernel32SetProcessImageBaseFn g_kernel32_set_process_image_base = 0;
 #define WM_MOUSEMOVE    0x0200
 #define WM_LBUTTONDOWN  0x0201
 #define WM_LBUTTONUP    0x0202
+#define WM_MOUSEWHEEL   0x020A
 #define MK_LBUTTON      0x0001
 #define MAKELPARAM(l,h) ((uint32_t)(((uint16_t)(l)) | (((uint32_t)(uint16_t)(h)) << 16)))
 
@@ -119,6 +238,40 @@ static uint32_t csrss_translate_key_wparam(const KEYBOARD_EVENT *event) {
 static void csrss_post_standard_message(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
     if (!g_user32_post_message || hwnd == INVALID_HANDLE) return;
     g_user32_post_message(hwnd, msg, wParam, lParam);
+}
+
+static void csrss_inject_logon_mouse(GUI_HANDLE hwnd, uint32_t msg,
+                                     uint32_t wParam, uint32_t lParam) {
+    if (g_user32_inject_mouse)
+        g_user32_inject_mouse(hwnd, msg, wParam, lParam);
+    else
+        csrss_post_standard_message(hwnd, msg, wParam, lParam);
+}
+
+static int csrss_post_logon_mouse(uint32_t msg, uint32_t wParam, int x, int y) {
+    GUI_HANDLE hwnd;
+    WINDOW *win;
+    int client_left, client_top;
+
+    if (g_session_state != CSRSS_SESSION_BOOTING || !g_user32_post_message)
+        return 0;
+    hwnd = g_user32_find_top_level_window ?
+           g_user32_find_top_level_window(1) : Win32kGetActiveWindow();
+    if (hwnd == INVALID_HANDLE)
+        return 0;
+    win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win)
+        return 0;
+    client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+    client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+    if (win->minimized) {
+        ObDereferenceObject(hwnd);
+        return 0;
+    }
+    csrss_inject_logon_mouse(hwnd, msg, wParam,
+                             MAKELPARAM(x - client_left, y - client_top));
+    ObDereferenceObject(hwnd);
+    return 1;
 }
 
 static void csrss_error_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
@@ -188,6 +341,214 @@ static void csrss_show_launch_error(const char *path, const char *detail) {
         Win32kShowWindow(g_error_window);
         Win32kRedrawAll();
     }
+}
+
+static void csrss_lock_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
+    (void)wParam; (void)lParam;
+    if (msg == WM_PAINT) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+        int x = win ? win->x : 0;
+        int y = win ? win->y : 0;
+        int w = win ? win->width : FbGetWidth();
+        int h = win ? win->height : FbGetHeight();
+        if (win) ObDereferenceObject(hwnd);
+        FbFillRect(x, y, w, h, COLOR_BLUE);
+        FbDrawString(x + 24, y + h / 2 - 18, "This workstation is locked.", COLOR_WHITE, COLOR_BLUE);
+        FbDrawString(x + 24, y + h / 2 + 2, "Press Ctrl+Alt+Enter to unlock.", COLOR_WHITE, COLOR_BLUE);
+    } else if (msg == WM_DESTROY) {
+        g_lock_window = INVALID_HANDLE;
+    }
+}
+
+static void csrss_logon_wndproc(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
+    (void)wParam; (void)lParam;
+    if (msg == WM_PAINT) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+        int x = win ? win->x : 220;
+        int y = win ? win->y : 160;
+        int w = win ? win->width : 360;
+        int h = win ? win->height : 220;
+        char masked[32];
+        int i;
+        if (win) ObDereferenceObject(hwnd);
+        for (i = 0; i < (int)sizeof(masked) - 1 && g_logon_password[i]; i++) masked[i] = '*';
+        masked[i] = 0;
+        FbFillRect(x, y, w, h, COLOR_LIGHT_GRAY);
+        FbDrawString(x + 18, y + 28, "Welcome to discouNT", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(x + 18, y + 62, "User name:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(x + 122, y + 62, g_logon_user, COLOR_BLACK, COLOR_WHITE);
+        FbDrawString(x + 18, y + 94, "Password:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        FbDrawString(x + 122, y + 94, masked, COLOR_BLACK, COLOR_WHITE);
+        FbDrawString(x + 18, y + 142, "Press Enter to log on", COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
+        FbDrawString(x + 18, y + 174, "Tab switches fields", COLOR_DARK_GRAY, COLOR_LIGHT_GRAY);
+    } else if (msg == WM_DESTROY) {
+        g_logon_window = INVALID_HANDLE;
+    }
+}
+
+static void csrss_show_logon_screen(void) {
+    if (g_logon_window != INVALID_HANDLE) return;
+    g_session_class = Win32kRegisterClass("CsrssLogonScreen", 0, csrss_logon_wndproc);
+    if (g_session_class == INVALID_HANDLE) return;
+    g_logon_window = Win32kCreateWindowByClass(g_session_class, "Windows Logon", 220, 160, 360, 220,
+                                                WS_VISIBLE | WS_CAPTION | WS_SYSMENU);
+    if (g_logon_window != INVALID_HANDLE) {
+        Win32kActivateWindow(g_logon_window);
+        Win32kShowWindow(g_logon_window);
+        Win32kRedrawAll();
+    }
+}
+
+/* Entry used by the compatible MSGINA implementation. In a full Winlogon
+ * build this is supplied by the Winlogon dispatch table; for discouNT it is
+ * the narrow bridge from WlxLoggedOutSAS to the interactive desktop. */
+void CsrssGinaShowLogon(void) {
+    SerialPutString("[WINLOGON] MSGINA requested logon desktop\r\n");
+    /* MSGINA owns the interactive dialog.  The old CSRSS-painted logon
+     * window consumed keyboard input before USER32 could deliver it to the
+     * edit controls, leaving the real GINA dialog read-only. */
+}
+
+static void csrss_complete_logon(void) {
+    if (g_session_state != CSRSS_SESSION_BOOTING) return;
+    g_session_state = CSRSS_SESSION_LOGGED_ON;
+    if (g_logon_window != INVALID_HANDLE) {
+        Win32kDestroyWindow(g_logon_window);
+        g_logon_window = INVALID_HANDLE;
+    }
+    Win32kRedrawAll();
+}
+
+static void csrss_handle_logon_key(const KEYBOARD_EVENT *event) {
+    char *field;
+    int len;
+    if (!event || !event->pressed) return;
+    if (event->scancode == 0x0F) {
+        g_logon_field = !g_logon_field;
+        Win32kRedrawAll();
+        return;
+    }
+    if (event->scancode == 0x1C) {
+        csrss_complete_logon();
+        return;
+    }
+    field = g_logon_field ? g_logon_password : g_logon_user;
+    len = strlen(field);
+    if (event->scancode == 0x0E) {
+        if (len > 0) field[len - 1] = 0;
+    } else if (event->ascii >= 32 && event->ascii < 127 && len < 31) {
+        field[len] = event->ascii;
+        field[len + 1] = 0;
+    }
+    Win32kRedrawAll();
+}
+
+static void csrss_show_lock_screen(void) {
+    if (g_lock_window != INVALID_HANDLE) return;
+    if (g_session_class == INVALID_HANDLE)
+        g_session_class = Win32kRegisterClass("CsrssLockScreen", 0, csrss_lock_wndproc);
+    if (g_session_class == INVALID_HANDLE) return;
+    g_lock_window = Win32kCreateWindowByClass(g_session_class, "Windows Security", 0, 0,
+                                               FbGetWidth(), FbGetHeight(), WS_VISIBLE);
+    if (g_lock_window != INVALID_HANDLE) {
+        Win32kActivateWindow(g_lock_window);
+        Win32kShowWindow(g_lock_window);
+        Win32kRedrawAll();
+    }
+}
+
+static void csrss_hide_lock_screen(void) {
+    if (g_lock_window != INVALID_HANDLE) {
+        Win32kDestroyWindow(g_lock_window);
+        g_lock_window = INVALID_HANDLE;
+    }
+    if (g_gui_app_count > 0 && g_gui_apps[0].window != INVALID_HANDLE)
+        Win32kActivateWindow(g_gui_apps[0].window);
+    Win32kRedrawAll();
+}
+
+static void csrss_session_lock(void) {
+    if (g_session_state != CSRSS_SESSION_LOGGED_ON) return;
+    g_session_state = CSRSS_SESSION_LOCKED;
+    if (g_wlx_logged_on_sas) g_wlx_logged_on_sas(g_gina_context, WLX_SAS_TYPE_CTRL_ALT_DEL, 0);
+    if (g_wlx_display_sas_notice) g_wlx_display_sas_notice(g_gina_context);
+    csrss_show_lock_screen();
+}
+
+static void csrss_session_unlock(void) {
+    if (g_session_state != CSRSS_SESSION_LOCKED) return;
+    g_session_state = CSRSS_SESSION_LOGGED_ON;
+    csrss_hide_lock_screen();
+}
+
+static void csrss_handle_secure_attention(void) {
+    if (g_session_state == CSRSS_SESSION_LOGGED_ON) csrss_session_lock();
+    else if (g_session_state == CSRSS_SESSION_LOCKED) csrss_session_unlock();
+}
+
+static HANDLE g_winlogon_thread = INVALID_HANDLE;
+
+static void csrss_winlogon_sas_thread(void *arg) {
+    uint32_t authentication_id[2] = {0, 0};
+    uint8_t logon_sid[68] = {0};
+    uint32_t options = 0;
+    void *user_token = 0;
+    void *profile = 0;
+    struct { void *user; void *domain; void *password; void *old_password; } mpr = {0, 0, 0, 0};
+    int sas_action;
+    (void)arg;
+
+    SerialPutString("[WINLOGON] Calling WlxLoggedOutSAS\r\n");
+    sas_action = g_wlx_logged_out_sas(g_gina_context, WLX_SAS_TYPE_CTRL_ALT_DEL,
+                                      authentication_id, logon_sid, &options,
+                                      &user_token, &mpr, &profile);
+    if (sas_action == 1)
+        csrss_complete_logon();
+    SerialPutString("[WINLOGON] WlxLoggedOutSAS returned\r\n");
+    g_winlogon_thread = INVALID_HANDLE;
+}
+
+static void csrss_initialize_winlogon_session(void) {
+    void *gina = PeLoadDll("MSGINA.DLL");
+    uint32_t version = 0;
+    int negotiated = 0;
+
+    g_session_state = CSRSS_SESSION_BOOTING;
+    g_gina_context = 0;
+    if (gina) {
+        g_wlx_negotiate = (WlxNegotiateFn)PeGetProcAddress(gina, "WlxNegotiate");
+        g_wlx_initialize = (WlxInitializeFn)PeGetProcAddress(gina, "WlxInitialize");
+        g_wlx_logged_on_sas = (WlxLoggedOnSASFn)PeGetProcAddress(gina, "WlxLoggedOnSAS");
+        g_wlx_logged_out_sas = (WlxLoggedOutSASFn)PeGetProcAddress(gina, "WlxLoggedOutSAS");
+        g_wlx_logoff = (WlxLogoffFn)PeGetProcAddress(gina, "WlxLogoff");
+        g_wlx_shutdown = (WlxShutdownFn)PeGetProcAddress(gina, "WlxShutdown");
+        g_wlx_display_sas_notice = (WlxDisplaySASNoticeFn)PeGetProcAddress(gina, "WlxDisplaySASNotice");
+        if (g_wlx_negotiate) negotiated = g_wlx_negotiate(WLX_VERSION_1_3, &version);
+        if (negotiated && g_wlx_initialize)
+            /* The HINSTANCE passed to a GINA is its loaded module handle.
+             * MSGINA uses it for LoadImage/LoadString resource lookup. */
+            g_wlx_initialize(0, gina, 0, &g_wlx_dispatch, &g_gina_context);
+    }
+    SerialPutString("[WINLOGON] Session 0 initialized");
+    if (negotiated) SerialPutString(" with MSGINA");
+    SerialPutString("\r\n");
+    /* Winlogon starts at the interactive logon desktop. The shell is not
+     * created until the user submits this desktop's logon dialog. */
+    g_session_state = CSRSS_SESSION_BOOTING;
+    g_logon_field = 0;
+    g_logon_user[0] = 0;
+    g_logon_password[0] = 0;
+    if (g_wlx_logged_out_sas) {
+        /* MSGINA's WlxLoggedOutSAS enters a USER32 modal dialog.  It must not
+         * run on this thread: this thread is also responsible for polling the
+         * PS/2 controller and forwarding input to the foreground window. */
+        g_winlogon_thread = KeCreateThread(csrss_winlogon_sas_thread, 0, 32768);
+        if (g_winlogon_thread == INVALID_HANDLE) {
+            SerialPutString("[WINLOGON] Failed to create SAS thread\r\n");
+            csrss_show_logon_screen();
+        }
+    } else
+        csrss_show_logon_screen();
 }
 
 static void csrss_queue_launch_error(const char *path, const char *detail) {
@@ -277,6 +638,7 @@ static void csrss_gui_thread_main(void *arg) {
     }
 
     g_current_gui_pid = ctx->app->pid;
+    if (g_user32_set_process_id) g_user32_set_process_id(ctx->app->pid);
     if (g_kernel32_set_process_image_base) g_kernel32_set_process_image_base(ctx->app->image);
     exe_esp = (uint32_t)(exe_stack + 65536 - 256);
     if (ctx->kind == GUI_APP_KIND_WINMAIN) {
@@ -316,6 +678,7 @@ static void csrss_gui_thread_main(void *arg) {
         );
     }
     g_current_gui_pid = 0;
+    if (g_user32_set_process_id) g_user32_set_process_id(1);
 
     kfree(exe_stack);
     ctx->app->exit_code = ret;
@@ -721,6 +1084,12 @@ void CsrssSessionRun(void *mb_info) {
     g_pending_error = 0;
     g_pending_launch = 0;
     g_mouse_capture = INVALID_HANDLE;
+    g_lock_window = INVALID_HANDLE;
+    g_logon_window = INVALID_HANDLE;
+    g_session_class = INVALID_HANDLE;
+    g_ctrl_down = 0;
+    g_alt_down = 0;
+    g_shell_started = 0;
 
     Win32kInit(mb_info);
     MouseInit();
@@ -741,6 +1110,12 @@ void CsrssSessionRun(void *mb_info) {
             g_user32_post_message = (User32PostMessageWFn)PeGetProcAddress(user32_image, "PostMessageW");
             g_user32_find_top_level_window =
                 (User32FindTopLevelWindowForProcessIdFn)PeGetProcAddress(user32_image, "FindTopLevelWindowForProcessId");
+            g_user32_inject_keyboard =
+                (User32InjectKeyboardFn)PeGetProcAddress(user32_image, "User32InjectKeyboard");
+            g_user32_inject_mouse =
+                (User32InjectMouseFn)PeGetProcAddress(user32_image, "User32InjectMouse");
+            g_user32_set_process_id =
+                (User32SetProcessIdFn)PeGetProcAddress(user32_image, "User32SetProcessId");
         }
     }
     PeLoadDll("SHELL32.DLL");
@@ -748,13 +1123,7 @@ void CsrssSessionRun(void *mb_info) {
     PeLoadDll("COMCTL32.DLL");
     PeLoadDll("COMDLG32.DLL");
 
-    if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") < 0) {
-        restore_text_mode();
-        HalInitialize();
-        HalClearScreen(0x1F);
-        HalPutString("Failed to launch CMD.EXE from SYSTEM32.\n", 0x0C);
-        return;
-    }
+    csrss_initialize_winlogon_session();
 
     MouseGetState(&mouse_state);
     last_x = mouse_state.x;
@@ -763,6 +1132,14 @@ void CsrssSessionRun(void *mb_info) {
     last_wheel = mouse_state.wheel_delta;
 
     while (running) {
+        if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
+            if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") < 0) {
+                csrss_queue_launch_error("/SYSTEM32/CMD.EXE", "The logon shell could not be started.");
+                g_session_state = CSRSS_SESSION_LOGGING_OFF;
+            } else {
+                g_shell_started = 1;
+            }
+        }
         while (inb(0x64) & 1) {
             uint8_t status = inb(0x64);
             uint8_t data = inb(0x60);
@@ -797,12 +1174,17 @@ void CsrssSessionRun(void *mb_info) {
                                 int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
                                 int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
                                 if (!win->minimized) {
-                                    csrss_post_standard_message(active_hwnd, WM_MOUSEMOVE,
-                                                                (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
-                                                                MAKELPARAM(mouse_state.x - client_left, mouse_state.y - client_top));
+                                    if (g_user32_inject_mouse)
+                                        g_user32_inject_mouse(active_hwnd, WM_MOUSEMOVE,
+                                            (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
+                                            MAKELPARAM(mouse_state.x - client_left, mouse_state.y - client_top));
                                 }
                                 ObDereferenceObject(active_hwnd);
                             }
+                        } else {
+                            csrss_post_logon_mouse(WM_MOUSEMOVE,
+                                                   (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
+                                                   mouse_state.x, mouse_state.y);
                         }
                     }
                     last_x = mouse_state.x;
@@ -828,6 +1210,19 @@ void CsrssSessionRun(void *mb_info) {
                                               GUI_MOUSE_WHEEL);
                             g_current_gui_pid = 0;
                         }
+                        if (app && win && !win->minimized && app->kind != GUI_APP_KIND_CUSTOM) {
+                            int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
+                            int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
+                            if (g_user32_inject_mouse)
+                                g_user32_inject_mouse(active_hwnd, WM_MOUSEWHEEL,
+                                    (uint32_t)((uint16_t)mouse_state.wheel_delta << 16),
+                                    MAKELPARAM(mouse_state.x - client_left,
+                                               mouse_state.y - client_top));
+                        }
+                        if (!app)
+                            csrss_post_logon_mouse(WM_MOUSEWHEEL,
+                                                   (uint32_t)mouse_state.wheel_delta,
+                                                   mouse_state.x, mouse_state.y);
                         if (win) ObDereferenceObject(active_hwnd);
                     }
                     last_wheel = mouse_state.wheel_delta;
@@ -835,7 +1230,10 @@ void CsrssSessionRun(void *mb_info) {
 
                 if ((mouse_state.buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT)) {
                     Win32kHandleMouseDown(mouse_state.x, mouse_state.y, 1);
-                    active_hwnd = Win32kGetActiveWindow();
+                    active_hwnd = (g_session_state == CSRSS_SESSION_BOOTING &&
+                                   g_user32_find_top_level_window) ?
+                                  g_user32_find_top_level_window(1) :
+                                  Win32kGetActiveWindow();
                     for (int i = 0; i < g_gui_app_count; i++) {
                         if (g_gui_apps[i].window == active_hwnd) {
                             WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
@@ -858,9 +1256,14 @@ void CsrssSessionRun(void *mb_info) {
                                         g_current_gui_pid = 0;
                                         g_mouse_capture = active_hwnd;
                                     } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
-                                        csrss_post_standard_message(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
-                                                                    MAKELPARAM(mouse_state.x - client_left,
-                                                                               mouse_state.y - client_top));
+                                        if (g_user32_inject_mouse)
+                                            g_user32_inject_mouse(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
+                                                MAKELPARAM(mouse_state.x - client_left,
+                                                           mouse_state.y - client_top));
+                                        else
+                                            csrss_post_standard_message(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
+                                                                        MAKELPARAM(mouse_state.x - client_left,
+                                                                                   mouse_state.y - client_top));
                                     }
                                 }
                                 ObDereferenceObject(active_hwnd);
@@ -868,6 +1271,9 @@ void CsrssSessionRun(void *mb_info) {
                             break;
                         }
                     }
+                    if (!csrss_find_app_by_window(active_hwnd))
+                        csrss_post_logon_mouse(WM_LBUTTONDOWN, MK_LBUTTON,
+                                               mouse_state.x, mouse_state.y);
                 }
 
                 if (!(mouse_state.buttons & MOUSE_LEFT) && (last_buttons & MOUSE_LEFT)) {
@@ -894,9 +1300,14 @@ void CsrssSessionRun(void *mb_info) {
                                                                    GUI_MOUSE_LUP);
                                         g_current_gui_pid = 0;
                                     } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
-                                        csrss_post_standard_message(active_hwnd, WM_LBUTTONUP, 0,
-                                                                    MAKELPARAM(mouse_state.x - client_left,
-                                                                               mouse_state.y - client_top));
+                                        if (g_user32_inject_mouse)
+                                            g_user32_inject_mouse(active_hwnd, WM_LBUTTONUP, 0,
+                                                MAKELPARAM(mouse_state.x - client_left,
+                                                           mouse_state.y - client_top));
+                                        else
+                                            csrss_post_standard_message(active_hwnd, WM_LBUTTONUP, 0,
+                                                                        MAKELPARAM(mouse_state.x - client_left,
+                                                                                   mouse_state.y - client_top));
                                     }
                                 }
                                 if (g_mouse_capture == active_hwnd) g_mouse_capture = INVALID_HANDLE;
@@ -905,16 +1316,35 @@ void CsrssSessionRun(void *mb_info) {
                             break;
                         }
                     }
+                    if (!csrss_find_app_by_window(active_hwnd))
+                        csrss_post_logon_mouse(WM_LBUTTONUP, 0,
+                                               mouse_state.x, mouse_state.y);
                     Win32kRedrawAll();
                 }
 
                 last_buttons = mouse_state.buttons;
-            } else {
-                KeyboardHandleData(data);
-                while (KeyboardPollEvent(&key_event)) {
-                    uint32_t key_wparam = csrss_translate_key_wparam(&key_event);
+                } else {
+                    KeyboardHandleData(data);
+                    while (KeyboardPollEvent(&key_event)) {
+                        uint32_t key_wparam = csrss_translate_key_wparam(&key_event);
+
+                    if (g_session_state == CSRSS_SESSION_BOOTING &&
+                        g_logon_window != INVALID_HANDLE) {
+                        csrss_handle_logon_key(&key_event);
+                        continue;
+                    }
+
+                    /* Secure attention is consumed by CSRSS/Winlogon before
+                     * it reaches the foreground application. */
+                    if (key_event.pressed && key_event.extended &&
+                        key_event.scancode == 0x53 && key_event.ctrl && key_event.alt) {
+                        csrss_handle_secure_attention();
+                        continue;
+                    }
+                    if (g_session_state == CSRSS_SESSION_LOCKED) continue;
                     if (key_event.pressed && key_event.scancode == 0x01) running = 0;
                     active_hwnd = Win32kGetActiveWindow();
+                    int delivered = 0;
                     for (int i = 0; i < g_gui_app_count; i++) {
                         if (g_gui_apps[i].window == active_hwnd) {
                             if (g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM && g_gui_apps[i].handle_key) {
@@ -922,14 +1352,30 @@ void CsrssSessionRun(void *mb_info) {
                                 g_gui_apps[i].handle_key(key_event.scancode, key_event.ascii, key_event.pressed);
                                 g_current_gui_pid = 0;
                             } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM && key_wparam) {
-                                csrss_post_standard_message(active_hwnd,
-                                                            key_event.pressed ? WM_KEYDOWN : WM_KEYUP,
-                                                            key_wparam,
-                                                            key_event.scancode);
+                                if (g_user32_inject_keyboard)
+                                    g_user32_inject_keyboard(active_hwnd, key_wparam, key_event.pressed);
+                                else
+                                    csrss_post_standard_message(active_hwnd,
+                                                                key_event.pressed ? WM_KEYDOWN : WM_KEYUP,
+                                                                key_wparam,
+                                                                key_event.scancode);
                             }
+                            delivered = 1;
                             break;
                         }
                     }
+                    /* Winlogon/GINA and other USER32-owned windows are not
+                     * represented in the application table.  Their active
+                     * HWND still has a normal USER32 message queue. */
+                    if (!delivered && g_session_state == CSRSS_SESSION_BOOTING &&
+                        active_hwnd != INVALID_HANDLE && key_wparam)
+                        if (g_user32_inject_keyboard)
+                            g_user32_inject_keyboard(active_hwnd, key_wparam, key_event.pressed);
+                        else
+                            csrss_post_standard_message(active_hwnd,
+                                                        key_event.pressed ? WM_KEYDOWN : WM_KEYUP,
+                                                        key_wparam,
+                                                        key_event.scancode);
                     if (key_event.pressed) Win32kRedrawAll();
                 }
             }
@@ -997,7 +1443,8 @@ void CsrssSessionRun(void *mb_info) {
             i++;
         }
 
-        if (g_gui_app_count == 0) running = 0;
+        if (g_gui_app_count == 0 && g_session_state == CSRSS_SESSION_LOGGING_OFF)
+            running = 0;
 
         if (g_pending_launch) {
             uint8_t *file_buf = 0;
@@ -1024,6 +1471,10 @@ void CsrssSessionRun(void *mb_info) {
         }
 
         for (volatile int i = 0; i < 3000; i++);
+        /* Let the Winlogon/USER32 modal thread and standard GUI threads run.
+         * Without an explicit yield this polling loop monopolizes the
+         * cooperative scheduler and the logon dialog appears frozen. */
+        KeYield();
     }
 
     for (int i = 0; i < g_gui_app_count; i++) {
@@ -1034,6 +1485,20 @@ void CsrssSessionRun(void *mb_info) {
         if (g_gui_apps[i].image) {
             PeFreeImage(g_gui_apps[i].image);
         }
+    }
+
+    if (g_logon_window != INVALID_HANDLE) {
+        Win32kDestroyWindow(g_logon_window);
+        g_logon_window = INVALID_HANDLE;
+    }
+    if (g_lock_window != INVALID_HANDLE) csrss_hide_lock_screen();
+    if (g_session_state == CSRSS_SESSION_LOGGED_ON && g_wlx_logoff) {
+        g_session_state = CSRSS_SESSION_LOGGING_OFF;
+        g_wlx_logoff(g_gina_context);
+    }
+    if (g_wlx_shutdown) {
+        g_session_state = CSRSS_SESSION_SHUTTING_DOWN;
+        g_wlx_shutdown(g_gina_context, WLX_SHUTDOWN_LOGOFF);
     }
 
     restore_text_mode();

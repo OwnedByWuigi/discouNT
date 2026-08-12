@@ -1,0 +1,7 @@
+#ifndef DISCOUNT_MSGINA_WINSVC_H
+#define DISCOUNT_MSGINA_WINSVC_H
+#include "windows.h"
+typedef HANDLE SC_HANDLE;
+#define SERVICE_QUERY_STATUS 0x0004
+#define SERVICE_RUNNING 4
+#endif
