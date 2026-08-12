@@ -35,8 +35,8 @@ jobs:
       - name: Upload x86 ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ntos-x86
-          path: ntos-x86.iso
+          name: ntos
+          path: ntos.iso
           retention-days: 1
 
   create-release:
@@ -50,12 +50,12 @@ jobs:
       - name: Download x86 ISO
         uses: actions/download-artifact@v4
         with:
-          name: ntos-x86
+          name: ntos
           path: ./artifacts
 
       - name: Verify ISO exists
         run: |
-          if [ ! -f ./artifacts/ntos-x86.iso ]; then
+          if [ ! -f ./artifacts/ntos.iso ]; then
             echo "Error: ntos-x86.iso not found!"
             exit 1
           fi
@@ -77,7 +77,7 @@ jobs:
             Built from commit: ${{ github.sha }}
             
             ### Includes:
-            - ntos-x86.iso (x86 architecture)
+            - ntos.iso (x86 architecture)
             **AMD64 excluded for now due to the fact that my AMD64 impl broke dll imports for x86**
           files: |
             ./artifacts/ntos-x86.iso
