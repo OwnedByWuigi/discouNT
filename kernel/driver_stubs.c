@@ -67,6 +67,7 @@ static void (*pFbInit)(void *multiboot_info) = 0;
 static void (*pFbClearScreen)(uint8_t color) = 0;
 static void (*pFbPutPixel)(int x, int y, uint8_t color) = 0;
 static void (*pFbFillRect)(int x, int y, int w, int h, uint8_t color) = 0;
+static void (*pFbFillRectRGB)(int x, int y, int w, int h, uint32_t rgb) = 0;
 static void (*pFbDrawRect)(int x, int y, int w, int h, uint8_t color) = 0;
 static void (*pFbDrawChar)(int x, int y, char c, uint8_t fg, uint8_t bg) = 0;
 static void (*pFbDrawString)(int x, int y, const char *str, uint8_t fg, uint8_t bg) = 0;
@@ -94,6 +95,7 @@ static void (*pWin32kHandleMouseDown)(int x, int y, int button) = 0;
 static void (*pWin32kHandleMouseUp)(int x, int y, int button) = 0;
 static void (*pWin32kHandleMouseMove)(int x, int y) = 0;
 static void (*pWin32kRedrawAll)(void) = 0;
+static void (*pWin32kSetColorPreview)(int enabled) = 0;
 static void (*pWin32kRefreshCursor)(void) = 0;
 static int (*pWin32kIsDragging)(void) = 0;
 static int (*pWin32kIsResizing)(void) = 0;
@@ -167,6 +169,7 @@ void FbInit(void *multiboot_info) { if (pFbInit) pFbInit(multiboot_info); if (pF
 void FbClearScreen(uint8_t color) { if (pFbClearScreen) pFbClearScreen(color); }
 void FbPutPixel(int x, int y, uint8_t color) { if (pFbPutPixel) pFbPutPixel(x, y, color); }
 void FbFillRect(int x, int y, int w, int h, uint8_t color) { if (pFbFillRect) pFbFillRect(x, y, w, h, color); }
+void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb) { if (pFbFillRectRGB) pFbFillRectRGB(x, y, w, h, rgb); }
 void FbDrawRect(int x, int y, int w, int h, uint8_t color) { if (pFbDrawRect) pFbDrawRect(x, y, w, h, color); }
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) { if (pFbDrawChar) pFbDrawChar(x, y, c, fg, bg); }
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) { if (pFbDrawString) pFbDrawString(x, y, str, fg, bg); }
@@ -214,6 +217,7 @@ void Win32kHandleMouseDown(int x, int y, int button) { if (pWin32kHandleMouseDow
 void Win32kHandleMouseUp(int x, int y, int button) { if (pWin32kHandleMouseUp) pWin32kHandleMouseUp(x, y, button); }
 void Win32kHandleMouseMove(int x, int y) { if (pWin32kHandleMouseMove) pWin32kHandleMouseMove(x, y); }
 void Win32kRedrawAll(void) { if (pWin32kRedrawAll) pWin32kRedrawAll(); }
+void Win32kSetColorPreview(int enabled) { if (pWin32kSetColorPreview) pWin32kSetColorPreview(enabled); }
 void Win32kRefreshCursor(void) { if (pWin32kRefreshCursor) pWin32kRefreshCursor(); }
 int Win32kIsDragging(void) { return pWin32kIsDragging ? pWin32kIsDragging() : 0; }
 int Win32kIsResizing(void) { return pWin32kIsResizing ? pWin32kIsResizing() : 0; }
@@ -285,6 +289,7 @@ void DriverInstallFb(void *image) {
     RESOLVE(pFbClearScreen, image, "FbClearScreen");
     RESOLVE(pFbPutPixel, image, "FbPutPixel");
     RESOLVE(pFbFillRect, image, "FbFillRect");
+    RESOLVE(pFbFillRectRGB, image, "FbFillRectRGB");
     RESOLVE(pFbDrawRect, image, "FbDrawRect");
     RESOLVE(pFbDrawChar, image, "FbDrawChar");
     RESOLVE(pFbDrawString, image, "FbDrawString");
@@ -314,6 +319,7 @@ void DriverInstallWin32k(void *image) {
     RESOLVE(pWin32kHandleMouseUp, image, "Win32kHandleMouseUp");
     RESOLVE(pWin32kHandleMouseMove, image, "Win32kHandleMouseMove");
     RESOLVE(pWin32kRedrawAll, image, "Win32kRedrawAll");
+    RESOLVE(pWin32kSetColorPreview, image, "Win32kSetColorPreview");
     RESOLVE(pWin32kRefreshCursor, image, "Win32kRefreshCursor");
     RESOLVE(pWin32kIsDragging, image, "Win32kIsDragging");
     RESOLVE(pWin32kIsResizing, image, "Win32kIsResizing");

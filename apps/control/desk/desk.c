@@ -10,7 +10,7 @@
 #define COLOR_LIGHT_BLUE  9
 #define COLOR_WHITE       15
 
-#define MAX_MODES 16
+#define MAX_MODES 48
 #define DESK_WINDOW_W 520
 #define DESK_WINDOW_H 340
 
@@ -26,8 +26,17 @@ static GUI_HANDLE desk_window = 0xFFFFFFFFU;
 static int desk_exit_requested = 0;
 static RES_MODE g_modes[MAX_MODES];
 static int g_mode_count = 0;
-static int selected_mode = 0;
-static int applied_mode = 0;
+static RES_MODE g_resolutions[MAX_MODES];
+static int g_resolution_count = 0;
+static int g_depths[4];
+static int g_depth_count = 0;
+static int selected_resolution = 0;
+static int applied_resolution = 0;
+static int selected_depth = 32;
+static int applied_depth = 32;
+static int resolution_open = 0;
+static int depth_open = 0;
+static int color_preview = 0;
 
 extern void *memset(void *s, int c, uint32_t n);
 extern void strcat(char *d, const char *s);
@@ -53,10 +62,44 @@ static int find_mode(int width, int height, int bpp) {
     return 0;
 }
 
+static int find_resolution(int width, int height) {
+    for (int i = 0; i < g_resolution_count; i++)
+        if (g_resolutions[i].width == width && g_resolutions[i].height == height) return i;
+    return 0;
+}
+
+static int has_depth(int bpp) {
+    for (int i = 0; i < g_depth_count; i++) if (g_depths[i] == bpp) return 1;
+    return 0;
+}
+
+static int depth_available_for_resolution(int bpp, int resolution) {
+    if (resolution < 0 || resolution >= g_resolution_count) return 0;
+    for (int i = 0; i < g_mode_count; i++)
+        if (g_modes[i].width == g_resolutions[resolution].width &&
+            g_modes[i].height == g_resolutions[resolution].height &&
+            g_modes[i].bpp == bpp) return 1;
+    return 0;
+}
+
+static int mode_index(void) {
+    if (selected_resolution < 0 || selected_resolution >= g_resolution_count) return 0;
+    for (int i = 0; i < g_mode_count; i++)
+        if (g_modes[i].width == g_resolutions[selected_resolution].width &&
+            g_modes[i].height == g_resolutions[selected_resolution].height &&
+            g_modes[i].bpp == selected_depth) return i;
+    return find_mode(g_resolutions[selected_resolution].width,
+                     g_resolutions[selected_resolution].height, 32);
+}
+
 static void load_modes(void) {
     int count;
     g_mode_count = 0;
+    g_resolution_count = 0;
+    g_depth_count = 0;
     memset(g_modes, 0, sizeof(g_modes));
+    memset(g_resolutions, 0, sizeof(g_resolutions));
+    memset(g_depths, 0, sizeof(g_depths));
 
     if (!g_api || !g_api->GetScreenModeCount || !g_api->GetScreenModeInfo) return;
 
@@ -70,13 +113,29 @@ static void load_modes(void) {
             g_mode_count++;
         }
     }
+    for (int i = 0; i < g_mode_count; i++) {
+        int exists = 0;
+        for (int j = 0; j < g_resolution_count; j++)
+            if (g_resolutions[j].width == g_modes[i].width && g_resolutions[j].height == g_modes[i].height) exists = 1;
+        if (!exists && g_resolution_count < MAX_MODES) g_resolutions[g_resolution_count++] = g_modes[i];
+        if (!has_depth(g_modes[i].bpp) && g_depth_count < 4) g_depths[g_depth_count++] = g_modes[i].bpp;
+    }
 }
 
 static int apply_selected_mode(void) {
     if (!g_api || !g_api->SetScreenResolution) return 0;
-    if (selected_mode < 0 || selected_mode >= g_mode_count) return 0;
-    if (g_api->SetScreenResolution(g_modes[selected_mode].width, g_modes[selected_mode].height)) {
-        applied_mode = selected_mode;
+    if (selected_resolution < 0 || selected_resolution >= g_resolution_count) return 0;
+    if (g_api->SetScreenMode && g_api->SetScreenMode(g_resolutions[selected_resolution].width,
+                                                     g_resolutions[selected_resolution].height,
+                                                     selected_depth)) {
+        applied_resolution = selected_resolution;
+        applied_depth = selected_depth;
+        return 1;
+    }
+    if (g_api->SetScreenResolution(g_resolutions[selected_resolution].width,
+                                   g_resolutions[selected_resolution].height)) {
+        applied_resolution = selected_resolution;
+        applied_depth = 32;
         return 1;
     }
     return 0;
@@ -105,13 +164,16 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
         int win_h;
         int border_x;
         int border_y;
-        int slider_x;
-        int slider_y;
-        int slider_w;
+        int mode_idx;
         char res_text[64];
         char num[16];
 
         g_api->GetClientRect(hwnd, &client);
+        if (color_preview) {
+            int sw = g_api->GetScreenWidth ? g_api->GetScreenWidth() : 640;
+            int sh = g_api->GetScreenHeight ? g_api->GetScreenHeight() : 480;
+            return;
+        }
         g_api->GetWindowRect(hwnd, &win);
         cw = client.right - client.left;
         ch = client.bottom - client.top;
@@ -124,67 +186,73 @@ static void desk_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_
 
         g_api->FillRect(x0, y0, cw, ch, COLOR_LIGHT_GRAY);
 
-        g_api->FillRect(x0 + 16, y0 + 16, 132, 102, COLOR_DARK_GRAY);
-        g_api->DrawRect(x0 + 16, y0 + 16, 132, 102, COLOR_WHITE);
-        g_api->FillRect(x0 + 28, y0 + 28, 108, 76, COLOR_LIGHT_BLUE);
-        g_api->DrawRect(x0 + 28, y0 + 28, 108, 76, COLOR_WHITE);
-        g_api->FillRect(x0 + 56, y0 + 48, 52, 32, COLOR_BLUE);
-        g_api->DrawRect(x0 + 56, y0 + 48, 52, 32, COLOR_WHITE);
-        itoa(g_modes[selected_mode].width, num, 10);
-        g_api->DrawString(x0 + 58, y0 + 58, num, COLOR_WHITE, COLOR_BLUE);
-
-        g_api->DrawString(x0 + 168, y0 + 18, "Display", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(x0 + 168, y0 + 34, "Desktop area", COLOR_BLACK, COLOR_LIGHT_GRAY);
-
-        slider_x = x0 + 168;
-        slider_y = y0 + 54;
-        slider_w = 176;
-
-        g_api->FillRect(slider_x, slider_y + 6, slider_w, 4, COLOR_DARK_GRAY);
-        if (g_mode_count <= 1) {
-            g_api->FillRect(slider_x, slider_y, 10, 16, COLOR_WHITE);
-            g_api->DrawRect(slider_x, slider_y, 10, 16, COLOR_BLUE);
-        } else {
-            for (int i = 0; i < g_mode_count; i++) {
-                int px = slider_x + (i * (slider_w - 8)) / (g_mode_count - 1);
-                g_api->FillRect(px, slider_y + 2, 2, 12, COLOR_BLACK);
-            }
-            {
-                int knob_x = slider_x + (selected_mode * (slider_w - 8)) / (g_mode_count - 1);
-                g_api->FillRect(knob_x, slider_y, 10, 16, COLOR_WHITE);
-                g_api->DrawRect(knob_x, slider_y, 10, 16, COLOR_BLUE);
-            }
+        /* ReactOS-style two comboboxes: resolution first, depth second. */
+        g_api->DrawString(x0 + 22, y0 + 26, "Resolution:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->FillRect(x0 + 140, y0 + 20, 260, 22, COLOR_WHITE);
+        g_api->DrawRect(x0 + 140, y0 + 20, 260, 22, COLOR_DARK_GRAY);
+        mode_to_text(mode_idx = mode_index(), res_text);
+        g_api->DrawString(x0 + 148, y0 + 27, res_text, COLOR_BLACK, COLOR_WHITE);
+        g_api->FillRect(x0 + 378, y0 + 21, 21, 20, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 385, y0 + 26, "v", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        if (resolution_open) for (int i = 0; i < g_resolution_count && i < 16; i++) {
+            char line[64];
+            RES_MODE saved = g_modes[0];
+            g_modes[0] = g_resolutions[i]; mode_to_text(0, line); g_modes[0] = saved;
+            g_api->FillRect(x0 + 140, y0 + 42 + i * 14, 260, 14, i == selected_resolution ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+            g_api->DrawString(x0 + 148, y0 + 44 + i * 14, line, i == selected_resolution ? COLOR_WHITE : COLOR_BLACK, i == selected_resolution ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+        }
+        g_api->DrawString(x0 + 22, y0 + 72, "Color depth:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->FillRect(x0 + 140, y0 + 66, 260, 22, COLOR_WHITE);
+        g_api->DrawRect(x0 + 140, y0 + 66, 260, 22, COLOR_DARK_GRAY);
+        itoa(selected_depth, num, 10);
+        g_api->DrawString(x0 + 148, y0 + 73, num, COLOR_BLACK, COLOR_WHITE);
+        g_api->DrawString(x0 + 172, y0 + 73, "bits", COLOR_BLACK, COLOR_WHITE);
+        g_api->FillRect(x0 + 378, y0 + 67, 21, 20, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 385, y0 + 72, "v", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        if (depth_open) for (int i = 0, shown = 0; i < g_depth_count; i++) {
+            if (!depth_available_for_resolution(g_depths[i], selected_resolution)) continue;
+            itoa(g_depths[i], num, 10);
+            g_api->FillRect(x0 + 140, y0 + 88 + shown * 14, 260, 14, g_depths[i] == selected_depth ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+            g_api->DrawString(x0 + 148, y0 + 90 + shown * 14, num, g_depths[i] == selected_depth ? COLOR_WHITE : COLOR_BLACK, g_depths[i] == selected_depth ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+            shown++;
         }
 
+        g_api->DrawString(x0 + 22, y0 + 120, "Monitor:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 100, y0 + 120, "Generic Display", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 22, y0 + 140, "Current mode:", COLOR_BLACK, COLOR_LIGHT_GRAY);
         res_text[0] = 0;
-        mode_to_text(selected_mode, res_text);
-        g_api->DrawString(x0 + 168, y0 + 78, res_text, COLOR_BLACK, COLOR_LIGHT_GRAY);
+        mode_to_text(find_mode(g_resolutions[applied_resolution].width, g_resolutions[applied_resolution].height, applied_depth), res_text);
+        g_api->DrawString(x0 + 130, y0 + 140, res_text, COLOR_BLUE, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 22, y0 + 160, "Color depth:", COLOR_BLACK, COLOR_LIGHT_GRAY);
+        itoa(applied_depth, num, 10);
+        g_api->DrawString(x0 + 130, y0 + 160, num, COLOR_BLUE, COLOR_LIGHT_GRAY);
+        g_api->DrawString(x0 + 152, y0 + 160, "bits", COLOR_BLUE, COLOR_LIGHT_GRAY);
 
-        g_api->DrawString(x0 + 16, y0 + 132, "Available resolutions", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->FillRect(x0 + 16, y0 + 146, 240, 126, COLOR_WHITE);
-        g_api->DrawRect(x0 + 16, y0 + 146, 240, 126, COLOR_DARK_GRAY);
-
-        for (int i = 0; i < g_mode_count; i++) {
-            int iy = y0 + 150 + (i * 14);
-            uint8_t bg = (i == selected_mode) ? COLOR_LIGHT_BLUE : COLOR_WHITE;
-            uint8_t fg = (i == selected_mode) ? COLOR_WHITE : COLOR_BLACK;
-            char line[48];
-            line[0] = 0;
-            mode_to_text(i, line);
-            g_api->FillRect(x0 + 18, iy, 236, 12, bg);
-            g_api->DrawString(x0 + 22, iy + 2, line, fg, bg);
-        }
-
-        g_api->DrawString(x0 + 280, y0 + 150, "Monitor:", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(x0 + 280, y0 + 164, "Generic QEMU Display", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        g_api->DrawString(x0 + 280, y0 + 188, "Current mode:", COLOR_BLACK, COLOR_LIGHT_GRAY);
-        res_text[0] = 0;
-        mode_to_text(applied_mode, res_text);
-        g_api->DrawString(x0 + 280, y0 + 202, res_text, COLOR_BLUE, COLOR_LIGHT_GRAY);
-
-        draw_button(x0 + cw - 220, y0 + ch - 34, 60, 24, "Apply", selected_mode != applied_mode);
+        draw_button(x0 + cw - 220, y0 + ch - 34, 60, 24, "Apply", selected_resolution != applied_resolution || selected_depth != applied_depth);
         draw_button(x0 + cw - 152, y0 + ch - 34, 60, 24, "OK", 0);
         draw_button(x0 + cw - 84, y0 + ch - 34, 68, 24, "Cancel", 0);
+        draw_button(x0 + 16, y0 + ch - 34, 128, 24, "Color preview", 0);
+
+        /* Popup lists are painted last, like real combo boxes.  Otherwise
+         * the controls underneath (especially Color depth) overwrite the
+         * lower half of an open resolution list. */
+        if (resolution_open) for (int i = 0; i < g_resolution_count && i < 16; i++) {
+            char line[64];
+            RES_MODE saved = g_modes[0];
+            g_modes[0] = g_resolutions[i]; mode_to_text(0, line); g_modes[0] = saved;
+            g_api->FillRect(x0 + 140, y0 + 42 + i * 14, 260, 14, i == selected_resolution ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+            g_api->DrawString(x0 + 148, y0 + 44 + i * 14, line, i == selected_resolution ? COLOR_WHITE : COLOR_BLACK, i == selected_resolution ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+        }
+        if (depth_open) {
+            int shown = 0;
+            for (int i = 0; i < g_depth_count; i++) {
+                if (!depth_available_for_resolution(g_depths[i], selected_resolution)) continue;
+                itoa(g_depths[i], num, 10);
+                g_api->FillRect(x0 + 140, y0 + 88 + shown * 14, 260, 14, g_depths[i] == selected_depth ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+                g_api->DrawString(x0 + 148, y0 + 90 + shown * 14, num, g_depths[i] == selected_depth ? COLOR_WHITE : COLOR_BLACK, g_depths[i] == selected_depth ? COLOR_LIGHT_BLUE : COLOR_WHITE);
+                shown++;
+            }
+        }
     }
 }
 
@@ -196,14 +264,19 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     desk_class = 0xFFFFFFFFU;
     desk_window = 0xFFFFFFFFU;
     desk_exit_requested = 0;
+    color_preview = 0;
 
     load_modes();
     if (g_mode_count <= 0) return 0;
 
     screen_w = (g_api && g_api->GetScreenWidth) ? g_api->GetScreenWidth() : g_modes[0].width;
     screen_h = (g_api && g_api->GetScreenHeight) ? g_api->GetScreenHeight() : g_modes[0].height;
-    selected_mode = find_mode(screen_w, screen_h, 32);
-    applied_mode = selected_mode;
+    selected_resolution = find_resolution(screen_w, screen_h);
+    applied_resolution = selected_resolution;
+    selected_depth = 32;
+    for (int i = 0; i < g_mode_count; i++)
+        if (g_modes[i].width == screen_w && g_modes[i].height == screen_h) selected_depth = g_modes[i].bpp;
+    applied_depth = selected_depth;
     return 1;
 }
 
@@ -219,7 +292,14 @@ __attribute__((visibility("default"))) GUI_HANDLE CmdAppCreateMainWindow(void) {
 
 __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, char ascii, uint8_t pressed) {
     (void)ascii;
-    if (!pressed || g_mode_count <= 0) return;
+    if (!pressed) return;
+    if (color_preview) {
+        color_preview = 0;
+        if (g_api && g_api->SetColorPreview) g_api->SetColorPreview(0);
+        if (g_api && g_api->UpdateWindow) g_api->UpdateWindow(desk_window);
+        return;
+    }
+    if (g_resolution_count <= 0) return;
 
     switch (scancode) {
         case 0x01:
@@ -227,11 +307,11 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
             return;
         case 0x4B:
         case 0x48:
-            if (selected_mode > 0) selected_mode--;
+            if (selected_resolution > 0) selected_resolution--;
             return;
         case 0x4D:
         case 0x50:
-            if (selected_mode + 1 < g_mode_count) selected_mode++;
+            if (selected_resolution + 1 < g_resolution_count) selected_resolution++;
             return;
         case 0x1C:
             apply_selected_mode();
@@ -244,38 +324,50 @@ __attribute__((visibility("default"))) void CmdAppHandleKey(uint8_t scancode, ch
 }
 
 __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint8_t buttons, uint8_t event_type) {
-    int slider_x = 168;
-    int slider_y = 54;
-    int slider_w = 176;
-    int list_x = 16;
-    int list_y = 146;
-    int list_w = 240;
-    int list_h = 126;
     int client_w = DESK_WINDOW_W - 6;
     int client_h = DESK_WINDOW_H - 24;
     int apply_x = client_w - 220;
     int ok_x = client_w - 152;
     int cancel_x = client_w - 84;
     int btn_y = client_h - 34;
+    int preview_x = 16;
 
-    if (event_type != GUI_MOUSE_LDOWN || !(buttons & 1) || g_mode_count <= 0) return;
+    if (event_type != GUI_MOUSE_LDOWN || !(buttons & 1) || g_resolution_count <= 0) return;
 
-    if (x >= slider_x && x < slider_x + slider_w && y >= slider_y && y < slider_y + 20) {
-        int idx;
-        if (g_mode_count <= 1) idx = 0;
-        else {
-            int pos = x - slider_x;
-            idx = (pos * (g_mode_count - 1) + ((slider_w - 8) / 2)) / (slider_w - 8);
-        }
-        if (idx < 0) idx = 0;
-        if (idx >= g_mode_count) idx = g_mode_count - 1;
-        selected_mode = idx;
+    if (x >= preview_x && x < preview_x + 128 && y >= btn_y && y < btn_y + 24) {
+        color_preview = 1;
+        if (g_api && g_api->SetColorPreview) g_api->SetColorPreview(1);
         return;
     }
 
-    if (x >= list_x && x < list_x + list_w && y >= list_y && y < list_y + list_h) {
-        int item = (y - (list_y + 4)) / 14;
-        if (item >= 0 && item < g_mode_count) selected_mode = item;
+    if (x >= 140 && x < 400 && y >= 20 && y < 42) {
+        resolution_open = !resolution_open; depth_open = 0;
+        return;
+    }
+    if (resolution_open && x >= 140 && x < 400 && y >= 42 && y < 42 + g_resolution_count * 14) {
+        int item = (y - 42) / 14;
+        if (item >= 0 && item < g_resolution_count) {
+            selected_resolution = item;
+            if (!depth_available_for_resolution(selected_depth, selected_resolution)) {
+                for (int i = 0; i < g_depth_count; i++)
+                    if (depth_available_for_resolution(g_depths[i], selected_resolution)) { selected_depth = g_depths[i]; break; }
+            }
+        }
+        resolution_open = 0;
+        return;
+    }
+    if (x >= 140 && x < 400 && y >= 66 && y < 88) {
+        depth_open = !depth_open; resolution_open = 0;
+        return;
+    }
+    if (depth_open && x >= 140 && x < 400 && y >= 88 && y < 88 + g_depth_count * 14) {
+        int item = (y - 88) / 14;
+        int shown = 0;
+        for (int i = 0; i < g_depth_count; i++) {
+            if (!depth_available_for_resolution(g_depths[i], selected_resolution)) continue;
+            if (shown++ == item) { selected_depth = g_depths[i]; break; }
+        }
+        depth_open = 0;
         return;
     }
 

@@ -50,6 +50,7 @@ static int dirty_x1 = 0;
 static int dirty_y1 = 0;
 static int dirty_x2 = 0;
 static int dirty_y2 = 0;
+static int rgb_direct_frame = 0;
 
 typedef struct _FB_MODE {
     uint16_t width;
@@ -58,11 +59,18 @@ typedef struct _FB_MODE {
 } FB_MODE;
 
 static const FB_MODE fb_modes[] = {
-    {640, 480, 32},
-    {800, 600, 32},
-    {1024, 768, 32},
-    {1152, 864, 32},
-    {1280, 1024, 32}
+    {640, 480, 16}, {640, 480, 24}, {640, 480, 32},
+    {800, 600, 16}, {800, 600, 24}, {800, 600, 32},
+    {1024, 768, 16}, {1024, 768, 24}, {1024, 768, 32},
+    {1152, 864, 16}, {1152, 864, 24}, {1152, 864, 32},
+    {1280, 1024, 16}, {1280, 1024, 24}, {1280, 1024, 32}
+    ,{640, 360, 16}, {640, 360, 24}, {640, 360, 32}
+    ,{800, 450, 16}, {800, 450, 24}, {800, 450, 32}
+    ,{960, 540, 16}, {960, 540, 24}, {960, 540, 32}
+    ,{1280, 720, 16}, {1280, 720, 24}, {1280, 720, 32}
+    ,{1366, 768, 16}, {1366, 768, 24}, {1366, 768, 32}
+    ,{1600, 900, 16}, {1600, 900, 24}, {1600, 900, 32}
+    ,{1920, 1080, 16}, {1920, 1080, 24}, {1920, 1080, 32}
 };
 
 #define FB_MODE_COUNT ((int)(sizeof(fb_modes) / sizeof(fb_modes[0])))
@@ -818,6 +826,15 @@ static void fb_write_hw_pixel(int x, int y, uint8_t color) {
     }
 }
 
+static void fb_write_hw_rgb(int x, int y, uint32_t rgb) {
+    uint8_t *row;
+    if (!fb_addr || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+    row = fb_addr + y * fb_pitch;
+    if (fb_bpp == 16) ((uint16_t*)row)[x] = (uint16_t)(((rgb >> 19) << 11) | (((rgb >> 10) & 0x3F) << 5) | ((rgb >> 3) & 0x1F));
+    else if (fb_bpp == 24) { uint8_t *p = row + x * 3; p[0] = rgb; p[1] = rgb >> 8; p[2] = rgb >> 16; }
+    else ((uint32_t*)row)[x] = rgb & 0x00FFFFFFU;
+}
+
 void FbInit(void *mb_info_ptr) {
     (void)mb_info_ptr;
 
@@ -887,6 +904,7 @@ uint8_t FbGetPixel(int x, int y) {
 
 void FbClearScreen(uint8_t color) {
     if (use_framebuffer) {
+        rgb_direct_frame = 0;
         uint32_t count = (uint32_t)fb_width * (uint32_t)fb_height;
         if (!fb_shadow) return;
         for (uint32_t i = 0; i < count; i++) fb_shadow[i] = color & 0x0F;
@@ -923,6 +941,16 @@ void FbFillRect(int x, int y, int w, int h, uint8_t color) {
     } else {
         VgaFillRect(x, y, w, h, color);
     }
+}
+
+void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb) {
+    if (!use_framebuffer || !fb_addr) { FbFillRect(x, y, w, h, 0); return; }
+    if (x < 0) { w += x; x = 0; } if (y < 0) { h += y; y = 0; }
+    if (x + w > fb_width) w = fb_width - x; if (y + h > fb_height) h = fb_height - y;
+    if (w <= 0 || h <= 0) return;
+    for (int yy = y; yy < y + h; yy++) for (int xx = x; xx < x + w; xx++) fb_write_hw_rgb(xx, yy, rgb);
+    rgb_direct_frame = 1;
+    svga_update(x, y, w, h);
 }
 
 void FbDrawRect(int x, int y, int w, int h, uint8_t color) {
@@ -978,6 +1006,14 @@ void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
 
 void FbSwapBuffers(void) {
     if (use_framebuffer) {
+        if (rgb_direct_frame) {
+            /* Preserve a direct RGB preview instead of copying the indexed
+             * UI shadow buffer over it during the compositor swap. */
+            svga_update(0, 0, fb_width, fb_height);
+            rgb_direct_frame = 0;
+            fb_reset_dirty();
+            return;
+        }
         if (!fb_shadow || !dirty_valid) return;
 
         int update_x = dirty_x1;

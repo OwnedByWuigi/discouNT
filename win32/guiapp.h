@@ -36,6 +36,8 @@ typedef struct _GUI_APP_API {
     void (*GetClientRect)(GUI_HANDLE hwnd, GUI_RECT *rect);
     void (*GetWindowRect)(GUI_HANDLE hwnd, GUI_RECT *rect);
     void (*FillRect)(int x, int y, int w, int h, uint8_t color);
+    void (*FillRectRGB)(int x, int y, int w, int h, uint32_t rgb);
+    void (*SetColorPreview)(int enabled);
     void (*DrawRect)(int x, int y, int w, int h, uint8_t color);
     void (*DrawString)(int x, int y, const char *str, uint8_t fg, uint8_t bg);
     int (*ReadSector)(uint32_t lba, uint8_t *buffer);
@@ -46,6 +48,7 @@ typedef struct _GUI_APP_API {
     int (*GetScreenModeCount)(void);
     int (*GetScreenModeInfo)(int index, int *width, int *height, int *bpp);
     int (*SetScreenResolution)(int width, int height);
+    int (*SetScreenMode)(int width, int height, int bpp);
     int (*Ping)(const char *ip_text, char *out_text, int out_text_len);
     void (*Reboot)(void);
     void (*Shutdown)(void);

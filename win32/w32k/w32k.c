@@ -43,6 +43,7 @@ static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
 static HANDLE active_window = INVALID_HANDLE;
 static int redraw_in_progress;
+static int color_preview_overlay;
 
 static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
@@ -1074,7 +1075,22 @@ void Win32kRedrawAll(void) {
         if (win) ObDereferenceObject(window_list[i]);
     }
 
+    if (color_preview_overlay) {
+        int sw = FbGetWidth(), sh = FbGetHeight();
+        for (int py = 0; py < sh; py += 8) for (int px = 0; px < sw; px += 8) {
+            uint32_t r = (uint32_t)(px * 255 / (sw > 1 ? sw - 1 : 1));
+            uint32_t g = (uint32_t)(py * 255 / (sh > 1 ? sh - 1 : 1));
+            uint32_t b = (uint32_t)(((px / 8 + py / 8) & 31) * 255 / 31);
+            FbFillRectRGB(px, py, 8, 8, (r << 16) | (g << 8) | b);
+        }
+    }
+
     MouseDrawCursor();
     FbSwapBuffers();
     redraw_in_progress = 0;
+}
+
+void Win32kSetColorPreview(int enabled) {
+    color_preview_overlay = enabled ? 1 : 0;
+    Win32kRedrawAll();
 }

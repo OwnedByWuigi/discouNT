@@ -597,6 +597,8 @@ static void csrss_update_window(GUI_HANDLE hwnd) { Win32kUpdateWindow(hwnd); }
 static void csrss_get_client_rect(GUI_HANDLE hwnd, GUI_RECT *rect) { Win32kGetClientRect(hwnd, (RECT*)rect); }
 static void csrss_get_window_rect(GUI_HANDLE hwnd, GUI_RECT *rect) { Win32kGetWindowRect(hwnd, (RECT*)rect); }
 static void csrss_fill_rect(int x, int y, int w, int h, uint8_t color) { FbFillRect(x, y, w, h, color); }
+static void csrss_fill_rect_rgb(int x, int y, int w, int h, uint32_t rgb) { FbFillRectRGB(x, y, w, h, rgb); }
+static void csrss_set_color_preview(int enabled) { Win32kSetColorPreview(enabled); }
 static void csrss_draw_rect(int x, int y, int w, int h, uint8_t color) { FbDrawRect(x, y, w, h, color); }
 static void csrss_draw_string(int x, int y, const char *str, uint8_t fg, uint8_t bg) { FbDrawString(x, y, str, fg, bg); }
 static int csrss_read_sector(uint32_t lba, uint8_t *buffer) { return CdfsReadSector(lba, buffer); }
@@ -862,6 +864,28 @@ static int csrss_set_screen_resolution(int width, int height) {
     return 1;
 }
 
+static int csrss_set_screen_mode(int width, int height, int bpp) {
+    if (!FbSetResolution(width, height, bpp)) return 0;
+    for (int i = 0; i < g_gui_app_count; i++) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(g_gui_apps[i].window);
+        int screen_w = FbGetWidth();
+        int screen_h = FbGetHeight();
+        if (!win) continue;
+        if (win->maximized) {
+            win->x = 0; win->y = 0;
+            win->width = screen_w; win->height = screen_h;
+        } else {
+            if (win->x + win->width > screen_w) win->x = screen_w - win->width;
+            if (win->y + win->height > screen_h) win->y = screen_h - win->height;
+            if (win->x < 0) win->x = 0;
+            if (win->y < 0) win->y = 0;
+        }
+        ObDereferenceObject(g_gui_apps[i].window);
+    }
+    Win32kRedrawAll();
+    return 1;
+}
+
 static void csrss_reboot(void) {
     uint8_t status;
     do { status = inb(0x64); } while (status & 0x02);
@@ -891,6 +915,8 @@ static const GUI_APP_API gui_api = {
     csrss_get_client_rect,
     csrss_get_window_rect,
     csrss_fill_rect,
+    csrss_fill_rect_rgb,
+    csrss_set_color_preview,
     csrss_draw_rect,
     csrss_draw_string,
     csrss_read_sector,
@@ -901,6 +927,7 @@ static const GUI_APP_API gui_api = {
     csrss_get_screen_mode_count,
     csrss_get_screen_mode_info,
     csrss_set_screen_resolution,
+    csrss_set_screen_mode,
     csrss_ping,
     csrss_reboot,
     csrss_shutdown,
