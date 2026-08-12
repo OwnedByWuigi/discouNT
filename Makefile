@@ -400,4 +400,4 @@ run-amd64:
 	qemu-system-x86_64 -cdrom ntos-amd64.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139
 
 clean:
-	rm -rf $(BUILD_DIR) $(ISO_NAME)
+	rm -rf $(BUILD_DIR) ntos-x86.iso ntos-amd64.iso
