@@ -12,6 +12,7 @@ static char pe_last_error[256];
 static const char *pe_current_loading_dll = 0;
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
+static void *PeGetELF64ProcAddress(void *elf_base, const char *func_name);
 static void *PeFindLoadedDllSymbol(const char *func_name);
 static int pe_name_equals_ignore_case(const char *a, const char *b);
 
@@ -21,9 +22,11 @@ typedef struct {
     uint32_t magic;
     uint32_t flags;
     uint32_t image_size;
-    uint32_t elf_base_vaddr;
+    uintptr_t elf_base_vaddr;
     void *source_image;
     uint32_t source_size;
+    uint8_t elf_class;
+    uint8_t reserved[3];
     char image_path[128];
 } PE_RUNTIME_HEADER;
 
@@ -86,6 +89,72 @@ typedef struct {
     uint32_t offset;
     uint32_t info;
 } __attribute__((packed)) ELF32_REL;
+
+typedef struct {
+    uint8_t  ident[16];
+    uint16_t type;
+    uint16_t machine;
+    uint32_t version;
+    uint64_t entry;
+    uint64_t phoff;
+    uint64_t shoff;
+    uint32_t flags;
+    uint16_t ehsize;
+    uint16_t phentsize;
+    uint16_t phnum;
+    uint16_t shentsize;
+    uint16_t shnum;
+    uint16_t shstrndx;
+} __attribute__((packed)) ELF64_HEADER;
+
+typedef struct {
+    uint32_t type;
+    uint32_t flags;
+    uint64_t offset;
+    uint64_t vaddr;
+    uint64_t paddr;
+    uint64_t filesz;
+    uint64_t memsz;
+    uint64_t align;
+} __attribute__((packed)) ELF64_PHDR;
+
+typedef struct {
+    uint32_t name;
+    uint32_t type;
+    uint64_t flags;
+    uint64_t addr;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t link;
+    uint32_t info;
+    uint64_t addralign;
+    uint64_t entsize;
+} __attribute__((packed)) ELF64_SHDR;
+
+typedef struct {
+    uint32_t name;
+    uint8_t info;
+    uint8_t other;
+    uint16_t shndx;
+    uint64_t value;
+    uint64_t size;
+} __attribute__((packed)) ELF64_SYM;
+
+typedef struct {
+    uint64_t offset;
+    uint64_t info;
+    int64_t addend;
+} __attribute__((packed)) ELF64_RELA;
+
+#define ELF64_R_SYM(info)  ((uint32_t)((info) >> 32))
+#define ELF64_R_TYPE(info) ((uint32_t)((info) & 0xFFFFFFFFU))
+#define R_X86_64_64        1
+#define R_X86_64_PC32      2
+#define R_X86_64_GLOB_DAT  6
+#define R_X86_64_JUMP_SLOT 7
+#define R_X86_64_RELATIVE  8
+#define R_X86_64_32        10
+#define R_X86_64_32S       11
 
 #define ELF32_R_SYM(info)  ((info) >> 8)
 #define ELF32_R_TYPE(info) ((uint8_t)((info) & 0xFF))
@@ -225,6 +294,133 @@ static uint32_t PeGetELFLoadBase(ELF32_HEADER *elf) {
     return (base == 0xFFFFFFFF) ? 0 : base;
 }
 
+static uintptr_t PeGetELF64LoadBase(ELF64_HEADER *elf) {
+    ELF64_PHDR *ph = (ELF64_PHDR*)((uint8_t*)elf + elf->phoff);
+    uintptr_t base = (uintptr_t)-1;
+    for (uint16_t i = 0; i < elf->phnum; i++) {
+        if (ph[i].type == 1 && ph[i].memsz && ph[i].vaddr < base)
+            base = (uintptr_t)ph[i].vaddr;
+    }
+    return base == (uintptr_t)-1 ? 0 : base;
+}
+
+/* ELF64 loader used by the native AMD64 userspace.  Images are deliberately
+ * kept relocatable: the loader owns the allocation and applies the dynamic
+ * RELA records before any entry point is called. */
+static void *PeLoadELF64(void *image_data, uint32_t size) {
+    ELF64_HEADER *elf = (ELF64_HEADER*)image_data;
+    ELF64_PHDR *ph;
+    PE_RUNTIME_HEADER *runtime;
+    uint8_t *alloc_base, *image_base, *source_copy;
+    uintptr_t base = PeGetELF64LoadBase(elf), mem_end = 0;
+    uint64_t span;
+
+    if (elf->machine != 62 || elf->phentsize < sizeof(ELF64_PHDR)) {
+        SerialPutString("[ELF64] FAIL: not x86-64\r\n");
+        return 0;
+    }
+    if (elf->phoff >= size || (uint64_t)elf->phoff +
+        (uint64_t)elf->phnum * elf->phentsize > size) return 0;
+
+    ph = (ELF64_PHDR*)((uint8_t*)image_data + elf->phoff);
+    for (uint16_t i = 0; i < elf->phnum; i++) {
+        if (ph[i].type != 1) continue;
+        if (ph[i].offset + ph[i].filesz > size || ph[i].vaddr + ph[i].memsz < ph[i].vaddr)
+            return 0;
+        if (ph[i].vaddr + ph[i].memsz > mem_end) mem_end = ph[i].vaddr + ph[i].memsz;
+    }
+    if (mem_end <= base || mem_end - base > 0x10000000ULL) return 0;
+    span = mem_end - base;
+    if (span > 0xFFFFFFFFULL) return 0;
+
+    alloc_base = (uint8_t*)kmalloc(sizeof(PE_RUNTIME_HEADER) + (uint32_t)span);
+    if (!alloc_base) { SerialPutString("[ELF64] FAIL: OOM\r\n"); return 0; }
+    runtime = (PE_RUNTIME_HEADER*)alloc_base;
+    image_base = alloc_base + sizeof(PE_RUNTIME_HEADER);
+    source_copy = (uint8_t*)kmalloc(size);
+    if (!source_copy) { kfree(alloc_base); return 0; }
+    memcpy(source_copy, image_data, size);
+
+    runtime->magic = PE_RUNTIME_MAGIC;
+    runtime->flags = PE_RUNTIME_FLAG_ELF;
+    runtime->image_size = (uint32_t)span;
+    runtime->elf_base_vaddr = base;
+    runtime->source_image = source_copy;
+    runtime->source_size = size;
+    runtime->elf_class = 2;
+    runtime->image_path[0] = 0;
+    memset(image_base, 0, (uint32_t)span);
+
+    for (uint16_t i = 0; i < elf->phnum; i++) {
+        uint64_t dest;
+        if (ph[i].type != 1 || !ph[i].filesz) continue;
+        dest = ph[i].vaddr - base;
+        if (dest + ph[i].filesz > span) { kfree(source_copy); kfree(alloc_base); return 0; }
+        memcpy(image_base + (uint32_t)dest, (uint8_t*)image_data + (uint32_t)ph[i].offset,
+               (uint32_t)ph[i].filesz);
+    }
+
+    /* Dynamic objects produced by our freestanding linker use RELA.  Resolve
+       local symbols against the relocated image and external symbols against
+       the kernel export table. */
+    if (elf->shoff && elf->shoff + (uint64_t)elf->shnum * elf->shentsize <= size) {
+        ELF64_SHDR *sh = (ELF64_SHDR*)((uint8_t*)image_data + elf->shoff);
+        ELF64_SHDR *symsec = 0;
+        const char *strtab = 0;
+        for (uint16_t i = 0; i < elf->shnum; i++) {
+            const char *n = (elf->shstrndx < elf->shnum && sh[elf->shstrndx].offset < size) ?
+                (const char*)image_data + sh[elf->shstrndx].offset + sh[i].name : "";
+            if (strcmp(n, ".dynsym") == 0) symsec = &sh[i];
+            if (strcmp(n, ".dynstr") == 0 && sh[i].offset + sh[i].size <= size)
+                strtab = (const char*)image_data + sh[i].offset;
+        }
+        if (symsec && strtab) {
+            ELF64_SYM *syms = (ELF64_SYM*)((uint8_t*)image_data + symsec->offset);
+            uint32_t symcount = (uint32_t)(symsec->size / sizeof(ELF64_SYM));
+            for (uint16_t i = 0; i < elf->shnum; i++) {
+                if (sh[i].type != 4 || sh[i].offset + sh[i].size > size) continue;
+                ELF64_RELA *rels = (ELF64_RELA*)((uint8_t*)image_data + sh[i].offset);
+                uint32_t count = (uint32_t)(sh[i].size / sizeof(ELF64_RELA));
+                for (uint32_t j = 0; j < count; j++) {
+                    uint32_t type = ELF64_R_TYPE(rels[j].info);
+                    uint32_t si = ELF64_R_SYM(rels[j].info);
+                    uint64_t off = rels[j].offset - base;
+                    uintptr_t sym = 0;
+                    if (rels[j].offset < base || off + 8 > span) continue;
+                    if (si < symcount && syms[si].value) {
+                        if (syms[si].value >= base) sym = (uintptr_t)image_base + (syms[si].value - base);
+                        else sym = (uintptr_t)image_base + syms[si].value;
+                    } else if (si < symcount && syms[si].name) {
+                        void *resolved = KernelResolveSymbol(strtab + syms[si].name);
+                        if (!resolved) {
+                            SerialPutString("[ELF64] Unresolved external symbol: ");
+                            SerialPutString(strtab + syms[si].name);
+                            SerialPutString("\r\n");
+                            PeSetELFImportMissingProcError(strtab + syms[si].name);
+                            kfree(source_copy); kfree(alloc_base); return 0;
+                        }
+                        sym = (uintptr_t)resolved;
+                    }
+                    uint64_t *patch64 = (uint64_t*)(image_base + (uint32_t)off);
+                    int32_t *patch32 = (int32_t*)patch64;
+                    switch (type) {
+                        case R_X86_64_RELATIVE: *patch64 = (uint64_t)image_base + rels[j].addend; break;
+                        case R_X86_64_64: *patch64 = (uint64_t)sym + rels[j].addend; break;
+                        case R_X86_64_GLOB_DAT:
+                        case R_X86_64_JUMP_SLOT: *patch64 = (uint64_t)sym; break;
+                        case R_X86_64_PC32: *patch32 = (int32_t)((int64_t)sym + rels[j].addend - (int64_t)(uintptr_t)patch64); break;
+                        case R_X86_64_32:
+                        case R_X86_64_32S: *patch32 = (int32_t)((uint64_t)sym + rels[j].addend); break;
+                        default: break;
+                    }
+                }
+            }
+        }
+    }
+    SerialPutString("[ELF64] Loaded native image\r\n");
+    return image_base;
+}
+
 // ELF loader
 static void *PeLoadELF(void *image_data, uint32_t size) {
     ELF32_HEADER *elf = (ELF32_HEADER*)image_data;
@@ -233,6 +429,8 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
     uint8_t *image_base;
     uint8_t *source_copy;
     
+    if (elf->ident[4] == 2) return PeLoadELF64(image_data, size);
+
     SerialPutString("[ELF] Type=");
     SerialPrintDec(elf->type);
     SerialPutString(" Machine=");
@@ -317,6 +515,7 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
     runtime->elf_base_vaddr = base;
     runtime->source_image = source_copy;
     runtime->source_size = size;
+    runtime->elf_class = 1;
     runtime->image_path[0] = 0;
 
     memset(image_base, 0, image_size);
@@ -600,6 +799,14 @@ void *PeGetEntryPoint(void *image_base) {
     
     // Check for ELF
     if (*(uint32_t*)image_base == 0x464C457F) {
+        if (runtime && runtime->elf_class == 2) {
+            ELF64_HEADER *elf64 = runtime->source_image ? (ELF64_HEADER*)runtime->source_image : (ELF64_HEADER*)image_base;
+            uintptr_t base64 = runtime->source_image ? runtime->elf_base_vaddr : PeGetELF64LoadBase(elf64);
+            if (!elf64->entry) return 0;
+            if (elf64->entry >= base64) return (uint8_t*)image_base + (elf64->entry - base64);
+            if (runtime && elf64->entry < runtime->image_size) return (uint8_t*)image_base + elf64->entry;
+            return 0;
+        }
         ELF32_HEADER *elf = (ELF32_HEADER*)image_base;
         uint32_t base = runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)
             ? runtime->elf_base_vaddr
@@ -827,6 +1034,7 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
 
     runtime = PeGetRuntimeHeader(dll_base);
     if (runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)) {
+        if (runtime->elf_class == 2) return PeGetELF64ProcAddress(dll_base, func_name);
         return PeGetELFProcAddress(dll_base, func_name);
     }
 
@@ -853,7 +1061,30 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
     
     for (uint32_t i = 0; i < exp->NumberOfNames; i++) {
         const char *name = (const char*)((uint8_t*)dll_base + names[i]);
-        if (strcmp(name, func_name) == 0) {
+        const char *export_name = name;
+        const char *requested = func_name;
+
+        /* i386 stdcall exports produced by GNU/MinGW are commonly named
+           _Function@N (or Function@N).  Win32 GetProcAddress callers use the
+           public, undecorated spelling, so compare that spelling as well as
+           the literal export name. */
+        if (*export_name == '_') export_name++;
+        if (*requested == '_') requested++;
+
+        int exact = strcmp(name, func_name) == 0;
+        int decorated_match = 1;
+        uint32_t j = 0;
+        while (requested[j] && export_name[j] && export_name[j] != '@') {
+            if (requested[j] != export_name[j]) {
+                decorated_match = 0;
+                break;
+            }
+            j++;
+        }
+        if (requested[j] || (export_name[j] && export_name[j] != '@'))
+            decorated_match = 0;
+
+        if (exact || decorated_match) {
             return (uint8_t*)dll_base + functions[ordinals[i]];
         }
     }
@@ -991,6 +1222,40 @@ static void *PeGetELFProcAddress(void *elf_base, const char *func_name) {
         }
     }
     
+    return 0;
+}
+
+static void *PeGetELF64ProcAddress(void *elf_base, const char *func_name) {
+    PE_RUNTIME_HEADER *runtime = PeGetRuntimeHeader(elf_base);
+    uint8_t *file = runtime && runtime->source_image ? (uint8_t*)runtime->source_image : (uint8_t*)elf_base;
+    ELF64_HEADER *elf = (ELF64_HEADER*)file;
+    uintptr_t base = runtime ? runtime->elf_base_vaddr : PeGetELF64LoadBase(elf);
+    ELF64_SHDR *sh;
+    const char *shstr;
+    ELF64_SYM *symtab = 0;
+    const char *strtab = 0;
+    uint32_t count = 0;
+    uint16_t i;
+    if (!elf || elf->shoff + (uint64_t)elf->shnum * elf->shentsize > (runtime ? runtime->source_size : 0xFFFFFFFFU)) return 0;
+    sh = (ELF64_SHDR*)(file + elf->shoff);
+    if (elf->shstrndx >= elf->shnum) return 0;
+    shstr = (const char*)(file + sh[elf->shstrndx].offset);
+    for (i = 0; i < elf->shnum; i++) {
+        const char *name = shstr + sh[i].name;
+        if (strcmp(name, ".dynsym") == 0) {
+            symtab = (ELF64_SYM*)(file + sh[i].offset);
+            count = (uint32_t)(sh[i].size / sizeof(ELF64_SYM));
+        } else if (strcmp(name, ".dynstr") == 0) {
+            strtab = (const char*)(file + sh[i].offset);
+        }
+    }
+    if (!symtab || !strtab) return 0;
+    for (i = 0; i < count; i++) {
+        if (!symtab[i].name || strcmp(strtab + symtab[i].name, func_name) != 0) continue;
+        if (!symtab[i].value) return 0;
+        if (symtab[i].value >= base) return (uint8_t*)elf_base + (symtab[i].value - base);
+        return (uint8_t*)elf_base + symtab[i].value;
+    }
     return 0;
 }
 

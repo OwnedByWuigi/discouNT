@@ -1,0 +1,198 @@
+BUILD_DIR := build/amd64
+CC := gcc
+LD := ld
+NASM := nasm
+ISO_NAME := ntos-amd64.iso
+ISO_DIR := $(BUILD_DIR)/iso
+FONT_SOURCES := $(wildcard media/fonts/*.ttf)
+
+CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
+ -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
+ -Idrivers/serial -Idrivers/vga -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+ -nostartfiles -m64 -mno-red-zone -fno-pic -O0
+USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
+ -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
+KERNEL := $(BUILD_DIR)/kernel.elf
+SRCS := kernel/util.c kernel/mm.c kernel/hal.c kernel/object.c kernel/ke.c \
+ kernel/peloader.c kernel/kexports.c kernel/driver.c kernel/driver_stubs.c \
+ kernel/subsystem.c kernel/nativecmd.c kernel/bugcheck.c kernel/idt.c \
+ kernel/isr.c win32/csrss/csrss.c win32/smss/smss.c kernel/entry.c
+OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
+BOOT := $(BUILD_DIR)/boot/boot64.o
+ISR := $(BUILD_DIR)/kernel/isr_stubs64.o
+BOOT_SERIAL := $(BUILD_DIR)/bootdrivers/serial_boot.o
+BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
+
+.PHONY: all iso userspace clean
+NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll shell32 shlwapi user32
+NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
+NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
+ $(BUILD_DIR)/apps/control/control.exe \
+ $(BUILD_DIR)/apps/control/desk/desk.cpl \
+ $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
+ $(BUILD_DIR)/apps/notepad/notepad.exe \
+ $(BUILD_DIR)/apps/winver/winver.exe \
+ $(BUILD_DIR)/apps/whoami/whoami.exe
+NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
+ $(BUILD_DIR)/win32/csrss/csrss.exe
+NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
+ $(BUILD_DIR)/win32/w32k/w32k.dll
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb
+NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
+
+all: iso
+
+userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
+
+iso: $(KERNEL) userspace
+	@rm -rf $(ISO_DIR)/SYSTEM32
+	@mkdir -p $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
+	@mkdir -p $(ISO_DIR)/SYSTEM32/DRIVERS
+	@mkdir -p $(ISO_DIR)/SYSTEM32/FONTS
+	cp $(KERNEL) $(ISO_DIR)/SYSTEM32/NTOSKRNL.EXE
+	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
+		cp "$$image" "$(ISO_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
+	done
+	@cp "$(BUILD_DIR)/win32/w32k/w32k.dll" "$(ISO_DIR)/SYSTEM32/WIN32K.DLL"
+	@for driver in $(NATIVE_DRIVERS); do \
+		cp "$$driver" "$(ISO_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
+	done
+	@for font in $(FONT_SOURCES); do \
+		cp "$$font" "$(ISO_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
+	done
+	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
+	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR)
+
+# Native AMD64 userland is kept separate while the existing 32-bit image is
+# retained as the compatibility/WOW layer.  This avoids silently replacing
+# the tested x86 binaries with incompatible 64-bit objects.
+$(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
+
+$(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c kernel/util.c kernel/version.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ apps/cmd/cmd.c kernel/util.c
+
+$(BUILD_DIR)/apps/control/control.exe: apps/control/control.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ $^
+
+$(BUILD_DIR)/apps/control/desk/desk.cpl: apps/control/desk/desk.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ $^
+
+$(BUILD_DIR)/apps/taskmgr/taskmgr.exe: $(filter %.c,$(wildcard apps/taskmgr/*.c)) kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -include string.h -include ctype.h -Wl,-e,WinMain -shared -o $@ $^
+
+$(BUILD_DIR)/apps/notepad/notepad.exe: apps/notepad/main.c apps/notepad/dialog.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -fshort-wchar -include string.h -include ctype.h -include stdlib.h -Wl,-e,WinMain -shared -o $@ $^
+
+$(BUILD_DIR)/apps/winver/winver.exe: apps/winver/winver.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -include string.h -Wl,-e,WinMain -shared -o $@ $^
+
+$(BUILD_DIR)/apps/whoami/whoami.exe: apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ $^
+
+$(BUILD_DIR)/win32/smss/smss.exe: win32/smss/smss_app.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ $^
+
+$(BUILD_DIR)/win32/csrss/csrss.exe: win32/csrss/csrss_app.c kernel/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ $^
+
+MSGINA64_LOGO_OBJ := $(BUILD_DIR)/dlls/msgina/reactos_logo.bmp.o
+MSGINA64_BAR_OBJ := $(BUILD_DIR)/dlls/msgina/line.bmp.o
+
+$(MSGINA64_LOGO_OBJ): dlls/msgina/resources/reactos.bmp
+	@mkdir -p $(@D)
+	$(LD) -r -m elf_x86_64 -b binary -o $@ $<
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_reactos_bmp_start=msgina_logo_start $@
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_reactos_bmp_end=msgina_logo_end $@
+
+$(MSGINA64_BAR_OBJ): dlls/msgina/resources/line.bmp
+	@mkdir -p $(@D)
+	$(LD) -r -m elf_x86_64 -b binary -o $@ $<
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_line_bmp_start=msgina_bar_start $@
+	@objcopy --redefine-sym _binary_dlls_msgina_resources_line_bmp_end=msgina_bar_end $@
+
+$(BUILD_DIR)/dlls/msgina.dll: dlls/msgina/msgina.c dlls/msgina/gui.c \
+ dlls/msgina/compat/reactos_port.c dlls/msgina/compat/ui_port.c \
+ $(MSGINA64_LOGO_OBJ) $(MSGINA64_BAR_OBJ)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Idlls/msgina/compat -Idlls/msgina \
+		-Wl,--export-dynamic -o $@ \
+		dlls/msgina/msgina.c dlls/msgina/compat/reactos_port.c \
+		dlls/msgina/gui.c dlls/msgina/compat/ui_port.c \
+		$(MSGINA64_LOGO_OBJ) $(MSGINA64_BAR_OBJ)
+	@objcopy --add-section .disbmp_logo=dlls/msgina/resources/reactos.bmp --set-section-flags .disbmp_logo=readonly,data $@
+	@objcopy --add-section .disbmp_bar=dlls/msgina/resources/line.bmp --set-section-flags .disbmp_bar=readonly,data $@
+
+$(BUILD_DIR)/win32/w32k/w32k.dll: win32/w32k/w32k.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $<
+
+$(BUILD_DIR)/drivers/serial.sys: drivers/serial/serial.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/vga.sys: drivers/vga/vga.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/cdfs.sys: drivers/cdfs/cdfs.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/keyboard.sys: drivers/keyboard/keyboard.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/mouse.sys: drivers/mouse/mouse.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/net.sys: drivers/net/net.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/fb.sys: drivers/fb/fb.c drivers/fb/ttf.c drivers/module_entry.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
+
+$(BUILD_DIR)/drivers/usb.sys: drivers/usb/usb.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
+
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BOOT): boot/boot64.asm
+	@mkdir -p $(@D)
+	$(NASM) -f elf64 $< -o $@
+
+$(ISR): kernel/isr_stubs64.asm
+	@mkdir -p $(@D)
+	$(NASM) -f elf64 $< -o $@
+
+$(BOOT_SERIAL): drivers/serial/serial.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
+
+$(BOOT_CDFS): drivers/cdfs/cdfs.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCdfsInit=BootCdfsInit -DCdfsReadSector=BootCdfsReadSector -DCdfsFindFile=BootCdfsFindFile -DCdfsReadFile=BootCdfsReadFile -c $< -o $@
+
+
+$(KERNEL): $(BOOT) $(OBJS) $(ISR) $(BOOT_SERIAL) $(BOOT_CDFS)
+	$(LD) -m elf_x86_64 -T kernel/linker64.ld -nostdlib -no-pie $^ -o $@
+
+clean:
+	rm -rf $(BUILD_DIR)

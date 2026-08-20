@@ -90,17 +90,26 @@ HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     thread->state = THREAD_READY;
     thread->stack_size = stack_size ? stack_size : 4096;
     thread->stack = kmalloc(thread->stack_size);
-    thread->entry_point = (uint32_t)entry;
-    thread->entry_arg = (uint32_t)arg;
+    thread->entry_point = (uintptr_t)entry;
+    thread->entry_arg = (uintptr_t)arg;
     thread->context_ebx = 0;
     thread->context_esi = 0;
     thread->context_edi = 0;
     thread->context_ebp = 0;
     
     // Cooperative switch: after KeYield restores ESP and returns, execution enters bootstrap.
+#if defined(__x86_64__)
+    /* ret enters a SysV AMD64 function with RSP % 16 == 8. */
+    uintptr_t stack_top = ((uintptr_t)thread->stack + thread->stack_size) & ~(uintptr_t)15;
+    uintptr_t *stack = (uintptr_t*)(stack_top - 16);
+    stack[0] = (uintptr_t)KeThreadBootstrap;
+    stack[1] = 0;
+    thread->context_esp = (uintptr_t)stack;
+#else
     uint32_t *stack = (uint32_t*)((uint8_t*)thread->stack + thread->stack_size);
     *(--stack) = (uint32_t)KeThreadBootstrap;
-    thread->context_esp = (uint32_t)stack;
+    thread->context_esp = (uintptr_t)stack;
+#endif
     
     // Add to ready queue
     KeAppendReadyThread(thread);
@@ -165,6 +174,39 @@ static THREAD *KeSelectNextThread(void) {
 }
 
 __attribute__((naked)) void KeYield(void) {
+#if defined(__x86_64__)
+    __asm__ volatile(
+        "movq current_thread(%rip), %rax\n\t"
+        "testq %rax, %rax\n\t"
+        "jz 2f\n\t"
+        "movq %rsp, 48(%rax)\n\t"
+        "movq %rbx, 56(%rax)\n\t"
+        "movq %rsi, 64(%rax)\n\t"
+        "movq %rdi, 72(%rax)\n\t"
+        "movq %rbp, 80(%rax)\n\t"
+        "movq %r12, 88(%rax)\n\t"
+        "movq %r13, 96(%rax)\n\t"
+        "movq %r14, 104(%rax)\n\t"
+        "movq %r15, 112(%rax)\n\t"
+        "subq $8, %rsp\n\t"
+        "call KeSelectNextThread\n\t"
+        "addq $8, %rsp\n\t"
+        "testq %rax, %rax\n\t"
+        "jz 2f\n\t"
+        "movq 56(%rax), %rbx\n\t"
+        "movq 64(%rax), %rsi\n\t"
+        "movq 72(%rax), %rdi\n\t"
+        "movq 80(%rax), %rbp\n\t"
+        "movq 88(%rax), %r12\n\t"
+        "movq 96(%rax), %r13\n\t"
+        "movq 104(%rax), %r14\n\t"
+        "movq 112(%rax), %r15\n\t"
+        "movq 48(%rax), %rsp\n\t"
+        "ret\n\t"
+        "2:\n\t"
+        "ret\n\t"
+    );
+#else
     __asm__ volatile(
         "movl current_thread, %eax\n\t"
         "test %eax, %eax\n\t"
@@ -186,6 +228,7 @@ __attribute__((naked)) void KeYield(void) {
         "2:\n\t"
         "ret\n\t"
     );
+#endif
 }
 
 void KeStartScheduler(void) {

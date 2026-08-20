@@ -953,7 +953,10 @@ __attribute__((stdcall)) void RtlInitAnsiString(void *dst, const char *src) {
     if (len > 65534) len = 65534;
     *(uint16_t*)dst = len;
     *(uint16_t*)((uint8_t*)dst + 2) = len;
-    *(uint32_t*)((uint8_t*)dst + 4) = (uint32_t)src;
+    /* STRING.Buffer is naturally pointer-aligned: offset 4 on i386 and 8 on
+       AMD64.  Writing a 32-bit pointer here truncated every native AMD64
+       string and also left the upper half of the field uninitialised. */
+    *(const char**)((uint8_t*)dst + (sizeof(void*) == 8 ? 8 : 4)) = src;
 }
 
 __attribute__((stdcall)) void RtlInitUnicodeString(void *dst, const void *src) {
@@ -965,7 +968,7 @@ __attribute__((stdcall)) void RtlInitUnicodeString(void *dst, const void *src) {
     if (len > 65534) len = 65534;
     *(uint16_t*)dst = len;
     *(uint16_t*)((uint8_t*)dst + 2) = len;
-    *(uint32_t*)((uint8_t*)dst + 4) = (uint32_t)src;
+    *(const void**)((uint8_t*)dst + (sizeof(void*) == 8 ? 8 : 4)) = src;
 }
 
 __attribute__((stdcall)) void RtlFreeUnicodeString(void *str) { (void)str; }

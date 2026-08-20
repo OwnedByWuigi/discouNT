@@ -131,7 +131,9 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"KeBugCheckEx", KeBugCheckEx},
     {"PeGetLoadedModuleHandle", PeGetLoadedModuleHandle},
     {"PeGetImagePath", PeGetImagePath},
+    {"PeLoadDll", PeLoadDll},
     {"PeGetProcAddress", PeGetProcAddress},
+    {"PeResolveExternalSymbol", PeResolveExternalSymbol},
     {"CsrssGinaShowLogon", CsrssGinaShowLogon},
 };
 

@@ -110,7 +110,13 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS)
 
-.PHONY: all clean iso kernel dlls apps run run-bridge
+.PHONY: all clean iso kernel dlls apps run-x86 run-amd64 x86 amd64
+
+x86:
+	$(MAKE) BUILD_DIR=build/x86 ISO_NAME=ntos-x86.iso all
+
+amd64:
+	$(MAKE) -f Makefile.amd64
 
 all: $(ISO_NAME)
 
@@ -161,6 +167,7 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 			-Wl,--image-base,0x10000000 \
 			-Wl,--entry,_DllMain@12 \
 			-Wl,--export-all-symbols \
+			-Wl,--kill-at \
 			$(CPPFLAGS) \
 			-L$(BUILD_DIR) \
 			-l:kernel.elf; \
@@ -381,8 +388,17 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(SYSTEM32_DIR)/.stamp
 
 iso: $(ISO_NAME)
 
-run: $(ISO_NAME)
-	qemu-system-i386 -cdrom $(ISO_NAME) -m 128 -vga std -serial stdio -nic user,model=rtl8139
+RUN_AMD64 := $(filter amd64,$(MAKECMDGOALS))
+RUN_X86 := $(filter x86,$(MAKECMDGOALS))
+RUN_ISO := $(if $(RUN_AMD64),ntos-amd64.iso,$(if $(RUN_X86),ntos-x86.iso,$(ISO_NAME)))
+
+run-x86:
+	$(MAKE) x86
+	qemu-system-i386 -cdrom ntos-x86.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139
+
+run-amd64:
+	$(MAKE) amd64
+	qemu-system-x86_64 -cdrom ntos-amd64.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139
 
 clean:
-	rm -rf $(BUILD_DIR) $(ISO_NAME)
+	rm -rf $(BUILD_DIR) ntos-x86.iso ntos-amd64.iso
