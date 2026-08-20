@@ -279,18 +279,25 @@ void CdfsInit(void) {
     
     cdrom_present = 0;
     cdrom_ready = 0;
-    usb_iso_device = IoGetDevice("UsbDisk0");
-
-    /* A hybrid ISO flashed to USB is still ISO-9660, not FAT32. */
-    if (usb_iso_device && usb_read_iso_sector(16, sector) &&
-        sector[0] == 1 && sector[1] == 'C' && sector[2] == 'D' &&
-        sector[3] == '0' && sector[4] == '0' && sector[5] == '1') {
-        cdrom_present = 1;
-        cdrom_ready = 1;
-        SerialPutString("[CDFS] ISO 9660 filesystem found on USB!\r\n");
-        return;
+    /* Hybrid ISO images retain ISO-9660 when installed to USB or ATA disk. */
+    {
+        const char *devices[] = {"UsbDisk0", "Harddisk0"};
+        for (uint32_t i = 0; i < 2; ++i) {
+            usb_iso_device = IoGetDevice(devices[i]);
+            if (usb_iso_device && usb_read_iso_sector(16, sector) &&
+                sector[0] == 1 && sector[1] == 'C' && sector[2] == 'D' &&
+                sector[3] == '0' && sector[4] == '0' && sector[5] == '1') {
+                cdrom_present = 1;
+                cdrom_ready = 1;
+                SerialPutString("[CDFS] ISO 9660 filesystem found on ");
+                SerialPutString(devices[i]);
+                SerialPutString("!\r\n");
+                return;
+            }
+            if (usb_iso_device) ObDereferenceObject(usb_iso_device->handle);
+            usb_iso_device = 0;
+        }
     }
-    usb_iso_device = 0;
     
     // Probe all 4 possible IDE positions
     struct { int base; int slave; } ports[] = {

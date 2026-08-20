@@ -8,16 +8,16 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
- -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+ -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/ide -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
  -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
 SRCS := kernel/util.c kernel/rtlpath.c kernel/mm.c kernel/pmm.c kernel/vmm.c kernel/hal.c kernel/object.c kernel/io.c kernel/ke.c \
- kernel/peloader.c kernel/kexports.c kernel/driver.c kernel/driver_stubs.c \
+ kernel/peloader.c kernel/kexports.c kernel/driver.c kernel/driver_stubs.c kernel/setup.c \
  kernel/subsystem.c kernel/nativecmd.c kernel/bugcheck.c kernel/idt.c \
- kernel/isr.c drivers/fat32/fat32.c drivers/usb/usb.c drivers/usb/usb_msc.c \
+ kernel/isr.c drivers/fat32/fat32.c drivers/ide/ide.c drivers/usb/usb.c drivers/usb/usb_msc.c \
  drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
  win32/csrss/csrss.c win32/smss/smss.c kernel/entry.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
@@ -40,7 +40,7 @@ NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
  $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
  $(BUILD_DIR)/win32/w32k/win32k.dll
-DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide
 NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
 
 all: iso
@@ -175,6 +175,10 @@ USB_SOURCES := drivers/usb/usb.c drivers/usb/usb_msc.c drivers/usb/uhci.c driver
 $(BUILD_DIR)/drivers/usb.sys: $(USB_SOURCES) drivers/usb/usb.h drivers/usb/usb_internal.h drivers/usb/usb_msc.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $(USB_SOURCES)
+
+$(BUILD_DIR)/drivers/ide.sys: drivers/ide/ide.c drivers/ide/ide.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ drivers/ide/ide.c
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)

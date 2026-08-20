@@ -111,15 +111,15 @@ int Fat32Initialize(const char *device_name) {
     volume.device = IoGetDevice(device_name);
     if (!volume.device) return 0;
     volume.bytes_per_sector = 512;
-    if (!read_sector(0, sector)) return 0;
+    if (!read_sector(0, sector)) goto fail;
     /* Accept both partitioned disks and FAT32 superfloppies. */
     if (sector[510] == 0x55 && sector[511] == 0xAA &&
         (sector[0x1C2] == 0x0B || sector[0x1C2] == 0x0C))
         volume.partition_lba = *(uint32_t *)(sector + 0x1C6);
-    if (!read_sector(volume.partition_lba, sector)) return 0;
+    if (!read_sector(volume.partition_lba, sector)) goto fail;
     bpb = (FAT32_BPB *)sector;
     if (bpb->bytes_per_sector != 512 || !bpb->sectors_per_cluster ||
-        !bpb->reserved_sectors || !bpb->fat32 || !bpb->root_cluster) return 0;
+        !bpb->reserved_sectors || !bpb->fat32 || !bpb->root_cluster) goto fail;
     volume.bytes_per_sector = bpb->bytes_per_sector;
     volume.sectors_per_cluster = bpb->sectors_per_cluster;
     volume.sectors_per_fat = bpb->fat32;
@@ -127,8 +127,14 @@ int Fat32Initialize(const char *device_name) {
     volume.fat_lba = volume.partition_lba + bpb->reserved_sectors;
     volume.data_lba = volume.fat_lba + (uint32_t)bpb->fats * bpb->fat32;
     volume.mounted = 1;
-    SerialPutString("[FAT32] Mounted USB boot volume\r\n");
+    SerialPutString("[FAT32] Mounted boot volume from ");
+    SerialPutString(device_name);
+    SerialPutString("\r\n");
     return 1;
+fail:
+    ObDereferenceObject(volume.device->handle);
+    memset(&volume, 0, sizeof(volume));
+    return 0;
 }
 
 int Fat32IsMounted(void) { return volume.mounted; }

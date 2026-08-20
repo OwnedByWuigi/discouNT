@@ -17,3 +17,12 @@ boots a conventional FAT32 disk.
 The GRUB menu includes normal boot, serial debug, and **Screen debug**. Screen
 debug displays kernel diagnostics directly in VGA text mode, in the same spirit
 as ReactOS's screen debug output.
+
+Storage devices include USB mass-storage disks and legacy IDE/ATA hard drives.
+ATA disks are exposed as `Harddisk0` through `Harddisk3`; sector-aligned reads
+and writes are supported, and a FAT32 boot volume on `Harddisk0` is mounted
+automatically.
+
+The GRUB menu also provides **Install discouNT (Native-mode Setup)**. Setup runs
+before the Win32 subsystem, detects IDE/ATA disks, requires an explicit F10
+confirmation, and copies the bootable installation image to the selected disk.

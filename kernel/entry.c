@@ -15,7 +15,9 @@
 #include "idt.h"
 #include "multiboot.h"
 #include "usb.h"
+#include "ide.h"
 #include "fat32.h"
+#include "setup.h"
 
 static int BootOptionRequested(void *mb_info_ptr, const char *option) {
     MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
@@ -129,9 +131,11 @@ static void ShowBootScreen(void *mb_info_ptr) {
 
 void kmain(uint32_t magic, void *mb_info_ptr) {
     int screen_debug;
+    int setup_mode;
     (void)magic;
 
     screen_debug = BootOptionRequested(mb_info_ptr, "screen-debug");
+    setup_mode = BootOptionRequested(mb_info_ptr, "setup");
     SerialSetDebugEnabled(BootOptionRequested(mb_info_ptr, "debug"));
     SerialSetScreenDebugEnabled(screen_debug);
     SerialInit();
@@ -151,10 +155,12 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     IoInit();
     KeInit();
     KeAttachCurrentThread("KernelMain");
-    if (UsbBootInitialize()) Fat32Initialize("UsbDisk0");
+    if (IdeBootInitialize() && !setup_mode) Fat32Initialize("Harddisk0");
+    if (UsbBootInitialize() && !Fat32IsMounted() && !setup_mode) Fat32Initialize("UsbDisk0");
     if (!Fat32IsMounted()) CdfsInit();
     DriverLoadAll(mb_info_ptr);
     KeyboardInit();
+    if (setup_mode) SetupRun();
 #if defined(__x86_64__)
     /* The current NIC backends still contain 32-bit MMIO/PCI assumptions.
        Do not let their probe trap or stall the native boot before CSRSS. */

@@ -24,6 +24,7 @@ CPPFLAGS := \
 	-Idrivers/mouse \
 	-Idrivers/net \
 	-Idrivers/usb \
+	-Idrivers/ide \
 	-Idrivers/fat32 \
 	-Idrivers/serial \
 	-Idrivers/vga \
@@ -57,12 +58,14 @@ KERNEL_CORE_SRCS := \
 	kernel/kexports.c \
 	kernel/driver.c \
 	kernel/driver_stubs.c \
+	kernel/setup.c \
 	kernel/subsystem.c \
 	kernel/nativecmd.c \
 	kernel/bugcheck.c \
 	kernel/idt.c \
 	kernel/isr.c \
 	drivers/fat32/fat32.c \
+	drivers/ide/ide.c \
 	drivers/usb/usb.c \
 	drivers/usb/usb_msc.c \
 	drivers/usb/uhci.c \
@@ -120,7 +123,8 @@ FB_SYS := $(BUILD_DIR)/drivers/fb/fb.sys
 FONT_DIR := $(SYSTEM32_DIR)/FONTS
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
-DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS)
+IDE_SYS := $(BUILD_DIR)/drivers/ide/ide.sys
+DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS) $(IDE_SYS)
 
 .PHONY: all clean iso usb-image kernel dlls apps run-x86 run-amd64 x86 amd64
 
@@ -347,6 +351,10 @@ USB_SOURCES := drivers/usb/usb.c drivers/usb/usb_msc.c drivers/usb/uhci.c driver
 $(USB_SYS): $(USB_SOURCES) drivers/usb/usb.h drivers/usb/usb_internal.h drivers/usb/usb_msc.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $(USB_SOURCES)
+
+$(IDE_SYS): drivers/ide/ide.c drivers/ide/ide.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ide/ide.c
 
 $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
 	@mkdir -p $(SYSTEM32_DIR)
