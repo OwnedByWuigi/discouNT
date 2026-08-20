@@ -225,7 +225,6 @@ static GUI_APP_INSTANCE *csrss_find_app_by_window(GUI_HANDLE hwnd) {
 
 static uint32_t csrss_translate_key_wparam(const KEYBOARD_EVENT *event) {
     if (!event) return 0;
-    if (event->ascii) return (uint8_t)event->ascii;
 
     switch (event->scancode) {
     case 0x0E: return 0x08;
@@ -233,7 +232,7 @@ static uint32_t csrss_translate_key_wparam(const KEYBOARD_EVENT *event) {
     case 0x1C: return 0x0D;
     case 0x01: return 0x1B;
     case 0x39: return 0x20;
-    default:   return 0;
+    default:   return event->ascii ? (uint8_t)event->ascii : 0;
     }
 }
 

@@ -3,6 +3,7 @@ ENTRY(start)
 SECTIONS
 {
     . = 1M;
+    __kernel_start = .;
     
     .multiboot ALIGN(4K) : {
         *(.multiboot)
@@ -26,6 +27,7 @@ SECTIONS
         *(.bss)
         __bss_end = .;
     }
+    __kernel_end = ALIGN(4K);
     
     /DISCARD/ : {
         *(.comment)

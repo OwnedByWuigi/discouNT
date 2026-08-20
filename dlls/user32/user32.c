@@ -3410,6 +3410,8 @@ BOOL EndDialog(HWND hDlg, INT_PTR nResult) {
     SerialPutString("[USER32] EndDialog\r\n");
     win->ended = 1;
     win->dialog_result = nResult;
+    /* Wake a modal GetMessage loop so it can observe the ended flag. */
+    PostMessageW(hDlg, WM_NULL, 0, 0);
     return TRUE;
 }
 BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {

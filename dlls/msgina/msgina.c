@@ -168,6 +168,10 @@ GetRegistrySettings(PGINA_CONTEXT pgContext)
         return FALSE;
     }
 
+    /* discouNT currently has no persistent Winlogon registry.  Use the
+     * built-in Administrator account consistently on every architecture;
+     * a real registry value can still override this default later. */
+    pgContext->bAutoAdminLogon = TRUE;
     rc = ReadRegDwordValue(hKey, L"AutoAdminLogon", &dwValue);
     if (rc == ERROR_SUCCESS)
         pgContext->bAutoAdminLogon = !!dwValue;

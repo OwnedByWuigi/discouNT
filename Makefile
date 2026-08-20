@@ -45,6 +45,8 @@ LDFLAGS := -m elf_i386 -T kernel/linker.ld -nostdlib -no-pie
 KERNEL_CORE_SRCS := \
 	kernel/util.c \
 	kernel/mm.c \
+	kernel/pmm.c \
+	kernel/vmm.c \
 	kernel/hal.c \
 	kernel/object.c \
 	kernel/io.c \

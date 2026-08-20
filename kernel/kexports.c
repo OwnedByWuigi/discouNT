@@ -2,6 +2,8 @@
 #include "kexports.h"
 #include "driver.h"
 #include "mm.h"
+#include "pmm.h"
+#include "vmm.h"
 #include "util.h"
 #include "object.h"
 #include "io.h"
@@ -33,6 +35,15 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"kfree", kfree},
     {"MmGetHeapUsed", MmGetHeapUsed},
     {"MmGetHeapTotal", MmGetHeapTotal},
+    {"PmmAllocatePage", PmmAllocatePage},
+    {"PmmAllocatePages", PmmAllocatePages},
+    {"PmmFreePage", PmmFreePage},
+    {"PmmFreePages", PmmFreePages},
+    {"PmmGetTotalPages", PmmGetTotalPages},
+    {"PmmGetFreePages", PmmGetFreePages},
+    {"VmmAllocatePages", VmmAllocatePages},
+    {"VmmFreePages", VmmFreePages},
+    {"VmmGetPhysicalAddress", VmmGetPhysicalAddress},
     {"memset", memset},
     {"memcpy", memcpy},
     {"strlen", strlen},

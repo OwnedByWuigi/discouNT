@@ -1,12 +1,11 @@
 #include <stdint.h>
 #include "mm.h"
+#include "pmm.h"
+#include "vmm.h"
 
-/* USER32 list views reserve sizeable backing tables for native Win32 apps
- * (Task Manager has several).  Eight MiB was enough for the shell alone but
- * left no room to start a second GUI process. */
-#define KERNEL_HEAP_SIZE 0x1000000
-#define MM_ALIGN         8
-#define MM_SPLIT_MIN     16
+#define MM_ALIGN 8U
+#define MM_SPLIT_MIN 16U
+#define MM_HEAP_GROW_PAGES 16U
 
 typedef struct _HEAP_BLOCK {
     uint32_t size;
@@ -14,44 +13,53 @@ typedef struct _HEAP_BLOCK {
     struct _HEAP_BLOCK *next;
 } HEAP_BLOCK;
 
-static uint8_t kernel_heap[KERNEL_HEAP_SIZE];
-static HEAP_BLOCK *heap_head = 0;
-static int heap_initialized = 0;
+static HEAP_BLOCK *heap_head;
+static uint32_t heap_committed;
+static int heap_initialized;
 
-static uint32_t mm_align_up(uint32_t size) {
-    return (size + (MM_ALIGN - 1)) & ~(MM_ALIGN - 1);
+static uint32_t MmAlignUp(uint32_t size) {
+    return (size + MM_ALIGN - 1) & ~(MM_ALIGN - 1);
 }
 
-static void mm_init(void) {
-    if (heap_initialized) return;
-    heap_head = (HEAP_BLOCK*)kernel_heap;
-    heap_head->size = KERNEL_HEAP_SIZE - sizeof(HEAP_BLOCK);
-    heap_head->free = 1;
-    heap_head->next = 0;
+void MmInitialize(void *boot_info) {
+    PmmInitialize(boot_info);
+    VmmInitialize();
+    heap_head = 0;
+    heap_committed = 0;
     heap_initialized = 1;
 }
 
-static void mm_split_block(HEAP_BLOCK *block, uint32_t size) {
-    HEAP_BLOCK *next;
-    uint32_t remaining;
-
-    if (!block) return;
-    if (block->size <= size + sizeof(HEAP_BLOCK) + MM_SPLIT_MIN) return;
-
-    remaining = block->size - size - sizeof(HEAP_BLOCK);
-    next = (HEAP_BLOCK*)((uint8_t*)(block + 1) + size);
-    next->size = remaining;
-    next->free = 1;
-    next->next = block->next;
-
-    block->size = size;
-    block->next = next;
+static HEAP_BLOCK *MmGrowHeap(uint32_t required) {
+    uint32_t bytes = required + sizeof(HEAP_BLOCK);
+    uint32_t pages = (bytes + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE;
+    HEAP_BLOCK *block;
+    if (pages < MM_HEAP_GROW_PAGES) pages = MM_HEAP_GROW_PAGES;
+    block = (HEAP_BLOCK*)VmmAllocatePages(pages);
+    if (!block) return 0;
+    block->size = pages * PMM_PAGE_SIZE - sizeof(HEAP_BLOCK);
+    block->free = 1;
+    block->next = heap_head;
+    heap_head = block;
+    heap_committed += pages * PMM_PAGE_SIZE;
+    return block;
 }
 
-static void mm_coalesce(void) {
+static void MmSplitBlock(HEAP_BLOCK *block, uint32_t size) {
+    HEAP_BLOCK *remainder;
+    if (block->size <= size + sizeof(HEAP_BLOCK) + MM_SPLIT_MIN) return;
+    remainder = (HEAP_BLOCK*)((uint8_t*)(block + 1) + size);
+    remainder->size = block->size - size - sizeof(HEAP_BLOCK);
+    remainder->free = 1;
+    remainder->next = block->next;
+    block->size = size;
+    block->next = remainder;
+}
+
+static void MmCoalesce(void) {
     HEAP_BLOCK *block = heap_head;
     while (block && block->next) {
-        if (block->free && block->next->free) {
+        uint8_t *block_end = (uint8_t*)(block + 1) + block->size;
+        if (block->free && block->next->free && block_end == (uint8_t*)block->next) {
             block->size += sizeof(HEAP_BLOCK) + block->next->size;
             block->next = block->next->next;
             continue;
@@ -62,44 +70,38 @@ static void mm_coalesce(void) {
 
 void *kmalloc(uint32_t size) {
     HEAP_BLOCK *block;
-
-    if (size == 0) return 0;
-    mm_init();
-
-    size = mm_align_up(size);
-    block = heap_head;
-    while (block) {
+    if (!size || !heap_initialized) return 0;
+    size = MmAlignUp(size);
+retry:
+    for (block = heap_head; block; block = block->next) {
         if (block->free && block->size >= size) {
-            mm_split_block(block, size);
+            MmSplitBlock(block, size);
             block->free = 0;
-            return (void*)(block + 1);
+            return block + 1;
         }
-        block = block->next;
     }
-
+    if (MmGrowHeap(size)) goto retry;
     return 0;
 }
 
-void kfree(void *ptr) {
+void kfree(void *pointer) {
     HEAP_BLOCK *block;
-
-    if (!ptr) return;
-    if ((uint8_t*)ptr < kernel_heap || (uint8_t*)ptr >= kernel_heap + KERNEL_HEAP_SIZE) return;
-
-    block = ((HEAP_BLOCK*)ptr) - 1;
-    block->free = 1;
-    mm_coalesce();
+    if (!pointer || !heap_initialized) return;
+    for (block = heap_head; block; block = block->next) {
+        if ((void*)(block + 1) == pointer) {
+            block->free = 1;
+            MmCoalesce();
+            return;
+        }
+    }
 }
 
 uint32_t MmGetHeapUsed(void) {
     HEAP_BLOCK *block;
     uint32_t used = 0;
-    mm_init();
     for (block = heap_head; block; block = block->next)
         if (!block->free) used += block->size;
     return used;
 }
 
-uint32_t MmGetHeapTotal(void) {
-    return KERNEL_HEAP_SIZE;
-}
+uint32_t MmGetHeapTotal(void) { return heap_committed; }

@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "hal.h"
+#include "mm.h"
 #include "object.h"
 #include "io.h"
 #include "ke.h"
@@ -12,14 +13,7 @@
 #include "util.h"
 #include "version.h"
 #include "idt.h"
-
-typedef struct _MULTIBOOT_INFO {
-    uint32_t flags;
-    uint32_t mem_lower;
-    uint32_t mem_upper;
-    uint32_t boot_device;
-    uint32_t cmdline;
-} MULTIBOOT_INFO;
+#include "multiboot.h"
 
 static int BootDebugRequested(void *mb_info_ptr) {
     MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
@@ -143,6 +137,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     SerialPutString("========================================\r\n\r\n");
     
     HalInitialize();
+    MmInitialize(mb_info_ptr);
     IdtInitialize();
     ShowBootScreen(mb_info_ptr);
     

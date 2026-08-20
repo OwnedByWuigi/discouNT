@@ -3,6 +3,7 @@
 #define MM_H
 #include <stdint.h>
 
+void MmInitialize(void *boot_info);
 void *kmalloc(uint32_t size);
 void kfree(void *ptr);
 uint32_t MmGetHeapUsed(void);
