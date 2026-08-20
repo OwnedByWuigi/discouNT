@@ -41,6 +41,7 @@
 
 static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
+static uint32_t window_object_type;
 static HANDLE active_window = INVALID_HANDLE;
 static int redraw_in_progress;
 static int color_preview_overlay;
@@ -571,6 +572,7 @@ static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
 }
 
 void Win32kInit(void *mb_info) {
+    window_object_type = ObRegisterObjectType("Window", 0);
     FbInit(mb_info);
     FbClearScreen(DESKTOP_COLOR);
     window_count = 0;
@@ -600,7 +602,7 @@ HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc
     memcpy(wc->className, className, len);
     wc->style = style;
     wc->wndProc = wndProc;
-    hclass = ObCreateObject(OBJ_TYPE_WINDOW, className, wc, sizeof(WNDCLASS));
+    hclass = ObCreateObject(window_object_type, className, wc, sizeof(WNDCLASS));
     if (hclass == INVALID_HANDLE) {
         SerialPutString("[Win32k] RegisterClass ObCreateObject failed for ");
         SerialPutString(className);
@@ -646,7 +648,7 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
     win->wndClass = wc;
     win->wndProc = wc->wndProc;
     
-    HANDLE hwnd = ObCreateObject(OBJ_TYPE_WINDOW, title, win, sizeof(WINDOW));
+    HANDLE hwnd = ObCreateObject(window_object_type, title, win, sizeof(WINDOW));
     if (hwnd == INVALID_HANDLE) {
         SerialPutString("[Win32k] CreateWindowByClass ObCreateObject failed for ");
         SerialPutString(title);
@@ -671,7 +673,7 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
 }
 
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
-    HANDLE hClass = ObFindObject(className, OBJ_TYPE_WINDOW);
+    HANDLE hClass = ObFindObject(className, window_object_type);
     if (hClass == INVALID_HANDLE) return INVALID_HANDLE;
     return Win32kCreateWindowByClass(hClass, title, x, y, w, h, style);
 }

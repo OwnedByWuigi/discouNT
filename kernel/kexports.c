@@ -44,6 +44,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"__divdi3", __divdi3},
     {"__moddi3", __moddi3},
     {"ObCreateObject", ObCreateObject},
+    {"ObRegisterObjectType", ObRegisterObjectType},
+    {"ObGetObjectType", ObGetObjectType},
     {"ObReferenceObject", ObReferenceObject},
     {"ObDereferenceObject", ObDereferenceObject},
     {"ObFindObject", ObFindObject},

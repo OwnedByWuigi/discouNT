@@ -10,6 +10,18 @@ static THREAD *ready_queue = 0;
 static PROCESS *process_list = 0;
 static uint32_t thread_count = 0;
 static uint32_t scheduler_ticks = 0;
+static uint32_t process_object_type;
+static uint32_t thread_object_type;
+static uint32_t event_object_type;
+static uint32_t mutex_object_type;
+
+static void KeDeleteThreadObject(void *body) {
+    THREAD *thread = (THREAD*)body;
+    if (thread && thread->stack) {
+        kfree(thread->stack);
+        thread->stack = 0;
+    }
+}
 
 // Note: kmalloc and kfree are now in mm.c - include mm.h instead
 
@@ -39,6 +51,10 @@ static void KeAppendReadyThread(THREAD *thread) {
 void KeInit(void) {
     thread_count = 0;
     scheduler_ticks = 0;
+    process_object_type = ObRegisterObjectType("Process", 0);
+    thread_object_type = ObRegisterObjectType("Thread", KeDeleteThreadObject);
+    event_object_type = ObRegisterObjectType("Event", 0);
+    mutex_object_type = ObRegisterObjectType("Mutex", 0);
     // Don't print anything here - HAL may not be initialized
 }
 
@@ -59,7 +75,7 @@ void KeAttachCurrentThread(const char *name) {
     thread->context_esi = 0;
     thread->context_edi = 0;
     thread->context_ebp = 0;
-    handle = ObCreateObject(OBJ_TYPE_THREAD, name ? name : "MainThread", thread, sizeof(THREAD));
+    handle = ObCreateObject(thread_object_type, name ? name : "MainThread", thread, sizeof(THREAD));
     thread->handle = handle;
     current_thread = thread;
     ready_queue = thread;
@@ -78,7 +94,7 @@ HANDLE KeCreateProcess(const char *name) {
     proc->thread_list = process_list ? process_list->thread_list : 0;
     process_list = proc;
     
-    return ObCreateObject(OBJ_TYPE_PROCESS, name, proc, sizeof(PROCESS));
+    return ObCreateObject(process_object_type, name, proc, sizeof(PROCESS));
 }
 
 HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
@@ -127,7 +143,7 @@ HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     char thread_name[64] = "Thread";
     strcat(thread_name, p);
     
-    HANDLE handle = ObCreateObject(OBJ_TYPE_THREAD, thread_name, thread, sizeof(THREAD));
+    HANDLE handle = ObCreateObject(thread_object_type, thread_name, thread, sizeof(THREAD));
     if (handle == INVALID_HANDLE) {
         kfree(thread->stack);
         kfree(thread);
@@ -251,7 +267,7 @@ void KeStartScheduler(void) {
 HANDLE KeCreateMutex(void) {
     MUTEX *mutex = (MUTEX*)kmalloc(sizeof(MUTEX));
     memset(mutex, 0, sizeof(MUTEX));
-    return ObCreateObject(OBJ_TYPE_MUTEX, "Mutex", mutex, sizeof(MUTEX));
+    return ObCreateObject(mutex_object_type, "Mutex", mutex, sizeof(MUTEX));
 }
 
 void KeWaitMutex(HANDLE mutex_handle) {
@@ -279,7 +295,7 @@ HANDLE KeCreateEvent(uint32_t manual_reset) {
     EVENT *event = (EVENT*)kmalloc(sizeof(EVENT));
     memset(event, 0, sizeof(EVENT));
     event->manual_reset = manual_reset;
-    return ObCreateObject(OBJ_TYPE_EVENT, "Event", event, sizeof(EVENT));
+    return ObCreateObject(event_object_type, "Event", event, sizeof(EVENT));
 }
 
 void KeSetEvent(HANDLE event_handle) {
