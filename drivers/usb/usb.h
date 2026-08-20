@@ -7,5 +7,6 @@ void UsbInit(void);
 void UsbPoll(void);
 int UsbIsReady(void);
 int UsbGetControllerCount(void);
+int UsbBootInitialize(void);
 
 #endif

@@ -14,6 +14,8 @@
 #include "version.h"
 #include "idt.h"
 #include "multiboot.h"
+#include "usb.h"
+#include "fat32.h"
 
 static int BootDebugRequested(void *mb_info_ptr) {
     MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
@@ -145,7 +147,8 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     IoInit();
     KeInit();
     KeAttachCurrentThread("KernelMain");
-    CdfsInit();
+    if (UsbBootInitialize()) Fat32Initialize("UsbDisk0");
+    if (!Fat32IsMounted()) CdfsInit();
     DriverLoadAll(mb_info_ptr);
     KeyboardInit();
 #if defined(__x86_64__)

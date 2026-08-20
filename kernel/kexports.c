@@ -10,6 +10,7 @@
 #include "io.h"
 #include "serial.h"
 #include "cdfs.h"
+#include "fat32.h"
 #include "keyboard.h"
 #include "mouse.h"
 #include "net.h"
@@ -45,6 +46,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"VmmAllocatePages", VmmAllocatePages},
     {"VmmFreePages", VmmFreePages},
     {"VmmGetPhysicalAddress", VmmGetPhysicalAddress},
+    {"VmmMapMmioRange", VmmMapMmioRange},
     {"memset", memset},
     {"memcpy", memcpy},
     {"strlen", strlen},
@@ -83,6 +85,9 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"CdfsReadSector", CdfsReadSector},
     {"CdfsFindFile", CdfsFindFile},
     {"CdfsReadFile", CdfsReadFile},
+    {"Fat32Initialize", Fat32Initialize},
+    {"Fat32IsMounted", Fat32IsMounted},
+    {"Fat32ReadFile", Fat32ReadFile},
     {"KeyboardInit", KeyboardInit},
     {"KeyboardHandleData", KeyboardHandleData},
     {"KeyboardHandleControllerEvent", KeyboardHandleControllerEvent},

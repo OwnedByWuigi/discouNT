@@ -4,6 +4,7 @@
 #include "serial.h"
 #include "vga.h"
 #include "cdfs.h"
+#include "fat32.h"
 #include "keyboard.h"
 #include "mouse.h"
 #include "net.h"
@@ -255,7 +256,7 @@ void DriverInstallCdfs(void *image) {
     RESOLVE(pCdfsFindFile, image, "CdfsFindFile");
     RESOLVE(pCdfsReadFile, image, "CdfsReadFile");
 
-    if (pCdfsInit) {
+    if (pCdfsInit && !Fat32IsMounted()) {
         pCdfsInit();
     }
 }

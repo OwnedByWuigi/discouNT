@@ -8,7 +8,7 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
- -Idrivers/serial -Idrivers/vga -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+ -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
@@ -17,14 +17,16 @@ KERNEL := $(BUILD_DIR)/kernel.elf
 SRCS := kernel/util.c kernel/rtlpath.c kernel/mm.c kernel/pmm.c kernel/vmm.c kernel/hal.c kernel/object.c kernel/io.c kernel/ke.c \
  kernel/peloader.c kernel/kexports.c kernel/driver.c kernel/driver_stubs.c \
  kernel/subsystem.c kernel/nativecmd.c kernel/bugcheck.c kernel/idt.c \
- kernel/isr.c win32/csrss/csrss.c win32/smss/smss.c kernel/entry.c
+ kernel/isr.c drivers/fat32/fat32.c drivers/usb/usb.c drivers/usb/usb_msc.c \
+ drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
+ win32/csrss/csrss.c win32/smss/smss.c kernel/entry.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 BOOT := $(BUILD_DIR)/boot/boot64.o
 ISR := $(BUILD_DIR)/kernel/isr_stubs64.o
 BOOT_SERIAL := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 
-.PHONY: all iso userspace clean
+.PHONY: all iso usb-image userspace clean
 NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll shell32 shlwapi user32
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
@@ -62,6 +64,9 @@ iso: $(KERNEL) userspace
 	done
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR)
+
+usb-image: iso
+	sh tools/make_usb_image.sh $(ISO_DIR) $(ISO_DIR)/boot/grub/grub.cfg ntos-amd64-usb.img
 
 # Native AMD64 userland is kept separate while the existing 32-bit image is
 # retained as the compatibility/WOW layer.  This avoids silently replacing

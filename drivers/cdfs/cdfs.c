@@ -5,6 +5,7 @@
 #include "mm.h"
 #include "util.h"
 #include "rtlpath.h"
+#include "fat32.h"
 
 static int cdrom_present = 0;
 static int cdrom_ready = 0;
@@ -452,6 +453,7 @@ int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size) {
     uint32_t sectors;
     uint32_t alloc_size;
     
+    if (Fat32IsMounted()) return Fat32ReadFile(path, out_buffer, out_size);
     if (!CdfsFindFile(path, &lba, &size)) return 0;
     
     sectors = (size + 2047) / 2048;

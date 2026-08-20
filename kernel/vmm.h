@@ -6,5 +6,6 @@ void VmmInitialize(void);
 void *VmmAllocatePages(uint32_t count);
 void VmmFreePages(void *address, uint32_t count);
 uintptr_t VmmGetPhysicalAddress(const void *address);
+void *VmmMapMmioRange(uint64_t physical_address, uint32_t length);
 
 #endif

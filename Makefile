@@ -24,6 +24,7 @@ CPPFLAGS := \
 	-Idrivers/mouse \
 	-Idrivers/net \
 	-Idrivers/usb \
+	-Idrivers/fat32 \
 	-Idrivers/serial \
 	-Idrivers/vga \
 	-Iwin32/w32k \
@@ -61,6 +62,13 @@ KERNEL_CORE_SRCS := \
 	kernel/bugcheck.c \
 	kernel/idt.c \
 	kernel/isr.c \
+	drivers/fat32/fat32.c \
+	drivers/usb/usb.c \
+	drivers/usb/usb_msc.c \
+	drivers/usb/uhci.c \
+	drivers/usb/ohci.c \
+	drivers/usb/ehci.c \
+	drivers/usb/xhci.c \
 	win32/csrss/csrss.c \
 	win32/smss/smss.c \
 	kernel/entry.c
@@ -114,7 +122,7 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS)
 
-.PHONY: all clean iso kernel dlls apps run-x86 run-amd64 x86 amd64
+.PHONY: all clean iso usb-image kernel dlls apps run-x86 run-amd64 x86 amd64
 
 x86:
 	$(MAKE) BUILD_DIR=build/x86 ISO_NAME=ntos-x86.iso all
@@ -394,6 +402,9 @@ $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(SYSTEM32_DIR)/.stamp
 	cp $< $@
 
 iso: $(ISO_NAME)
+
+usb-image: $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
+	sh tools/make_usb_image.sh $(ISO_DIR) $(GRUB_DIR)/grub.cfg ntos-usb.img
 
 RUN_AMD64 := $(filter amd64,$(MAKECMDGOALS))
 RUN_X86 := $(filter x86,$(MAKECMDGOALS))
