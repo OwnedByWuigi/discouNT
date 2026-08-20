@@ -4,6 +4,7 @@
 #include "mm.h"
 #include "portio.h"
 #include "util.h"
+#include "rtlpath.h"
 #include "serial.h"
 #include "cdfs.h"
 #include "peloader.h"
@@ -122,17 +123,8 @@ static int find_in_dir(uint32_t dir_lba, uint32_t dir_size, const char *name,
 }
 
 static void path_join(char *out_path, const char *base, const char *name) {
-    if (!out_path || !base || !name) return;
-
-    if (name[0] == '/') {
-        strcpy(out_path, name);
-        return;
-    }
-
-    strcpy(out_path, base);
-    if (out_path[0] == 0) strcpy(out_path, "/");
-    if (out_path[strlen(out_path) - 1] != '/') strcat(out_path, "/");
-    strcat(out_path, name);
+    if (RtlJoinPath(base, name, out_path, 256) < 0 && out_path)
+        out_path[0] = 0;
 }
 
 static int has_extension(const char *name) {

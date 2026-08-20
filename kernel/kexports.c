@@ -5,6 +5,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "util.h"
+#include "rtlpath.h"
 #include "object.h"
 #include "io.h"
 #include "serial.h"
@@ -51,6 +52,11 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"strcpy", strcpy},
     {"strcat", strcat},
     {"itoa", itoa},
+    {"RtlNormalizePath", RtlNormalizePath},
+    {"RtlNextPathComponent", RtlNextPathComponent},
+    {"RtlJoinPath", RtlJoinPath},
+    {"RtlPathFileName", RtlPathFileName},
+    {"RtlReplacePathExtension", RtlReplacePathExtension},
     {"__udivdi3", __udivdi3},
     {"__umoddi3", __umoddi3},
     {"__divdi3", __divdi3},

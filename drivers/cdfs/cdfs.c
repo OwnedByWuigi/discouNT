@@ -4,6 +4,7 @@
 #include "serial.h"
 #include "mm.h"
 #include "util.h"
+#include "rtlpath.h"
 
 static int cdrom_present = 0;
 static int cdrom_ready = 0;
@@ -334,7 +335,11 @@ int CdfsReadSector(uint32_t lba, uint8_t *buffer) {
 }
 
 int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
-    if (!cdrom_ready) return 0;
+    char normalized_path[256];
+    char component[256];
+    const char *cursor;
+    int component_result;
+    if (!cdrom_ready || !path || !out_lba || !out_size) return 0;
     
     // Read primary descriptor to get root directory
     uint8_t sector[CDFS_SECTOR_SIZE];
@@ -348,33 +353,15 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
     SerialPutString(path);
     SerialPutString("\r\n");
     
-    // Skip leading slash
-    if (*path == '/') path++;
-    
-    // Make a mutable copy of the path
-    char work_path[256];
-    int plen = strlen(path);
-    if (plen > 254) plen = 254;
-    memcpy(work_path, path, plen);
-    work_path[plen] = 0;
-    
-    // Tokenize by '/'
-    char *token = work_path;
-    char *next_token = 0;
-    
-    // Find first slash
-    for (int i = 0; work_path[i]; i++) {
-        if (work_path[i] == '/') {
-            work_path[i] = 0;
-            next_token = work_path + i + 1;
-            break;
-        }
-    }
+    if (RtlNormalizePath(path, normalized_path, sizeof(normalized_path)) < 0)
+        return 0;
+    cursor = normalized_path;
+    component_result = RtlNextPathComponent(&cursor, component, sizeof(component));
     
     // Navigate through path components
-    while (token && *token) {
+    while (component_result > 0) {
         SerialPutString("[CDFS] Searching for: ");
-        SerialPutString(token);
+        SerialPutString(component);
         SerialPutString("\r\n");
         
         uint32_t sectors = (dir_size + CDFS_SECTOR_SIZE - 1) / CDFS_SECTOR_SIZE;
@@ -415,7 +402,7 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
             SerialPutString(entry_name);
             SerialPutString(flags & 0x02 ? " (dir)\r\n" : " (file)\r\n");
             
-            if (strcmp(token, entry_name) == 0) {
+            if (strcmp(component, entry_name) == 0) {
                 found_lba = *(uint32_t*)(dir_buf + off + 2);
                 found_size = *(uint32_t*)(dir_buf + off + 10);
                 found_is_dir = (flags & 0x02) ? 1 : 0;
@@ -431,12 +418,12 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
         
         if (!found) {
             SerialPutString("[CDFS] Not found: ");
-            SerialPutString(token);
+            SerialPutString(component);
             SerialPutString("\r\n");
             return 0;
         }
         
-        if (next_token == 0) {
+        if (!*cursor) {
             // This is the final component
             *out_lba = found_lba;
             *out_size = found_size;
@@ -447,18 +434,10 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
             SerialPutString("\r\n");
             return 1;
         } else if (found_is_dir) {
-            // Navigate into subdirectory
             dir_lba = found_lba;
             dir_size = found_size;
-            token = next_token;
-            next_token = 0;
-            for (int i = 0; token[i]; i++) {
-                if (token[i] == '/') {
-                    token[i] = 0;
-                    next_token = token + i + 1;
-                    break;
-                }
-            }
+            component_result = RtlNextPathComponent(&cursor, component,
+                                                     sizeof(component));
         } else {
             SerialPutString("[CDFS] Not a directory!\r\n");
             return 0;
