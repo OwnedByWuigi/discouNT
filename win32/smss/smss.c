@@ -83,9 +83,14 @@ void SmssSessionRun(void *mb_info) {
     SerialPutString("[SMSS] Starting Session Manager Subsystem\r\n");
     ret = smss_execute_bootstrap("/SYSTEM32/CSRSS.EXE");
     if (ret != CSRSS_RETURN_MAGIC && ret != 0) {
-        HalInitialize();
-        HalClearScreen(0x1F);
-        HalPutString("Failed to launch CSRSS.EXE from SYSTEM32.\n", 0x0C);
+        SerialPutString("[SMSS] CSRSS bootstrap failed, status=");
+        SerialPrintHex((uint32_t)ret);
+        SerialPutString("\r\n");
+        if (!SerialIsScreenDebugEnabled()) {
+            HalInitialize();
+            HalClearScreen(0x1F);
+            HalPutString("Failed to launch CSRSS.EXE from SYSTEM32.\n", 0x0C);
+        }
         return;
     }
 

@@ -128,19 +128,24 @@ static void ShowBootScreen(void *mb_info_ptr) {
 }
 
 void kmain(uint32_t magic, void *mb_info_ptr) {
+    int screen_debug;
     (void)magic;
-    
+
+    screen_debug = BootOptionRequested(mb_info_ptr, "screen-debug");
     SerialSetDebugEnabled(BootOptionRequested(mb_info_ptr, "debug"));
-    SerialSetScreenDebugEnabled(BootOptionRequested(mb_info_ptr, "screen-debug"));
+    SerialSetScreenDebugEnabled(screen_debug);
     SerialInit();
     SerialPutString("\r\n========================================\r\n");
     SerialPutString("  " DISCOUNT_NAME "\r\n");
     SerialPutString("========================================\r\n\r\n");
     
+    HalConfigureBootDisplay(mb_info_ptr);
     HalInitialize();
     MmInitialize(mb_info_ptr);
     IdtInitialize();
-    ShowBootScreen(mb_info_ptr);
+    /* The normal status screen clears VGA text memory.  In screen-debug mode
+       that memory is the debug console, so leave its log intact. */
+    if (!screen_debug) ShowBootScreen(mb_info_ptr);
     
     ObInit();
     IoInit();

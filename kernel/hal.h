@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 void HalInitialize(void);
+void HalConfigureBootDisplay(void *multiboot_info);
 void HalClearScreen(uint8_t color);
 void HalPutChar(char c, uint8_t color);
 void HalPutString(const char *str, uint8_t color);
