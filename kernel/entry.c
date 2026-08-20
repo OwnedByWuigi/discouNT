@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "hal.h"
 #include "object.h"
+#include "io.h"
 #include "ke.h"
 #include "serial.h"
 #include "cdfs.h"
@@ -146,6 +147,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     ShowBootScreen(mb_info_ptr);
     
     ObInit();
+    IoInit();
     KeInit();
     KeAttachCurrentThread("KernelMain");
     CdfsInit();

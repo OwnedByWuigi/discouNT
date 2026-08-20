@@ -47,6 +47,7 @@ KERNEL_CORE_SRCS := \
 	kernel/mm.c \
 	kernel/hal.c \
 	kernel/object.c \
+	kernel/io.c \
 	kernel/ke.c \
 	kernel/peloader.c \
 	kernel/kexports.c \

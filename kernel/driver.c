@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "driver.h"
+#include "io.h"
 #include "cdfs.h"
 #include "mm.h"
 #include "util.h"
@@ -29,11 +30,19 @@ void *DriverResolveSymbol(const char *name) {
     return 0;
 }
 
-static int driver_call_entry(void *image, void *context) {
-    typedef int (*DriverEntryFn)(void *context);
+static int driver_call_entry(const char *name, void *image, void *context) {
+    typedef int (*DriverEntryFn)(IO_DRIVER_OBJECT *driver, void *context);
     DriverEntryFn entry = (DriverEntryFn)PeGetProcAddress(image, "DriverEntry");
+    IO_DRIVER_OBJECT *driver;
+    int status;
+    driver = IoCreateDriver(name, image, context);
+    if (!driver) return 0;
     if (!entry) return 1;
-    return entry(context);
+    IoSetCurrentDriver(driver);
+    status = entry(driver, context);
+    IoSetCurrentDriver(0);
+    if (!status) IoDeleteDriver(driver);
+    return status;
 }
 
 static int driver_register_image(const char *path, void *image) {
@@ -78,7 +87,7 @@ static int driver_load_one(const DRIVER_SPEC *spec, void *context) {
 
     driver_register_image(spec->path, image);
 
-    if (!driver_call_entry(image, context)) {
+    if (!driver_call_entry(spec->path, image, context)) {
         SerialPutString("[DRV] DriverEntry failed ");
         SerialPutString(spec->path);
         SerialPutString("\r\n");

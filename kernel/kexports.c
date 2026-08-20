@@ -4,6 +4,7 @@
 #include "mm.h"
 #include "util.h"
 #include "object.h"
+#include "io.h"
 #include "serial.h"
 #include "cdfs.h"
 #include "keyboard.h"
@@ -49,6 +50,13 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"ObReferenceObject", ObReferenceObject},
     {"ObDereferenceObject", ObDereferenceObject},
     {"ObFindObject", ObFindObject},
+    {"IoCreateDevice", IoCreateDevice},
+    {"IoDeleteDriver", IoDeleteDriver},
+    {"IoGetDevice", IoGetDevice},
+    {"IoDeleteDevice", IoDeleteDevice},
+    {"IoCallDriver", IoCallDriver},
+    {"IoSendRequest", IoSendRequest},
+    {"IoDeviceControl", IoDeviceControl},
     {"SerialInit", SerialInit},
     {"SerialPutChar", SerialPutChar},
     {"SerialPutString", SerialPutString},

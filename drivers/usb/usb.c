@@ -240,7 +240,10 @@ void UsbPoll(void) {
 int UsbIsReady(void) { return controller_count > 0; }
 int UsbGetControllerCount(void) { return controller_count; }
 
-int DriverEntry(void *context) {
+#include "io.h"
+
+int DriverEntry(IO_DRIVER_OBJECT *driver, void *context) {
+    (void)driver;
     (void)context;
     UsbInit();
     return 1;

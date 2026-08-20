@@ -14,7 +14,7 @@ CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
  -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
-SRCS := kernel/util.c kernel/mm.c kernel/hal.c kernel/object.c kernel/ke.c \
+SRCS := kernel/util.c kernel/mm.c kernel/hal.c kernel/object.c kernel/io.c kernel/ke.c \
  kernel/peloader.c kernel/kexports.c kernel/driver.c kernel/driver_stubs.c \
  kernel/subsystem.c kernel/nativecmd.c kernel/bugcheck.c kernel/idt.c \
  kernel/isr.c win32/csrss/csrss.c win32/smss/smss.c kernel/entry.c
