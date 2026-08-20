@@ -6,11 +6,24 @@
 #include "util.h"
 #include "rtlpath.h"
 #include "fat32.h"
+#include "io.h"
 
 static int cdrom_present = 0;
 static int cdrom_ready = 0;
+static IO_DEVICE_OBJECT *usb_iso_device = 0;
 static int ide_base = 0;
 static int ide_slave = 0;
+
+static int usb_read_iso_sector(uint32_t lba, uint8_t *buffer) {
+    IO_REQUEST request;
+    if (!usb_iso_device) return 0;
+    memset(&request, 0, sizeof(request));
+    request.major_function = IO_MJ_READ;
+    request.buffer = buffer;
+    request.length = CDFS_SECTOR_SIZE;
+    request.parameters.read_write.offset = (uint64_t)lba * CDFS_SECTOR_SIZE;
+    return IoCallDriver(usb_iso_device, &request) == IO_STATUS_SUCCESS;
+}
 
 static void ata_delay(void) {
     for (volatile int i = 0; i < 100; i++);
@@ -261,10 +274,23 @@ static int probe_ide_device(int base, int slave) {
 }
 
 void CdfsInit(void) {
+    uint8_t sector[CDFS_SECTOR_SIZE];
     SerialPutString("[CDFS] Initializing CD-ROM...\r\n");
     
     cdrom_present = 0;
     cdrom_ready = 0;
+    usb_iso_device = IoGetDevice("UsbDisk0");
+
+    /* A hybrid ISO flashed to USB is still ISO-9660, not FAT32. */
+    if (usb_iso_device && usb_read_iso_sector(16, sector) &&
+        sector[0] == 1 && sector[1] == 'C' && sector[2] == 'D' &&
+        sector[3] == '0' && sector[4] == '0' && sector[5] == '1') {
+        cdrom_present = 1;
+        cdrom_ready = 1;
+        SerialPutString("[CDFS] ISO 9660 filesystem found on USB!\r\n");
+        return;
+    }
+    usb_iso_device = 0;
     
     // Probe all 4 possible IDE positions
     struct { int base; int slave; } ports[] = {
@@ -291,8 +317,6 @@ void CdfsInit(void) {
     SerialPutString(ide_slave ? " slave\r\n" : " master\r\n");
     
     // Read primary volume descriptor (sector 16)
-    uint8_t sector[CDFS_SECTOR_SIZE];
-    
     if (!atapi_read_sector_internal(ide_base, ide_slave, 16, sector)) {
         SerialPutString("[CDFS] Failed to read sector 16\r\n");
         SerialPutString("[CDFS] Trying sector 17...\r\n");
@@ -332,6 +356,7 @@ void CdfsInit(void) {
 
 int CdfsReadSector(uint32_t lba, uint8_t *buffer) {
     if (!cdrom_present || !cdrom_ready) return 0;
+    if (usb_iso_device) return usb_read_iso_sector(lba, buffer);
     return atapi_read_sector_internal(ide_base, ide_slave, lba, buffer);
 }
 

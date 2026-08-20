@@ -17,7 +17,7 @@
 #include "usb.h"
 #include "fat32.h"
 
-static int BootDebugRequested(void *mb_info_ptr) {
+static int BootOptionRequested(void *mb_info_ptr, const char *option) {
     MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
     const char *cmdline;
 
@@ -26,12 +26,10 @@ static int BootDebugRequested(void *mb_info_ptr) {
 
     while (*cmdline) {
         while (*cmdline == ' ' || *cmdline == '\t') cmdline++;
-        if (cmdline[0] == 'd' && cmdline[1] == 'e' &&
-            cmdline[2] == 'b' && cmdline[3] == 'u' &&
-            cmdline[4] == 'g' &&
-            (cmdline[5] == 0 || cmdline[5] == ' ' || cmdline[5] == '\t')) {
-            return 1;
-        }
+        const char *word = cmdline;
+        const char *wanted = option;
+        while (*word && *wanted && *word == *wanted) { word++; wanted++; }
+        if (!*wanted && (*word == 0 || *word == ' ' || *word == '\t')) return 1;
         while (*cmdline && *cmdline != ' ' && *cmdline != '\t') cmdline++;
     }
     return 0;
@@ -132,7 +130,8 @@ static void ShowBootScreen(void *mb_info_ptr) {
 void kmain(uint32_t magic, void *mb_info_ptr) {
     (void)magic;
     
-    SerialSetDebugEnabled(BootDebugRequested(mb_info_ptr));
+    SerialSetDebugEnabled(BootOptionRequested(mb_info_ptr, "debug"));
+    SerialSetScreenDebugEnabled(BootOptionRequested(mb_info_ptr, "screen-debug"));
     SerialInit();
     SerialPutString("\r\n========================================\r\n");
     SerialPutString("  " DISCOUNT_NAME "\r\n");

@@ -31,6 +31,40 @@ static void (*pSerialPutString)(const char *str) = 0;
 static void (*pSerialPrintHex)(uint32_t val) = 0;
 static void (*pSerialPrintDec)(uint32_t val) = 0;
 static int serial_debug_enabled = 0;
+static int screen_debug_enabled = 0;
+static int screen_debug_x = 0;
+static int screen_debug_y = 0;
+
+#define SCREEN_DEBUG_WIDTH 80
+#define SCREEN_DEBUG_HEIGHT 25
+#define SCREEN_DEBUG_MEMORY ((volatile uint16_t*)0xB8000)
+
+static void ScreenDebugPutChar(char c) {
+    int x, y;
+    if (c == '\r') {
+        screen_debug_x = 0;
+        return;
+    }
+    if (c == '\n') {
+        screen_debug_x = 0;
+        screen_debug_y++;
+    } else {
+        SCREEN_DEBUG_MEMORY[screen_debug_y * SCREEN_DEBUG_WIDTH + screen_debug_x] =
+            (uint16_t)(uint8_t)c | 0x0700;
+        if (++screen_debug_x >= SCREEN_DEBUG_WIDTH) {
+            screen_debug_x = 0;
+            screen_debug_y++;
+        }
+    }
+    if (screen_debug_y < SCREEN_DEBUG_HEIGHT) return;
+    for (y = 1; y < SCREEN_DEBUG_HEIGHT; y++)
+        for (x = 0; x < SCREEN_DEBUG_WIDTH; x++)
+            SCREEN_DEBUG_MEMORY[(y - 1) * SCREEN_DEBUG_WIDTH + x] =
+                SCREEN_DEBUG_MEMORY[y * SCREEN_DEBUG_WIDTH + x];
+    for (x = 0; x < SCREEN_DEBUG_WIDTH; x++)
+        SCREEN_DEBUG_MEMORY[(SCREEN_DEBUG_HEIGHT - 1) * SCREEN_DEBUG_WIDTH + x] = 0x0720;
+    screen_debug_y = SCREEN_DEBUG_HEIGHT - 1;
+}
 
 static void (*pVgaInit)(void) = 0;
 static void (*pVgaClearScreen)(uint8_t color) = 0;
@@ -113,25 +147,56 @@ void SerialSetDebugEnabled(int enabled) {
 
 int SerialIsDebugEnabled(void) { return serial_debug_enabled; }
 
+void SerialSetScreenDebugEnabled(int enabled) {
+    int i;
+    screen_debug_enabled = enabled ? 1 : 0;
+    screen_debug_x = screen_debug_y = 0;
+    if (screen_debug_enabled)
+        for (i = 0; i < SCREEN_DEBUG_WIDTH * SCREEN_DEBUG_HEIGHT; i++)
+            SCREEN_DEBUG_MEMORY[i] = 0x0720;
+}
+
+int SerialIsScreenDebugEnabled(void) { return screen_debug_enabled; }
+
 void SerialInit(void) {
     if (!serial_debug_enabled) return;
     if (pSerialInit) pSerialInit(); else BootSerialInit();
 }
 void SerialPutChar(char c) {
-    if (!serial_debug_enabled) return;
-    if (pSerialPutChar) pSerialPutChar(c); else BootSerialPutChar(c);
+    if (serial_debug_enabled) {
+        if (pSerialPutChar) pSerialPutChar(c); else BootSerialPutChar(c);
+    }
+    if (screen_debug_enabled) ScreenDebugPutChar(c);
 }
 void SerialPutString(const char *str) {
-    if (!serial_debug_enabled) return;
-    if (pSerialPutString) pSerialPutString(str); else BootSerialPutString(str);
+    if (screen_debug_enabled) {
+        while (*str) SerialPutChar(*str++);
+    } else if (serial_debug_enabled) {
+        if (pSerialPutString) pSerialPutString(str); else BootSerialPutString(str);
+    }
 }
 void SerialPrintHex(uint32_t val) {
-    if (!serial_debug_enabled) return;
-    if (pSerialPrintHex) pSerialPrintHex(val); else BootSerialPrintHex(val);
+    char buf[11];
+    int i;
+    if (screen_debug_enabled) {
+        buf[0] = '0'; buf[1] = 'x';
+        for (i = 0; i < 8; i++) buf[i + 2] = "0123456789ABCDEF"[(val >> (28 - i * 4)) & 0xF];
+        buf[10] = 0;
+        SerialPutString(buf);
+    } else if (serial_debug_enabled) {
+        if (pSerialPrintHex) pSerialPrintHex(val); else BootSerialPrintHex(val);
+    }
 }
 void SerialPrintDec(uint32_t val) {
-    if (!serial_debug_enabled) return;
-    if (pSerialPrintDec) pSerialPrintDec(val); else BootSerialPrintDec(val);
+    char buf[11];
+    int pos = 10;
+    if (screen_debug_enabled) {
+        buf[pos] = 0;
+        do { buf[--pos] = '0' + (val % 10); val /= 10; } while (val);
+        SerialPutString(buf + pos);
+    } else if (serial_debug_enabled) {
+        if (pSerialPrintDec) pSerialPrintDec(val); else BootSerialPrintDec(val);
+    }
 }
 
 void VgaInit(void) { if (pVgaInit) pVgaInit(); }

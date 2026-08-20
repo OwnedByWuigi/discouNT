@@ -63,7 +63,7 @@ iso: $(KERNEL) userspace
 		cp "$$font" "$(ISO_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR)
+	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR) -volid DISCOUNT
 
 usb-image: iso
 	sh tools/make_usb_image.sh $(ISO_DIR) $(ISO_DIR)/boot/grub/grub.cfg ntos-amd64-usb.img
