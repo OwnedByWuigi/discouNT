@@ -167,6 +167,7 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 			-Wl,--image-base,0x10000000 \
 			-Wl,--entry,_DllMain@12 \
 			-Wl,--export-all-symbols \
+			-Wl,--kill-at \
 			$(CPPFLAGS) \
 			-L$(BUILD_DIR) \
 			-l:kernel.elf; \

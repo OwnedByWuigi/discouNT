@@ -1061,7 +1061,30 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
     
     for (uint32_t i = 0; i < exp->NumberOfNames; i++) {
         const char *name = (const char*)((uint8_t*)dll_base + names[i]);
-        if (strcmp(name, func_name) == 0) {
+        const char *export_name = name;
+        const char *requested = func_name;
+
+        /* i386 stdcall exports produced by GNU/MinGW are commonly named
+           _Function@N (or Function@N).  Win32 GetProcAddress callers use the
+           public, undecorated spelling, so compare that spelling as well as
+           the literal export name. */
+        if (*export_name == '_') export_name++;
+        if (*requested == '_') requested++;
+
+        int exact = strcmp(name, func_name) == 0;
+        int decorated_match = 1;
+        uint32_t j = 0;
+        while (requested[j] && export_name[j] && export_name[j] != '@') {
+            if (requested[j] != export_name[j]) {
+                decorated_match = 0;
+                break;
+            }
+            j++;
+        }
+        if (requested[j] || (export_name[j] && export_name[j] != '@'))
+            decorated_match = 0;
+
+        if (exact || decorated_match) {
             return (uint8_t*)dll_base + functions[ordinals[i]];
         }
     }
