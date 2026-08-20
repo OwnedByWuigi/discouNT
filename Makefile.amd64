@@ -165,9 +165,11 @@ $(BUILD_DIR)/drivers/fb.sys: drivers/fb/fb.c drivers/fb/ttf.c drivers/module_ent
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $^
 
-$(BUILD_DIR)/drivers/usb.sys: drivers/usb/usb.c
+USB_SOURCES := drivers/usb/usb.c drivers/usb/usb_msc.c drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c
+
+$(BUILD_DIR)/drivers/usb.sys: $(USB_SOURCES) drivers/usb/usb.h drivers/usb/usb_internal.h drivers/usb/usb_msc.h
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $(USB_SOURCES)
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)
