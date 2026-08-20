@@ -518,26 +518,18 @@ static void csrss_initialize_winlogon_session(void) {
     g_session_state = CSRSS_SESSION_BOOTING;
     g_gina_context = 0;
     if (gina) {
-        SerialPutString("[WINLOGON] MSGINA loaded, resolving exports\r\n");
         g_wlx_negotiate = (WlxNegotiateFn)PeGetProcAddress(gina, "WlxNegotiate");
-        SerialPutString("[WINLOGON] WlxNegotiate resolved\r\n");
         g_wlx_initialize = (WlxInitializeFn)PeGetProcAddress(gina, "WlxInitialize");
-        SerialPutString("[WINLOGON] WlxInitialize resolved\r\n");
         g_wlx_logged_on_sas = (WlxLoggedOnSASFn)PeGetProcAddress(gina, "WlxLoggedOnSAS");
-        SerialPutString("[WINLOGON] WlxLoggedOnSAS resolved\r\n");
         g_wlx_logged_out_sas = (WlxLoggedOutSASFn)PeGetProcAddress(gina, "WlxLoggedOutSAS");
-        SerialPutString("[WINLOGON] WlxLoggedOutSAS resolved\r\n");
         g_wlx_logoff = (WlxLogoffFn)PeGetProcAddress(gina, "WlxLogoff");
         g_wlx_shutdown = (WlxShutdownFn)PeGetProcAddress(gina, "WlxShutdown");
         g_wlx_display_sas_notice = (WlxDisplaySASNoticeFn)PeGetProcAddress(gina, "WlxDisplaySASNotice");
         if (g_wlx_negotiate) negotiated = g_wlx_negotiate(WLX_VERSION_1_3, &version);
-        if (negotiated && g_wlx_initialize) {
-            SerialPutString("[WINLOGON] Calling WlxInitialize\r\n");
+        if (negotiated && g_wlx_initialize)
             /* The HINSTANCE passed to a GINA is its loaded module handle.
              * MSGINA uses it for LoadImage/LoadString resource lookup. */
             g_wlx_initialize(0, gina, 0, &g_wlx_dispatch, &g_gina_context);
-            SerialPutString("[WINLOGON] WlxInitialize returned\r\n");
-        }
     }
     SerialPutString("[WINLOGON] Session 0 initialized");
     if (negotiated) SerialPutString(" with MSGINA");

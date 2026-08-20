@@ -151,15 +151,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     CdfsInit();
     DriverLoadAll(mb_info_ptr);
     KeyboardInit();
-#if defined(__x86_64__)
-    /* The current NIC backends still contain 32-bit MMIO/PCI assumptions.
-       Do not let their probe trap or stall the native boot before CSRSS. */
-    SerialPutString("[NET] AMD64 NIC probe deferred\r\n");
-#else
-    SerialPutString("[BOOT] Starting network initialization\r\n");
     NetInit();
-    SerialPutString("[BOOT] Network initialization complete\r\n");
-#endif
     SubsystemInit(mb_info_ptr);
     SubsystemLaunchSmss();
 
