@@ -20,9 +20,20 @@ start64:
     mov eax, __pdpt
     or eax, 3
     mov [__pml4], eax
-    mov eax, __pd
+    ; The drivers still use 32-bit physical/MMIO addresses.  Populate four
+    ; PDPT slots so the whole 0..4 GiB range is identity mapped, including
+    ; PCI framebuffers commonly placed near 0xFD000000 by QEMU/firmware.
+    xor ecx, ecx
+.map_pdpt:
+    mov eax, ecx
+    shl eax, 12
+    add eax, __pd
     or eax, 3
-    mov [__pdpt], eax
+    mov [__pdpt + ecx * 8], eax
+    mov dword [__pdpt + ecx * 8 + 4], 0
+    inc ecx
+    cmp ecx, 4
+    jb .map_pdpt
     xor ecx, ecx
 .map:
     mov eax, ecx
@@ -31,19 +42,22 @@ start64:
     mov [__pd + ecx * 8], eax
     mov dword [__pd + ecx * 8 + 4], 0
     inc ecx
-    cmp ecx, 512
+    cmp ecx, 2048
     jb .map
     mov eax, __pml4
     mov cr3, eax
     mov eax, cr4
-    or eax, 1 << 5
+    ; Long-mode C code is allowed to use SSE2 by the AMD64 ABI.  Enable the
+    ; architectural FPU/SSE state before entering any compiled 64-bit code.
+    or eax, (1 << 5) | (1 << 9) | (1 << 10) ; PAE, OSFXSR, OSXMMEXCPT
     mov cr4, eax
     mov ecx, 0xC0000080
     rdmsr
     or eax, 1 << 8
     wrmsr
     mov eax, cr0
-    or eax, 1 << 31
+    and eax, ~(1 << 2)       ; clear EM (x87/SSE instructions are available)
+    or eax, (1 << 1) | (1 << 31) ; MP and paging
     mov cr0, eax
     lgdt [gdt64_ptr]
     jmp 0x08:long_mode
@@ -75,7 +89,7 @@ section .bss
 align 4096
 __pml4: resq 512
 __pdpt: resq 512
-__pd: resq 512
+__pd: resq 2048
 align 16
 stack64: resb 65536
 stack64_top:
