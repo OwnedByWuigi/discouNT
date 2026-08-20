@@ -37,7 +37,7 @@ NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
 NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
  $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
- $(BUILD_DIR)/win32/w32k/w32k.dll
+ $(BUILD_DIR)/win32/w32k/win32k.dll
 DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb
 NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
 
@@ -54,7 +54,6 @@ iso: $(KERNEL) userspace
 	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
 		cp "$$image" "$(ISO_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
 	done
-	@cp "$(BUILD_DIR)/win32/w32k/w32k.dll" "$(ISO_DIR)/SYSTEM32/WIN32K.DLL"
 	@for driver in $(NATIVE_DRIVERS); do \
 		cp "$$driver" "$(ISO_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
 	done
@@ -134,7 +133,7 @@ $(BUILD_DIR)/dlls/msgina.dll: dlls/msgina/msgina.c dlls/msgina/gui.c \
 	@objcopy --add-section .disbmp_logo=dlls/msgina/resources/reactos.bmp --set-section-flags .disbmp_logo=readonly,data $@
 	@objcopy --add-section .disbmp_bar=dlls/msgina/resources/line.bmp --set-section-flags .disbmp_bar=readonly,data $@
 
-$(BUILD_DIR)/win32/w32k/w32k.dll: win32/w32k/w32k.c
+$(BUILD_DIR)/win32/w32k/win32k.dll: win32/w32k/w32k.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $<
 
