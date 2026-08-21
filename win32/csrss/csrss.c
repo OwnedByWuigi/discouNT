@@ -19,6 +19,7 @@
 #include "core/bugcheck.h"
 #include "cpu.h"
 #include "input.h"
+#include "usb.h"
 
 typedef int (*GuiAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*GuiAppCreateMainWindowFn)(void);
@@ -1136,6 +1137,7 @@ void CsrssSessionRun(void *mb_info) {
     last_wheel = mouse_state.wheel_delta;
 
     while (running) {
+        UsbPoll();
         if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
             if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") < 0) {
                 csrss_queue_launch_error("/SYSTEM32/CMD.EXE", "The logon shell could not be started.");

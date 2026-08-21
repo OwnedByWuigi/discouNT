@@ -213,7 +213,7 @@ run: check-tools $(BOOT_ROM) $(SYSTEM_ISO)
 	$(QEMU) -machine virt -cpu la464 -m 512M \
 		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
 		-device qemu-xhci -drive file=$(SYSTEM_ISO),if=none,media=cdrom,readonly=on,id=systemcd \
-		-device usb-storage,drive=systemcd \
+		-device usb-storage,drive=systemcd -device usb-kbd -device usb-mouse \
 		-serial stdio
 
 run-gui: run
@@ -222,7 +222,7 @@ run-headless: check-tools $(BOOT_ROM) $(SYSTEM_ISO)
 	$(QEMU) -machine virt -cpu la464 -m 512M \
 		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
 		-device qemu-xhci -drive file=$(SYSTEM_ISO),if=none,media=cdrom,readonly=on,id=systemcd \
-		-device usb-storage,drive=systemcd \
+		-device usb-storage,drive=systemcd -device usb-kbd -device usb-mouse \
 		-nographic -serial mon:stdio
 
 run-uefi: check-tools $(KERNEL)

@@ -4,6 +4,7 @@
 #include "mm/vmm.h"
 #include "core/util.h"
 #include "serial.h"
+#include "input.h"
 
 #define XHCI_PAGE_SIZE 4096U
 #define XHCI_MAX_DEVICES 8
@@ -28,6 +29,9 @@
 #define USB_DESC_INTERFACE 4
 #define USB_DESC_ENDPOINT 5
 #define USB_CLASS_MASS_STORAGE 8
+#define USB_CLASS_HID 3
+#define USB_HID_KEYBOARD 1
+#define USB_HID_MOUSE 2
 
 typedef struct __attribute__((packed)) {
     uint64_t parameter;
@@ -53,8 +57,13 @@ typedef struct {
     uint8_t slot_id, port, speed, configured;
     uint8_t bulk_in, bulk_out, bulk_in_dci, bulk_out_dci;
     uint16_t bulk_in_packet, bulk_out_packet;
+    uint8_t hid_protocol, hid_interface, hid_in, hid_in_dci;
+    uint8_t hid_seen_input;
+    uint16_t hid_in_packet;
+    uint8_t hid_report[16], hid_previous[8];
+    XHCI_TRB *hid_pending;
     void *output_context, *input_context;
-    XHCI_RING ep0, in_ring, out_ring;
+    XHCI_RING ep0, in_ring, out_ring, hid_ring;
 } XHCI_DEVICE;
 
 struct _XHCI_STATE {
@@ -69,6 +78,7 @@ struct _XHCI_STATE {
     XHCI_ERST_ENTRY *erst;
     XHCI_DEVICE devices[XHCI_MAX_DEVICES];
     uint8_t device_count;
+    uint32_t enumerated_ports;
 };
 
 static uintptr_t physical(const void *p) { return VmmGetPhysicalAddress(p); }
@@ -260,6 +270,146 @@ static int configure_mass_storage(XHCI_DEVICE *device, uint8_t *config,
     return 1;
 }
 
+static uint8_t hid_usage_to_scancode(uint8_t usage) {
+    static const uint8_t letters[] = {
+        0x1e,0x30,0x2e,0x20,0x12,0x21,0x22,0x23,0x17,0x24,0x25,0x26,0x32,
+        0x31,0x18,0x19,0x10,0x13,0x1f,0x14,0x16,0x2f,0x11,0x2d,0x15,0x2c
+    };
+    static const uint8_t digits[] = {0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b};
+    if (usage >= 0x04 && usage <= 0x1d) return letters[usage - 0x04];
+    if (usage >= 0x1e && usage <= 0x27) return digits[usage - 0x1e];
+    switch (usage) {
+        case 0x28: return 0x1c; case 0x29: return 0x01; case 0x2a: return 0x0e;
+        case 0x2b: return 0x0f; case 0x2c: return 0x39; case 0x2d: return 0x0c;
+        case 0x2e: return 0x0d; case 0x2f: return 0x1a; case 0x30: return 0x1b;
+        case 0x31: return 0x2b; case 0x33: return 0x27; case 0x34: return 0x28;
+        case 0x35: return 0x29; case 0x36: return 0x33; case 0x37: return 0x34;
+        case 0x38: return 0x35; case 0x39: return 0x3a;
+        case 0x4f: return 0x4d; case 0x50: return 0x4b;
+        case 0x51: return 0x50; case 0x52: return 0x48; case 0x4c: return 0x53;
+        default: return 0;
+    }
+}
+
+static int report_has_usage(const uint8_t *report, uint8_t usage) {
+    for (int i = 2; i < 8; ++i) if (report[i] == usage) return 1;
+    return 0;
+}
+
+static void keyboard_scancode(uint8_t scancode, int pressed, int extended) {
+    if (!scancode) return;
+    if (extended) InputInjectKeyboardByte(0xE0);
+    InputInjectKeyboardByte((uint8_t)(scancode | (pressed ? 0 : 0x80)));
+}
+
+static void process_keyboard_report(XHCI_DEVICE *device) {
+    uint8_t old_mod = device->hid_previous[0], new_mod = device->hid_report[0];
+    static const uint8_t mod_scan[8] = {0x1d,0x2a,0x38,0x5b,0x1d,0x36,0x38,0x5c};
+    if (!device->hid_seen_input && (new_mod || device->hid_report[2])) {
+        SerialPutString("[xHCI] Keyboard input received\r\n");
+        device->hid_seen_input = 1;
+    }
+    for (int i = 0; i < 8; ++i) {
+        uint8_t bit = (uint8_t)(1U << i);
+        if ((old_mod ^ new_mod) & bit)
+            keyboard_scancode(mod_scan[i], !!(new_mod & bit), i >= 4);
+    }
+    for (int i = 2; i < 8; ++i) {
+        uint8_t usage = device->hid_previous[i];
+        if (usage && !report_has_usage(device->hid_report, usage))
+            keyboard_scancode(hid_usage_to_scancode(usage), 0,
+                              usage >= 0x4c && usage <= 0x52);
+    }
+    for (int i = 2; i < 8; ++i) {
+        uint8_t usage = device->hid_report[i];
+        if (usage && !report_has_usage(device->hid_previous, usage))
+            keyboard_scancode(hid_usage_to_scancode(usage), 1,
+                              usage >= 0x4c && usage <= 0x52);
+    }
+    memcpy(device->hid_previous, device->hid_report, 8);
+}
+
+static void process_mouse_report(XHCI_DEVICE *device) {
+    uint8_t buttons = device->hid_report[0] & 7;
+    int8_t dx = (int8_t)device->hid_report[1];
+    int8_t dy = (int8_t)device->hid_report[2];
+    int16_t ps2_y_value = -(int16_t)dy;
+    if (ps2_y_value > 127) ps2_y_value = 127;
+    int8_t ps2_y = (int8_t)ps2_y_value;
+    if (!device->hid_seen_input && (buttons || dx || dy)) {
+        SerialPutString("[xHCI] Mouse input received\r\n");
+        device->hid_seen_input = 1;
+    }
+    /* USB boot mice use positive Y for down; PS/2 packets use positive Y for
+       up, and MouseHandleByte converts that into screen coordinates. */
+    uint8_t first = (uint8_t)(0x08 | buttons | (dx < 0 ? 0x10 : 0) |
+                              (ps2_y < 0 ? 0x20 : 0));
+    InputInjectMouseByte(first);
+    InputInjectMouseByte((uint8_t)dx);
+    InputInjectMouseByte((uint8_t)ps2_y);
+}
+
+static int configure_hid(XHCI_DEVICE *device, uint8_t *config,
+                         uint16_t total_length) {
+    int hid_interface = 0;
+    uint8_t protocol = 0, interface_number = 0, in = 0, in_dci = 0;
+    uint16_t packet = 0;
+    uint8_t interval = 10;
+    for (uint16_t offset = 0; offset + 2 <= total_length;) {
+        uint8_t length = config[offset], type = config[offset + 1];
+        if (length < 2 || offset + length > total_length) break;
+        if (type == USB_DESC_INTERFACE && length >= 9) {
+            hid_interface = config[offset + 5] == USB_CLASS_HID &&
+                            config[offset + 6] == 1 &&
+                            (config[offset + 7] == USB_HID_KEYBOARD ||
+                             config[offset + 7] == USB_HID_MOUSE);
+            if (hid_interface) {
+                interface_number = config[offset + 2];
+                protocol = config[offset + 7];
+            }
+        } else if (hid_interface && type == USB_DESC_ENDPOINT && length >= 7 &&
+                   (config[offset + 2] & 0x80) && (config[offset + 3] & 3) == 3) {
+            in = config[offset + 2];
+            in_dci = (uint8_t)((in & 15) * 2 + 1);
+            packet = (uint16_t)(config[offset + 4] | config[offset + 5] << 8);
+            interval = config[offset + 6];
+            break;
+        }
+        offset += length;
+    }
+    if (!in || !protocol || !ring_allocate(&device->hid_ring)) return 0;
+    device->hid_protocol = protocol; device->hid_interface = interface_number;
+    device->hid_in = in; device->hid_in_dci = in_dci;
+    device->hid_in_packet = packet > sizeof(device->hid_report) ? sizeof(device->hid_report) : packet;
+    memset(device->input_context, 0, XHCI_PAGE_SIZE);
+    uint32_t *control = input_control(device), *slot = input_slot(device);
+    control[1] = 1U | (1U << in_dci);
+    slot[0] = ((uint32_t)in_dci << 27) | ((uint32_t)device->speed << 20);
+    slot[1] = (uint32_t)(device->port + 1) << 16;
+    configure_endpoint_context(device, in_dci, 7, packet, &device->hid_ring);
+    input_ep(device, in_dci)[0] = (uint32_t)interval << 16;
+    if (!command(device->host, physical(device->input_context),
+                 XHCI_TRB_TYPE(12) | ((uint32_t)device->slot_id << 24), 0)) return 0;
+    if (!control_transfer(device, 0, 9, config[5], 0, 0, 0)) return 0;
+    /* Force the standard 8-byte keyboard / 3-byte mouse boot report. */
+    if (!control_transfer(device, 0x21, 0x0B, 0, interface_number, 0, 0)) return 0;
+    device->configured = 1;
+    SerialPutString(protocol == USB_HID_KEYBOARD ?
+                    "[xHCI] USB keyboard configured\r\n" :
+                    "[xHCI] USB mouse configured\r\n");
+    return 1;
+}
+
+static void submit_hid_transfer(XHCI_DEVICE *device) {
+    if (!device->configured || !device->hid_protocol || device->hid_pending) return;
+    memset(device->hid_report, 0, sizeof(device->hid_report));
+    device->hid_pending = ring_push(&device->hid_ring, physical(device->hid_report),
+                                    device->hid_in_packet,
+                                    XHCI_TRB_TYPE(1) | XHCI_TRB_IOC);
+    UsbMmioWrite32(device->host->doorbells, (uint32_t)device->slot_id * 4,
+                   device->hid_in_dci);
+}
+
 static int enumerate_port(XHCI_STATE *state, uint8_t port) {
     uintptr_t port_reg = state->operational + XHCI_PORTSC + (uint32_t)port * XHCI_PORT_STRIDE;
     uint32_t portsc = UsbMmioRead32(port_reg, 0);
@@ -303,9 +453,11 @@ static int enumerate_port(XHCI_STATE *state, uint8_t port) {
     if (!control_transfer(device, 0x80, 6, USB_DESC_CONFIGURATION << 8, 0,
                           config, total)) { SerialPutString("[xHCI] Configuration descriptor failed\r\n"); return 0; }
     state->device_count++;
-    if (configure_mass_storage(device, config, total))
+    if (configure_hid(device, config, total)) {
+        submit_hid_transfer(device);
+    } else if (configure_mass_storage(device, config, total))
         SerialPutString("[xHCI] USB mass-storage device configured\r\n");
-    else SerialPutString("[xHCI] Mass-storage configuration failed\r\n");
+    else SerialPutString("[xHCI] Unsupported USB device\r\n");
     return 1;
 }
 
@@ -352,7 +504,11 @@ int XhciInitialize(USB_CONTROLLER *controller) {
     if (!wait_bits(state->operational, 4, XHCI_STS_HALTED, 0)) return 0;
     for (uint8_t port = 0; port < controller->ports; ++port) {
         uint32_t status = UsbMmioRead32(state->operational, XHCI_PORTSC + port * XHCI_PORT_STRIDE);
-        if (status & XHCI_PORT_CCS) { UsbLogPort(controller, port, 1); enumerate_port(state, port); }
+        if (status & XHCI_PORT_CCS) {
+            UsbLogPort(controller, port, 1);
+            if (enumerate_port(state, port) && port < 32)
+                state->enumerated_ports |= 1U << port;
+        }
     }
     SerialPutString("[xHCI] Command/event rings active\r\n");
     return 1;
@@ -361,13 +517,47 @@ int XhciInitialize(USB_CONTROLLER *controller) {
 void XhciPoll(USB_CONTROLLER *controller) {
     XHCI_STATE *state = (XHCI_STATE *)controller->private_data;
     if (!state) return;
+    for (;;) {
+        XHCI_TRB *event = &state->events[state->event_dequeue];
+        if ((event->control & 1) != state->event_cycle) break;
+        uint8_t type = (uint8_t)((event->control >> 10) & 0x3f);
+        uint8_t completion = (uint8_t)(event->status >> 24);
+        uint64_t completed = event->parameter & ~0xFULL;
+        if (type == 32 && (completion == XHCI_COMPLETION_SUCCESS || completion == 13)) {
+            for (uint8_t i = 0; i < state->device_count; ++i) {
+                XHCI_DEVICE *device = &state->devices[i];
+                if (device->hid_pending &&
+                    (physical(device->hid_pending) & ~0xFULL) == completed) {
+                    device->hid_pending = 0;
+                    if (device->hid_protocol == USB_HID_KEYBOARD) process_keyboard_report(device);
+                    else if (device->hid_protocol == USB_HID_MOUSE) process_mouse_report(device);
+                    submit_hid_transfer(device);
+                    break;
+                }
+            }
+        }
+        if (++state->event_dequeue == XHCI_RING_TRBS) {
+            state->event_dequeue = 0;
+            state->event_cycle ^= 1;
+        }
+        uintptr_t interrupter = state->runtime + 0x20;
+        uint64_t dequeue = physical(&state->events[state->event_dequeue]) | (1ULL << 3);
+        UsbMmioWrite32(interrupter, 0x18, (uint32_t)dequeue);
+        UsbMmioWrite32(interrupter, 0x1C, (uint32_t)(dequeue >> 32));
+    }
     for (uint8_t port = 0; port < controller->ports; ++port) {
         uint32_t offset = XHCI_PORTSC + (uint32_t)port * XHCI_PORT_STRIDE;
         uint32_t status = UsbMmioRead32(state->operational, offset);
         if (status & XHCI_PORT_CHANGES) {
-            UsbLogPort(controller, port, status & XHCI_PORT_CCS);
-            UsbMmioWrite32(state->operational, offset, status | XHCI_PORT_CHANGES);
-            if (status & XHCI_PORT_CCS) enumerate_port(state, port);
+            /* PORTSC has write-one-to-clear and write-one-to-disable fields;
+               write only the asserted change bits here. */
+            UsbMmioWrite32(state->operational, offset, status & XHCI_PORT_CHANGES);
+            if (status & (1U << 17)) UsbLogPort(controller, port, status & XHCI_PORT_CCS);
+            if (!(status & XHCI_PORT_CCS)) {
+                if (port < 32) state->enumerated_ports &= ~(1U << port);
+            } else if (port < 32 && !(state->enumerated_ports & (1U << port))) {
+                if (enumerate_port(state, port)) state->enumerated_ports |= 1U << port;
+            }
         }
     }
 }
