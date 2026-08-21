@@ -62,6 +62,9 @@ static int dragging = 0;
 static HANDLE drag_window = INVALID_HANDLE;
 static int drag_offset_x = 0;
 static int drag_offset_y = 0;
+static uint32_t *drag_pixels = 0;
+static int drag_pixels_width = 0;
+static int drag_pixels_height = 0;
 static int resizing = 0;
 static HANDLE resize_window = INVALID_HANDLE;
 static int resize_edge = 0;
@@ -740,15 +743,62 @@ static void render_scene(HANDLE skip_window) {
 }
 
 static void begin_fast_drag(HANDLE hwnd) {
-    (void)hwnd;
-    Win32kRedrawAll();
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win) return;
+    /* Activation may have changed the caption state. Establish it only in
+       this window's damage rectangle before taking the snapshot. */
+    MouseEraseCursor();
+    FbSetClipRect(win->x, win->y, win->width, win->height);
+    FbFillRect(win->x, win->y, win->width, win->height, DESKTOP_COLOR);
+    draw_window_frame(win);
+    if (win->wndProc && !win->minimized) win->wndProc(hwnd, WM_PAINT, 0, 0);
+    draw_window_caption(win);
+    FbResetClipRect();
+    if (drag_pixels) kfree(drag_pixels);
+    drag_pixels_width = win->width;
+    drag_pixels_height = win->height;
+    drag_pixels = (uint32_t*)kmalloc((uint32_t)win->width * (uint32_t)win->height * sizeof(uint32_t));
+    if (drag_pixels) FbCaptureRGB(win->x, win->y, win->width, win->height, drag_pixels, win->width);
+    MouseDrawCursor();
+    FbSwapBuffers();
+    ObDereferenceObject(hwnd);
 }
 
 static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
-    (void)win;
-    (void)old_x;
-    (void)old_y;
-    Win32kRedrawAll();
+    int left = old_x < win->x ? old_x : win->x;
+    int top = old_y < win->y ? old_y : win->y;
+    int right = old_x + win->width > win->x + win->width ? old_x + win->width : win->x + win->width;
+    int bottom = old_y + win->height > win->y + win->height ? old_y + win->height : win->y + win->height;
+
+    MouseEraseCursor();
+    FbSetClipRect(left, top, right - left, bottom - top);
+    FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
+    for (int i = 0; i < window_count; i++) {
+        WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
+        if (other && other->visible &&
+            (window_list[i] == drag_window ||
+             rects_intersect(other->x, other->y, other->width, other->height,
+                             left, top, right - left, bottom - top))) {
+            if (window_list[i] != drag_window || !drag_pixels) {
+                draw_window_frame(other);
+                if (other->wndProc && !other->minimized) other->wndProc(window_list[i], WM_PAINT, 0, 0);
+            }
+        }
+        if (other) ObDereferenceObject(window_list[i]);
+    }
+    for (int i = 0; i < window_count; i++) {
+        WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
+        if (other && other->visible && (window_list[i] != drag_window || !drag_pixels) &&
+            rects_intersect(other->x, other->y, other->width, other->height,
+                            left, top, right - left, bottom - top))
+            draw_window_caption(other);
+        if (other) ObDereferenceObject(window_list[i]);
+    }
+    if (drag_pixels && drag_pixels_width == win->width && drag_pixels_height == win->height)
+        FbBlitRGB(win->x, win->y, win->width, win->height, drag_pixels, drag_pixels_width);
+    FbResetClipRect();
+    MouseDrawCursor();
+    FbSwapBuffers();
 }
 
 void Win32kInit(void *mb_info) {
@@ -1030,7 +1080,8 @@ void Win32kHandleMouseDown(int x, int y, int button) {
             maximize_window(win);
         }
         ObDereferenceObject(hwnd);
-        Win32kRedrawAll();
+        /* The application repaint is already reflected by the normal
+           invalidation path; do not repaint the desktop for a click. */
         return;
     case CAPBTN_MINIMIZE:
         if (win->minimized) {
@@ -1075,7 +1126,6 @@ void Win32kHandleMouseDown(int x, int y, int button) {
         drag_offset_y = y - win->y;
         begin_fast_drag(hwnd);
         ObDereferenceObject(hwnd);
-        Win32kRedrawAll();
         return;
     }
 
@@ -1090,7 +1140,6 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     }
 
     ObDereferenceObject(hwnd);
-    Win32kRedrawAll();
 }
 
 void Win32kHandleMouseUp(int x, int y, int button) {
@@ -1100,13 +1149,15 @@ void Win32kHandleMouseUp(int x, int y, int button) {
         SerialPutString("[Win32k] Drag end\r\n");
         dragging = 0;
         drag_window = INVALID_HANDLE;
-        Win32kRedrawAll();
+        if (drag_pixels) kfree(drag_pixels);
+        drag_pixels = 0;
+        drag_pixels_width = 0;
+        drag_pixels_height = 0;
     }
     if (resizing) {
         resizing = 0;
         resize_window = INVALID_HANDLE;
         resize_edge = RESIZE_NONE;
-        Win32kRedrawAll();
     }
 
     {
@@ -1207,9 +1258,40 @@ void Win32kHandleMouseMove(int x, int y) {
             }
         }
 
-        ObDereferenceObject(resize_window);
         update_cursor_for_point(x, y);
-        Win32kRedrawAll();
+        /* Resizing already has a bounded damage path; never repaint the
+           desktop for each resize sample. */
+        {
+            int left = resize_start_x < win->x ? resize_start_x : win->x;
+            int top = resize_start_y < win->y ? resize_start_y : win->y;
+            int right = resize_start_x + resize_start_width > win->x + win->width ?
+                        resize_start_x + resize_start_width : win->x + win->width;
+            int bottom = resize_start_y + resize_start_height > win->y + win->height ?
+                         resize_start_y + resize_start_height : win->y + win->height;
+            MouseEraseCursor();
+            FbSetClipRect(left, top, right - left, bottom - top);
+            FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
+            for (int i = 0; i < window_count; i++) {
+                WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
+                if (other && other->visible && rects_intersect(other->x, other->y,
+                    other->width, other->height, left, top, right - left, bottom - top)) {
+                    draw_window_frame(other);
+                    if (other->wndProc && !other->minimized) other->wndProc(window_list[i], WM_PAINT, 0, 0);
+                }
+                if (other) ObDereferenceObject(window_list[i]);
+            }
+            for (int i = 0; i < window_count; i++) {
+                WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
+                if (other && other->visible && rects_intersect(other->x, other->y,
+                    other->width, other->height, left, top, right - left, bottom - top))
+                    draw_window_caption(other);
+                if (other) ObDereferenceObject(window_list[i]);
+            }
+            FbResetClipRect();
+            MouseDrawCursor();
+            FbSwapBuffers();
+        }
+        ObDereferenceObject(resize_window);
         return;
     }
 
@@ -1268,12 +1350,13 @@ void Win32kHandleMouseMove(int x, int y) {
 }
 
 void Win32kRefreshCursor(void) {
-    /* The cursor driver stores its background in the indexed shadow buffer.
-       That buffer cannot preserve an RGB caption gradient, so restoring the
-       cursor in place would turn the pixels underneath it back into palette
-       colours. Recompose the scene, then draw the cursor onto the fresh
-       surface. */
-    Win32kRedrawAll();
+    /* The cursor keeps a native RGB copy of the pixels beneath it. Restore
+       that copy, draw the cursor at its new position, and flush only the
+       resulting dirty cursor bounds. Mouse movement must not recompose every
+       window on the desktop. */
+    MouseEraseCursor();
+    MouseDrawCursor();
+    FbSwapBuffers();
 }
 
 int Win32kIsDragging(void) {

@@ -92,7 +92,7 @@ static const uint8_t cursor_sizenesw[11][11] = {
 };
 
 // Save background pixels under cursor
-static uint8_t cursor_bg[18][11];
+static uint32_t cursor_bg[18][11];
 static int cursor_saved = 0;
 
 static const uint8_t *mouse_cursor_at(int row, int col) {
@@ -278,7 +278,7 @@ void MouseEraseCursor(void) {
                 int px = x + col;
                 int py = y + row;
                 if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
-                    FbPutPixel(px, py, cursor_bg[row][col]);
+                    FbPutPixelRGB(px, py, cursor_bg[row][col]);
                 }
             }
         }
@@ -298,7 +298,7 @@ void MouseDrawCursor(void) {
                 int px = x + col;
                 int py = y + row;
                 if (px >= 0 && px < FbGetWidth() && py >= 0 && py < FbGetHeight()) {
-                    cursor_bg[row][col] = FbGetPixel(px, py);
+                    cursor_bg[row][col] = FbGetPixelRGB(px, py);
                 }
             }
         }

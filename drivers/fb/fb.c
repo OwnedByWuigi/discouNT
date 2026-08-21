@@ -17,6 +17,10 @@
 #define BGA_INDEX_YRES        2
 #define BGA_INDEX_BPP         3
 #define BGA_INDEX_ENABLE      4
+#define BGA_INDEX_VIRT_WIDTH  6
+#define BGA_INDEX_VIRT_HEIGHT 7
+#define BGA_INDEX_X_OFFSET    8
+#define BGA_INDEX_Y_OFFSET    9
 
 #define BGA_ID0               0xB0C0
 #define BGA_ID5               0xB0C5
@@ -37,19 +41,25 @@ int fb_height = 480;
 
 static int use_framebuffer = 0;
 static uint8_t *fb_addr = 0;
+static uint8_t *fb_present_addr = 0;
 static uint32_t fb_pitch = 0;
 static uint8_t fb_bpp = 0;
 static uint8_t *fb_shadow = 0;
+static uint32_t *fb_surface = 0;
+static int fb_clip_enabled;
+static int fb_clip_left, fb_clip_top, fb_clip_right, fb_clip_bottom;
 static uint16_t svga_io_port = 0;
 static uint32_t *svga_fifo = 0;
 static uint32_t svga_fifo_max = 0;
 static int svga_active = 0;
+static int bga_page_flip = 0;
+static int bga_display_page = 0;
+static int bga_pages_initialized = 0;
 static int dirty_valid = 0;
 static int dirty_x1 = 0;
 static int dirty_y1 = 0;
 static int dirty_x2 = 0;
 static int dirty_y2 = 0;
-static int rgb_direct_frame = 0;
 
 typedef struct _FB_MODE {
     uint16_t width;
@@ -85,6 +95,20 @@ static const uint32_t vga_to_rgb888[16] = {
     0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
     0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
 };
+
+static uint8_t fb_rgb_to_index(uint32_t rgb) {
+    int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+    uint32_t best = 0xFFFFFFFFU;
+    uint8_t result = 0;
+    for (uint8_t i = 0; i < 16; i++) {
+        int dr = r - ((vga_to_rgb888[i] >> 16) & 0xFF);
+        int dg = g - ((vga_to_rgb888[i] >> 8) & 0xFF);
+        int db = b - (vga_to_rgb888[i] & 0xFF);
+        uint32_t distance = (uint32_t)(dr * dr + dg * dg + db * db);
+        if (distance < best) { best = distance; result = i; }
+    }
+    return result;
+}
 
 static const uint8_t font[96][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},{0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
@@ -448,6 +472,21 @@ static int fb_indexed_stride(void) {
     return 640;
 }
 
+static int fb_alloc_surfaces(uint32_t pixels) {
+    if (fb_shadow) kfree(fb_shadow);
+    if (fb_surface) kfree(fb_surface);
+    fb_shadow = (uint8_t*)kmalloc(pixels);
+    fb_surface = (uint32_t*)kmalloc(pixels * sizeof(uint32_t));
+    if (!fb_shadow || !fb_surface) {
+        if (fb_shadow) kfree(fb_shadow);
+        if (fb_surface) kfree(fb_surface);
+        fb_shadow = 0;
+        fb_surface = 0;
+        return 0;
+    }
+    return 1;
+}
+
 static void bga_write(uint16_t index, uint16_t value) {
 #if defined(__loongarch64)
     volatile uint16_t *vbe = (volatile uint16_t *)(uintptr_t)0x41000500UL;
@@ -554,7 +593,13 @@ static int fb_try_bga_mode(uint16_t width, uint16_t height, uint16_t bpp) {
     bga_write(BGA_INDEX_ENABLE, BGA_DISABLED);
     bga_write(BGA_INDEX_XRES, width);
     bga_write(BGA_INDEX_YRES, height);
+    /* Reserve two scanout pages. The compositor presents by changing the
+       display offset after the hidden page has been fully updated. */
+    bga_write(BGA_INDEX_VIRT_WIDTH, width);
+    bga_write(BGA_INDEX_VIRT_HEIGHT, height * 2);
     bga_write(BGA_INDEX_BPP, bpp);
+    bga_write(BGA_INDEX_X_OFFSET, 0);
+    bga_write(BGA_INDEX_Y_OFFSET, 0);
     bga_write(BGA_INDEX_ENABLE, BGA_ENABLED | BGA_LFB_ENABLED | BGA_NOCLEARMEM);
 
     fb_width = bga_read(BGA_INDEX_XRES);
@@ -567,17 +612,15 @@ static int fb_try_bga_mode(uint16_t width, uint16_t height, uint16_t bpp) {
     }
 
     fb_addr = (uint8_t*)(uintptr_t)phys;
+    fb_present_addr = fb_addr;
     fb_pitch = fb_width * (fb_bpp / 8);
+    bga_page_flip = 1;
+    bga_display_page = 0;
+    bga_pages_initialized = 0;
     shadow_size = (uint32_t)fb_width * (uint32_t)fb_height;
 
-    if (fb_shadow) {
-        kfree(fb_shadow);
-        fb_shadow = 0;
-    }
-
-    fb_shadow = (uint8_t*)kmalloc(shadow_size);
-    if (!fb_shadow) {
-        SerialPutString("[FB] Shadow allocation failed\r\n");
+    if (!fb_alloc_surfaces(shadow_size)) {
+        SerialPutString("[FB] Software surface allocation failed\r\n");
         return 0;
     }
 
@@ -615,6 +658,7 @@ static int fb_try_bga_mode(uint16_t width, uint16_t height, uint16_t bpp) {
 
 #define SVGA_ID_1                 0x90000001U
 #define SVGA_ID_2                 0x90000002U
+#define SVGA_CMD_UPDATE           1U
 
 static void svga_write(uint16_t index_port, uint32_t index, uint32_t value) {
     outl(index_port, index);
@@ -743,13 +787,8 @@ static int fb_try_vmware_mode(uint16_t width, uint16_t height, uint16_t bpp) {
         if (svga_fifo_max >= 36) svga_active = 1;
     }
     shadow_size = (uint32_t)fb_width * (uint32_t)fb_height;
-    if (fb_shadow) {
-        kfree(fb_shadow);
-        fb_shadow = 0;
-    }
-    fb_shadow = (uint8_t*)kmalloc(shadow_size);
-    if (!fb_shadow) {
-        SerialPutString("[FB] VMware shadow allocation failed\r\n");
+    if (!fb_alloc_surfaces(shadow_size)) {
+        SerialPutString("[FB] VMware software surface allocation failed\r\n");
         return 0;
     }
     for (uint32_t i = 0; i < shadow_size; i++) fb_shadow[i] = 0;
@@ -773,6 +812,8 @@ static int fb_try_vmware_mode(uint16_t width, uint16_t height, uint16_t bpp) {
         use_framebuffer = 0;
         kfree(fb_shadow);
         fb_shadow = 0;
+        kfree(fb_surface);
+        fb_surface = 0;
         fb_addr = 0;
         return 0;
     }
@@ -784,7 +825,7 @@ static void svga_update(int x, int y, int w, int h) {
     if (!svga_active || !svga_fifo || w <= 0 || h <= 0) return;
     next = svga_fifo[2];
     if (next < svga_fifo[0] || next + 20 > svga_fifo_max) next = svga_fifo[0];
-    *(uint32_t*)((uint8_t*)svga_fifo + next + 0) = 1; /* SVGA_CMD_UPDATE */
+    *(uint32_t*)((uint8_t*)svga_fifo + next + 0) = SVGA_CMD_UPDATE;
     *(uint32_t*)((uint8_t*)svga_fifo + next + 4) = (uint32_t)x;
     *(uint32_t*)((uint8_t*)svga_fifo + next + 8) = (uint32_t)y;
     *(uint32_t*)((uint8_t*)svga_fifo + next + 12) = (uint32_t)w;
@@ -794,29 +835,10 @@ static void svga_update(int x, int y, int w, int h) {
     svga_fifo[2] = next;
 }
 
-static void fb_write_hw_pixel(int x, int y, uint8_t color) {
-    uint8_t *row;
-    if (!fb_addr) return;
-    if (x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
-
-    row = fb_addr + (y * fb_pitch);
-    if (fb_bpp == 16) {
-        ((uint16_t*)row)[x] = vga_to_rgb565[color & 0x0F];
-    } else if (fb_bpp == 24) {
-        uint8_t *pixel = row + (x * 3);
-        uint32_t rgb = vga_to_rgb888[color & 0x0F];
-        pixel[0] = rgb & 0xFF;
-        pixel[1] = (rgb >> 8) & 0xFF;
-        pixel[2] = (rgb >> 16) & 0xFF;
-    } else {
-        ((uint32_t*)row)[x] = vga_to_rgb888[color & 0x0F];
-    }
-}
-
 static void fb_write_hw_rgb(int x, int y, uint32_t rgb) {
     uint8_t *row;
     if (!fb_addr || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
-    row = fb_addr + y * fb_pitch;
+    row = fb_present_addr + y * fb_pitch;
     if (fb_bpp == 16) ((uint16_t*)row)[x] = (uint16_t)(((rgb >> 19) << 11) | (((rgb >> 10) & 0x3F) << 5) | ((rgb >> 3) & 0x1F));
     else if (fb_bpp == 24) { uint8_t *p = row + x * 3; p[0] = rgb; p[1] = rgb >> 8; p[2] = rgb >> 16; }
     else ((uint32_t*)row)[x] = rgb & 0x00FFFFFFU;
@@ -830,14 +852,20 @@ void FbInit(void *mb_info_ptr) {
     svga_fifo = 0;
     svga_fifo_max = 0;
     fb_addr = 0;
+    fb_present_addr = 0;
+    fb_surface = 0;
     fb_pitch = 0;
     fb_bpp = 0;
+    bga_page_flip = 0;
+    bga_display_page = 0;
+    bga_pages_initialized = 0;
     fb_width = 640;
     fb_height = 480;
     fb_reset_dirty();
 
     if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32) ||
         fb_try_vmware_mode(800, 600, 32) || fb_try_vmware_mode(640, 480, 32)) {
+        SerialPutString("[FB] Native software compositor active\r\n");
         FbTtfLoad("/SYSTEM32/FONTS/TAHOMA.TTF");
         FbSwapBuffers();
         return;
@@ -889,12 +917,65 @@ uint8_t FbGetPixel(int x, int y) {
     return buf[y * stride + x];
 }
 
+uint32_t FbGetPixelRGB(int x, int y) {
+    if (use_framebuffer && fb_surface && x >= 0 && x < fb_width && y >= 0 && y < fb_height)
+        return fb_surface[y * fb_width + x];
+    return vga_to_rgb888[FbGetPixel(x, y) & 0x0F];
+}
+
+void FbPutPixelRGB(int x, int y, uint32_t rgb) {
+    if (!use_framebuffer) { FbPutPixel(x, y, fb_rgb_to_index(rgb)); return; }
+    if (!fb_surface || !fb_shadow || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+    fb_surface[y * fb_width + x] = rgb;
+    fb_shadow[y * fb_width + x] = fb_rgb_to_index(rgb);
+    fb_mark_dirty(x, y, 1, 1);
+}
+
+void FbCaptureRGB(int x, int y, int w, int h, uint32_t *dst, int dst_stride) {
+    if (!dst || !fb_surface || w <= 0 || h <= 0 || dst_stride < w) return;
+    for (int row = 0; row < h; row++) {
+        int sy = y + row;
+        if (sy < 0 || sy >= fb_height) continue;
+        for (int col = 0; col < w; col++) {
+            int sx = x + col;
+            dst[row * dst_stride + col] = (sx >= 0 && sx < fb_width) ?
+                fb_surface[sy * fb_width + sx] : 0;
+        }
+    }
+}
+
+void FbBlitRGB(int x, int y, int w, int h, const uint32_t *src, int src_stride) {
+    if (!src || !fb_surface || w <= 0 || h <= 0 || src_stride < w) return;
+    if (x >= 0 && y >= 0 && x + w <= fb_width && y + h <= fb_height) {
+        for (int row = 0; row < h; row++)
+            memcpy(fb_surface + (y + row) * fb_width + x,
+                   src + row * src_stride, (uint32_t)w * sizeof(uint32_t));
+        fb_mark_dirty(x, y, w, h);
+        return;
+    }
+    for (int row = 0; row < h; row++) {
+        int dy = y + row;
+        if (dy < 0 || dy >= fb_height) continue;
+        for (int col = 0; col < w; col++) {
+            int dx = x + col;
+            if (dx < 0 || dx >= fb_width) continue;
+            uint32_t rgb = src[row * src_stride + col];
+            fb_surface[dy * fb_width + dx] = rgb;
+        }
+    }
+    fb_mark_dirty(x, y, w, h);
+}
+
 void FbClearScreen(uint8_t color) {
     if (use_framebuffer) {
-        rgb_direct_frame = 0;
         uint32_t count = (uint32_t)fb_width * (uint32_t)fb_height;
-        if (!fb_shadow) return;
-        for (uint32_t i = 0; i < count; i++) fb_shadow[i] = color & 0x0F;
+        uint8_t indexed = color & 0x0F;
+        uint32_t rgb = vga_to_rgb888[indexed];
+        if (!fb_shadow || !fb_surface) return;
+        for (uint32_t i = 0; i < count; i++) {
+            fb_shadow[i] = indexed;
+            fb_surface[i] = rgb;
+        }
         fb_mark_dirty(0, 0, fb_width, fb_height);
     } else {
         VgaClearScreen(color);
@@ -903,9 +984,10 @@ void FbClearScreen(uint8_t color) {
 
 void FbPutPixel(int x, int y, uint8_t color) {
     if (use_framebuffer) {
-        if (!fb_shadow || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+        if (!fb_shadow || !fb_surface || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
+        if (fb_clip_enabled && (x < fb_clip_left || x >= fb_clip_right || y < fb_clip_top || y >= fb_clip_bottom)) return;
         fb_shadow[y * fb_width + x] = color & 0x0F;
-        if (rgb_direct_frame) fb_write_hw_pixel(x, y, color);
+        fb_surface[y * fb_width + x] = vga_to_rgb888[color & 0x0F];
         fb_mark_dirty(x, y, 1, 1);
     } else {
         VgaPutPixel(x, y, color);
@@ -914,7 +996,13 @@ void FbPutPixel(int x, int y, uint8_t color) {
 
 void FbFillRect(int x, int y, int w, int h, uint8_t color) {
     if (use_framebuffer) {
-        if (!fb_shadow) return;
+        if (!fb_shadow || !fb_surface) return;
+        if (fb_clip_enabled) {
+            if (x < fb_clip_left) { w -= fb_clip_left - x; x = fb_clip_left; }
+            if (y < fb_clip_top) { h -= fb_clip_top - y; y = fb_clip_top; }
+            if (x + w > fb_clip_right) w = fb_clip_right - x;
+            if (y + h > fb_clip_bottom) h = fb_clip_bottom - y;
+        }
         if (x < 0) { w += x; x = 0; }
         if (y < 0) { h += y; y = 0; }
         if (x + w > fb_width) w = fb_width - x;
@@ -923,9 +1011,10 @@ void FbFillRect(int x, int y, int w, int h, uint8_t color) {
 
         for (int row = y; row < y + h; row++) {
             uint8_t *dst = fb_shadow + (row * fb_width) + x;
+            uint32_t *surface = fb_surface + (row * fb_width) + x;
             for (int col = 0; col < w; col++) {
                 dst[col] = color & 0x0F;
-                if (rgb_direct_frame) fb_write_hw_pixel(x + col, row, color);
+                surface[col] = vga_to_rgb888[color & 0x0F];
             }
         }
         fb_mark_dirty(x, y, w, h);
@@ -935,14 +1024,38 @@ void FbFillRect(int x, int y, int w, int h, uint8_t color) {
 }
 
 void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb) {
-    if (!use_framebuffer || !fb_addr) { FbFillRect(x, y, w, h, 0); return; }
+    if (!use_framebuffer || !fb_surface) { FbFillRect(x, y, w, h, 0); return; }
+    if (fb_clip_enabled) {
+        if (x < fb_clip_left) { w -= fb_clip_left - x; x = fb_clip_left; }
+        if (y < fb_clip_top) { h -= fb_clip_top - y; y = fb_clip_top; }
+        if (x + w > fb_clip_right) w = fb_clip_right - x;
+        if (y + h > fb_clip_bottom) h = fb_clip_bottom - y;
+    }
     if (x < 0) { w += x; x = 0; } if (y < 0) { h += y; y = 0; }
     if (x + w > fb_width) w = fb_width - x; if (y + h > fb_height) h = fb_height - y;
     if (w <= 0 || h <= 0) return;
-    for (int yy = y; yy < y + h; yy++) for (int xx = x; xx < x + w; xx++) fb_write_hw_rgb(xx, yy, rgb);
-    rgb_direct_frame = 1;
-    svga_update(x, y, w, h);
+    {
+        uint8_t palette = fb_rgb_to_index(rgb);
+    for (int yy = y; yy < y + h; yy++) {
+        uint8_t *indexed = fb_shadow + yy * fb_width + x;
+        uint32_t *surface = fb_surface + yy * fb_width + x;
+        for (int xx = 0; xx < w; xx++) { surface[xx] = rgb; indexed[xx] = palette; }
+    }
+    }
+    fb_mark_dirty(x, y, w, h);
 }
+
+void FbSetClipRect(int x, int y, int w, int h) {
+    fb_clip_enabled = 1;
+    fb_clip_left = x < 0 ? 0 : x;
+    fb_clip_top = y < 0 ? 0 : y;
+    fb_clip_right = x + w > fb_width ? fb_width : x + w;
+    fb_clip_bottom = y + h > fb_height ? fb_height : y + h;
+    if (fb_clip_right < fb_clip_left) fb_clip_right = fb_clip_left;
+    if (fb_clip_bottom < fb_clip_top) fb_clip_bottom = fb_clip_top;
+}
+
+void FbResetClipRect(void) { fb_clip_enabled = 0; }
 
 void FbDrawRect(int x, int y, int w, int h, uint8_t color) {
     FbFillRect(x, y, w, 1, color);
@@ -1024,26 +1137,91 @@ void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
 
 void FbSwapBuffers(void) {
     if (use_framebuffer) {
-        if (rgb_direct_frame) {
-            /* Preserve a direct RGB preview instead of copying the indexed
-             * UI shadow buffer over it during the compositor swap. Keep the
-             * state set: mouse hover/cursor refreshes can call SwapBuffers
-             * without a full scene clear, and must continue compositing
-             * indexed cursor pixels directly over the RGB surface. */
-            svga_update(0, 0, fb_width, fb_height);
-            fb_reset_dirty();
-            return;
-        }
-        if (!fb_shadow || !dirty_valid) return;
+        if (!fb_surface || !dirty_valid) return;
 
         int update_x = dirty_x1;
         int update_y = dirty_y1;
         int update_w = dirty_x2 - dirty_x1 + 1;
         int update_h = dirty_y2 - dirty_y1 + 1;
 
-        for (int y = dirty_y1; y <= dirty_y2; y++) {
-            for (int x = dirty_x1; x <= dirty_x2; x++) {
-                fb_write_hw_pixel(x, y, fb_shadow[y * fb_width + x]);
+        if (bga_page_flip) {
+            int target_page;
+            uint8_t *target;
+            uint8_t *old_page;
+
+            if (!fb_present_addr) fb_present_addr = fb_addr;
+            target_page = bga_display_page ^ 1;
+            target = fb_addr + (uint32_t)target_page * fb_height * fb_pitch;
+            old_page = fb_addr + (uint32_t)bga_display_page * fb_height * fb_pitch;
+            fb_present_addr = target;
+
+            if (!bga_pages_initialized && fb_bpp == 32) {
+                for (int y = 0; y < fb_height; y++) {
+                    memcpy(fb_addr + y * fb_pitch,
+                           fb_surface + y * fb_width,
+                           (uint32_t)fb_width * 4U);
+                    memcpy(fb_addr + (uint32_t)fb_height * fb_pitch + y * fb_pitch,
+                           fb_surface + y * fb_width,
+                           (uint32_t)fb_width * 4U);
+                }
+                bga_pages_initialized = 1;
+            } else if (!bga_pages_initialized) {
+                for (int page = 0; page < 2; page++) {
+                    fb_present_addr = fb_addr + (uint32_t)page * fb_height * fb_pitch;
+                    for (int y = 0; y < fb_height; y++)
+                        for (int x = 0; x < fb_width; x++)
+                            fb_write_hw_rgb(x, y, fb_surface[y * fb_width + x]);
+                }
+                fb_present_addr = target;
+                bga_pages_initialized = 1;
+            }
+
+            if (fb_bpp == 32) {
+                for (int y = dirty_y1; y <= dirty_y2; y++) {
+                    memcpy(target + y * fb_pitch + dirty_x1 * 4,
+                           fb_surface + y * fb_width + dirty_x1,
+                           (uint32_t)update_w * 4U);
+                }
+            } else {
+                for (int y = dirty_y1; y <= dirty_y2; y++) {
+                    for (int x = dirty_x1; x <= dirty_x2; x++)
+                        fb_write_hw_rgb(x, y, fb_surface[y * fb_width + x]);
+                }
+            }
+            bga_write(BGA_INDEX_X_OFFSET, 0);
+            bga_write(BGA_INDEX_Y_OFFSET, target_page * fb_height);
+            bga_display_page = target_page;
+
+            /* The former display page is hidden now. Bring it up to date
+               after the flip so cursor/background changes cannot leave a
+               stale cursor trail on the next alternating frame. */
+            if (fb_bpp == 32) {
+                for (int y = dirty_y1; y <= dirty_y2; y++) {
+                    memcpy(old_page + y * fb_pitch + dirty_x1 * 4,
+                           fb_surface + y * fb_width + dirty_x1,
+                           (uint32_t)update_w * 4U);
+                }
+            } else {
+                fb_present_addr = old_page;
+                for (int y = dirty_y1; y <= dirty_y2; y++) {
+                    for (int x = dirty_x1; x <= dirty_x2; x++)
+                        fb_write_hw_rgb(x, y, fb_surface[y * fb_width + x]);
+                }
+                fb_present_addr = target;
+            }
+        } else if (fb_bpp == 32) {
+            /* The compositor surface and the native framebuffer have the
+               same packed RGB layout. Copy complete scanlines so a drag
+               does not spend time touching every pixel through a helper. */
+            for (int y = dirty_y1; y <= dirty_y2; y++) {
+                memcpy(fb_addr + y * fb_pitch + dirty_x1 * 4,
+                       fb_surface + y * fb_width + dirty_x1,
+                       (uint32_t)update_w * 4U);
+            }
+        } else {
+            for (int y = dirty_y1; y <= dirty_y2; y++) {
+                for (int x = dirty_x1; x <= dirty_x2; x++)
+                    fb_write_hw_rgb(x, y, fb_surface[y * fb_width + x]);
             }
         }
 

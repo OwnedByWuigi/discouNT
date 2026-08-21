@@ -40,6 +40,12 @@ int FbGetModeCount(void);
 int FbGetModeInfo(int index, int *width, int *height, int *bpp);
 int FbSetResolution(int width, int height, int bpp);
 uint8_t FbGetPixel(int x, int y);
+uint32_t FbGetPixelRGB(int x, int y);
+void FbPutPixelRGB(int x, int y, uint32_t rgb);
+void FbCaptureRGB(int x, int y, int w, int h, uint32_t *dst, int dst_stride);
+void FbBlitRGB(int x, int y, int w, int h, const uint32_t *src, int src_stride);
+void FbSetClipRect(int x, int y, int w, int h);
+void FbResetClipRect(void);
 void FbCapture(uint8_t *dst, int dst_stride);
 void FbBlitIndexed(int x, int y, int w, int h, const uint8_t *src, int src_stride);
 

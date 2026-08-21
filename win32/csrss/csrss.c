@@ -1398,7 +1398,9 @@ void CsrssSessionRun(void *mb_info) {
                     if (!csrss_find_app_by_window(active_hwnd))
                         csrss_post_logon_mouse(WM_LBUTTONUP, 0,
                                                mouse_state.x, mouse_state.y);
-                    Win32kRedrawAll();
+                    /* Flush only application/cursor damage. A button release
+                       must not recompose the entire desktop. */
+                    Win32kRefreshCursor();
                 }
 
                 last_buttons = mouse_state.buttons;
