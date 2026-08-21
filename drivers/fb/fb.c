@@ -449,13 +449,24 @@ static int fb_indexed_stride(void) {
 }
 
 static void bga_write(uint16_t index, uint16_t value) {
+#if defined(__loongarch64)
+    volatile uint16_t *vbe = (volatile uint16_t *)(uintptr_t)0x41000500UL;
+    vbe[index] = value;
+    __asm__ volatile("dbar 0" ::: "memory");
+#else
     outw(BGA_IOPORT_INDEX, index);
     outw(BGA_IOPORT_DATA, value);
+#endif
 }
 
 static uint16_t bga_read(uint16_t index) {
+#if defined(__loongarch64)
+    volatile uint16_t *vbe = (volatile uint16_t *)(uintptr_t)0x41000500UL;
+    return vbe[index];
+#else
     outw(BGA_IOPORT_INDEX, index);
     return inw(BGA_IOPORT_DATA);
+#endif
 }
 
 static void fb_reset_dirty(void) {

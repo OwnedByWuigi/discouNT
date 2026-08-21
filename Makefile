@@ -67,6 +67,7 @@ KERNEL_CORE_SRCS := \
 	kernel/arch/x86/idt.c \
 	kernel/arch/x86/isr.c \
 	drivers/fat32/fat32.c \
+	drivers/fb/storage.c \
 	drivers/input/input.c \
 	drivers/ide/ide.c \
 	drivers/usb/usb.c \
@@ -245,28 +246,28 @@ $(WIN32K_DLL): win32/w32k/w32k.c
 
 $(BUILD_DIR)/apps/%.exe: apps/%.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
 
 $(CMD_APP): apps/cmd/cmd.c kernel/core/version.h
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 -Ikernel \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
 
 $(CONTROL_APP): apps/control/control.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
 
 $(DESK_CPL): apps/control/desk/desk.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
@@ -317,14 +318,14 @@ $(WINVER_MENU_RES): apps/winver/winver.rc tools/rc_menu_gen.py
 
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
 
 $(CSRSS_APP): win32/csrss/csrss_app.c
 	@mkdir -p $(@D)
-	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c

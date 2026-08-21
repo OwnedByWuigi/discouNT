@@ -144,6 +144,11 @@ static int driver_load_w32k_dll(void) {
 }
 
 void DriverLoadAll(void *mb_info) {
+#if defined(__loongarch64)
+    /* LA64 links its boot drivers directly until module relocations cover the
+       complete LoongArch ABI.  User-mode DLLs still use DriverResolveSymbol. */
+    (void)mb_info;
+#else
     static const DRIVER_SPEC specs[] = {
         {"/SYSTEM32/DRIVERS/SERIAL.SYS", DriverInstallSerial},
         {"/SYSTEM32/DRIVERS/VGA.SYS", DriverInstallVga},
@@ -159,4 +164,5 @@ void DriverLoadAll(void *mb_info) {
     }
 
     driver_load_w32k_dll();
+#endif
 }

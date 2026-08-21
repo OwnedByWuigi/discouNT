@@ -25,6 +25,7 @@
  */
 
 #include "msgina.h"
+extern void SerialPutString(const char *text);
 
 #include <winsvc.h>
 #include <userenv.h>
@@ -269,23 +270,35 @@ WlxInitialize(
 {
     PGINA_CONTEXT pgContext;
 
+    SerialPutString("[MSGINA] WlxInitialize entered\r\n");
+
     UNREFERENCED_PARAMETER(pvReserved);
 
+#if !defined(__loongarch64)
     InitThemeSupport();
+#endif
+    SerialPutString("[MSGINA] Theme support initialized\r\n");
 
     pgContext = (PGINA_CONTEXT)LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(GINA_CONTEXT));
+    SerialPutString("[MSGINA] Context allocated\r\n");
     if(!pgContext)
     {
         WARN("LocalAlloc() failed\n");
         return FALSE;
     }
 
+#if defined(__loongarch64)
+    pgContext->bAutoAdminLogon = TRUE;
+    pgContext->bDisableCAD = TRUE;
+    pgContext->bShutdownWithoutLogon = TRUE;
+#else
     if (!GetRegistrySettings(pgContext))
     {
         WARN("GetRegistrySettings() failed\n");
         LocalFree(pgContext);
         return FALSE;
     }
+#endif
 
     /* discouNT has no registry-backed account database yet.  Match the
      * default local administrator account used by a fresh Windows install;
@@ -319,7 +332,12 @@ WlxInitialize(
 
     pgContext->nShutdownAction = WLX_SAS_ACTION_SHUTDOWN_POWER_OFF;
 
+#if defined(__loongarch64)
+    pGinaUI = &GinaGraphicalUI;
+#else
     ChooseGinaUI();
+#endif
+    SerialPutString("[MSGINA] UI selected\r\n");
     return pGinaUI->Initialize(pgContext);
 }
 

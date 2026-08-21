@@ -25,7 +25,6 @@ static void KeDeleteThreadObject(void *body) {
 
 // Note: kmalloc and kfree are now in mm.c - include mm.h instead
 
-#if !defined(__loongarch64)
 static void KeThreadBootstrap(void) {
     if (current_thread) {
         void (*entry)(void*) = (void (*)(void*))current_thread->entry_point;
@@ -35,7 +34,6 @@ static void KeThreadBootstrap(void) {
     }
     for (;;) KeYield();
 }
-#endif
 
 static void KeAppendReadyThread(THREAD *thread) {
     THREAD *tail;
@@ -117,8 +115,8 @@ HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     
     // Cooperative switch: after KeYield restores ESP and returns, execution enters bootstrap.
 #if defined(__loongarch64)
-    /* LA64 context construction is added with the scheduler switch frame. */
     thread->context_esp = ((uintptr_t)thread->stack + thread->stack_size) & ~(uintptr_t)15;
+    thread->context_ra = (uintptr_t)KeThreadBootstrap;
 #elif defined(__x86_64__)
     /* ret enters a SysV AMD64 function with RSP % 16 == 8. */
     uintptr_t stack_top = ((uintptr_t)thread->stack + thread->stack_size) & ~(uintptr_t)15;
@@ -166,7 +164,7 @@ void KeTerminateThread(HANDLE thread_handle) {
     }
 }
 
-static THREAD *KeSelectNextThread(void) {
+static __attribute__((used, noinline)) THREAD *KeSelectNextThread(void) {
     THREAD *next;
     THREAD *scan;
 
@@ -195,9 +193,43 @@ static THREAD *KeSelectNextThread(void) {
 }
 
 #if defined(__loongarch64)
-void KeYield(void) {
-    /* Initialization is single-threaded until LA64 context switching lands. */
-    (void)KeSelectNextThread();
+__attribute__((naked)) void KeYield(void) {
+    __asm__ volatile(
+        "la.local $t0, current_thread\n\t"
+        "ld.d $t0, $t0, 0\n\t"
+        "beqz $t0, 2f\n\t"
+        "st.d $sp, $t0, 48\n\t"
+        "st.d $fp, $t0, 56\n\t"
+        "st.d $s0, $t0, 64\n\t"
+        "st.d $s1, $t0, 72\n\t"
+        "st.d $s2, $t0, 80\n\t"
+        "st.d $s3, $t0, 88\n\t"
+        "st.d $s4, $t0, 96\n\t"
+        "st.d $s5, $t0, 104\n\t"
+        "st.d $s6, $t0, 112\n\t"
+        "st.d $s7, $t0, 120\n\t"
+        "st.d $s8, $t0, 128\n\t"
+        "st.d $ra, $t0, 136\n\t"
+        "bl KeSelectNextThread\n\t"
+        "bnez $a0, 1f\n\t"
+        "la.local $a0, current_thread\n\t"
+        "ld.d $a0, $a0, 0\n\t"
+        "1:\n\t"
+        "ld.d $sp, $a0, 48\n\t"
+        "ld.d $fp, $a0, 56\n\t"
+        "ld.d $s0, $a0, 64\n\t"
+        "ld.d $s1, $a0, 72\n\t"
+        "ld.d $s2, $a0, 80\n\t"
+        "ld.d $s3, $a0, 88\n\t"
+        "ld.d $s4, $a0, 96\n\t"
+        "ld.d $s5, $a0, 104\n\t"
+        "ld.d $s6, $a0, 112\n\t"
+        "ld.d $s7, $a0, 120\n\t"
+        "ld.d $s8, $a0, 128\n\t"
+        "ld.d $ra, $a0, 136\n\t"
+        "2:\n\t"
+        "ret\n\t"
+    );
 }
 #else
 __attribute__((naked)) void KeYield(void) {

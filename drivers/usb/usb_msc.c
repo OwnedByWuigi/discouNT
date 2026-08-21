@@ -34,10 +34,12 @@ static int bot_command(MSC_DEVICE*d,const uint8_t*cdb,uint8_t cdb_length,
     cbw.tag=++d->next_tag; cbw.transfer_length=length;
     cbw.flags=input?0x80:0; cbw.command_length=cdb_length;
     memcpy(cbw.command,cdb,cdb_length);
-    if(!d->transfer(d->context,d->bulk_out,&cbw,sizeof(cbw)))return 0;
-    if(length&&!d->transfer(d->context,input?d->bulk_in:d->bulk_out,data,length))return 0;
-    if(!d->transfer(d->context,d->bulk_in,&csw,sizeof(csw)))return 0;
-    return csw.signature==MSC_CSW_SIGNATURE&&csw.tag==cbw.tag&&csw.status==0;
+    if(!d->transfer(d->context,d->bulk_out,&cbw,sizeof(cbw))){SerialPutString("[USB MSC] CBW transfer failed\r\n");return 0;}
+    if(length&&!d->transfer(d->context,input?d->bulk_in:d->bulk_out,data,length)){SerialPutString("[USB MSC] Data transfer failed\r\n");return 0;}
+    if(!d->transfer(d->context,d->bulk_in,&csw,sizeof(csw))){SerialPutString("[USB MSC] CSW transfer failed\r\n");return 0;}
+    if(csw.signature!=MSC_CSW_SIGNATURE||csw.tag!=cbw.tag){SerialPutString("[USB MSC] Invalid CSW\r\n");return 0;}
+    if(csw.status){SerialPutString("[USB MSC] Command status failed\r\n");return 0;}
+    return 1;
 }
 
 static int msc_read(IO_DEVICE_OBJECT*device,IO_REQUEST*request) {
@@ -63,7 +65,8 @@ IO_DEVICE_OBJECT *UsbMscAttach(void*context,USB_MSC_BULK_TRANSFER transfer,
     IO_DEVICE_OBJECT*object=IoCreateDevice(msc_driver,name,sizeof(MSC_DEVICE));
     if(!object)return 0;MSC_DEVICE*d=object->device_extension;d->context=context;
     d->transfer=transfer;d->bulk_in=bulk_in;d->bulk_out=bulk_out;d->next_tag=0;
-    if(!bot_command(d,cdb,10,capacity,sizeof(capacity),1)){IoDeleteDevice(object);return 0;}
+    {int ready=0;for(int retry=0;retry<8&&!ready;retry++)ready=bot_command(d,cdb,10,capacity,sizeof(capacity),1);
+     if(!ready){IoDeleteDevice(object);return 0;}}
     d->block_count=be32(capacity)+1;d->block_size=be32(capacity+4);
     if(!d->block_size){IoDeleteDevice(object);return 0;}
     SerialPutString("[USB MSC] Attached ");SerialPutString(name);SerialPutString(", blocks ");

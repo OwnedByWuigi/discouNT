@@ -9,6 +9,10 @@
 #include "serial.h"
 #include "smss.h"
 #include "csrss.h"
+#include "fb.h"
+#include "cdfs.h"
+#include "usb.h"
+#include "keyboard.h"
 
 /* QEMU LoongArch virt machine's 16550-compatible debug UART. */
 #define UART_BASE 0x1fe001e0UL
@@ -21,6 +25,9 @@ extern uint8_t __bss_end;
 extern uint8_t __data_start;
 extern uint8_t __data_end;
 extern uint8_t __data_load;
+
+uint32_t KeGetProcessorCount(void) { return 1; }
+uint32_t KeGetPhysicalMemoryPages(void) { return (512U * 1024U * 1024U) / 4096U; }
 
 static void uart_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART_BASE;
@@ -73,6 +80,9 @@ __attribute__((noreturn)) void boot_main(void) {
     else
         SerialPutString("[LA64] Platform device registration failed\n");
 
+    UsbBootInitialize();
+    CdfsInit();
+    KeyboardInit();
     SubsystemInit(0);
     if (SmssIsInitialized())
         HalPutString("SMSS SESSION MANAGER INITIALIZED\n", 0x0a);

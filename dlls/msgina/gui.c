@@ -52,9 +52,17 @@ typedef struct _DLG_DATA
 /* The PE loader maps loadable ELF data, but an objcopy-added section is not
  * guaranteed to belong to a PT_LOAD segment.  Keep the artwork in ordinary
  * .data as well, so the real GINA can always paint it after being loaded. */
+extern HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size);
+#if defined(__loongarch64)
+static HBITMAP load_embedded_logo(void) { return NULL; }
+#else
 extern const unsigned char msgina_logo_start[];
 extern const unsigned char msgina_logo_end[];
-extern HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size);
+static HBITMAP load_embedded_logo(void) {
+    return GdiCreateBitmapFromBmp(msgina_logo_start,
+                                  (uint32_t)(msgina_logo_end - msgina_logo_start));
+}
+#endif
 
 static LRESULT CALLBACK
 GinaBannerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -69,8 +77,7 @@ GinaBannerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                       MAKEINTRESOURCEW(IDI_ROSLOGO),
                                       IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR);
         if (!logo)
-            logo = GdiCreateBitmapFromBmp(msgina_logo_start,
-                                          (uint32_t)(msgina_logo_end - msgina_logo_start));
+            logo = load_embedded_logo();
         BeginPaint(hwnd, &ps);
         DrawStateW(ps.hdc, NULL, NULL, (LPARAM)logo,
                    0, 0, 0, 413, 72, DST_BITMAP);
@@ -106,8 +113,7 @@ DlgData_LoadBitmaps(_Inout_ PDLG_DATA pDlgData)
                                        MAKEINTRESOURCEW(IDI_ROSLOGO), IMAGE_BITMAP,
                                        0, 0, LR_DEFAULTCOLOR);
     if (!pDlgData->hLogoBitmap)
-        pDlgData->hLogoBitmap = GdiCreateBitmapFromBmp(msgina_logo_start,
-                                                       (uint32_t)(msgina_logo_end - msgina_logo_start));
+        pDlgData->hLogoBitmap = load_embedded_logo();
     if (pDlgData->hLogoBitmap)
     {
         GetObject(pDlgData->hLogoBitmap, sizeof(bm), &bm);

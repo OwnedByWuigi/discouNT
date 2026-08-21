@@ -166,12 +166,17 @@ static int render(uint16_t glyph, uint8_t out[12]) {
 }
 
 int FbTtfLoad(const char *path) {
+#if defined(__loongarch64)
+    (void)path;
+    return 0;
+#else
     uint8_t *data=0; uint32_t size=0;
     (void)path;
     if (ttf.ready || !CdfsReadFile("/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size)) return ttf.ready;
     ttf.data=data;ttf.size=size;ttf.head=table(0x68656164);ttf.cmap=table(0x636D6170);ttf.glyf=table(0x676C7966);ttf.loca=table(0x6C6F6361);
     {uint32_t maxp=table(0x6D617870);if(!ttf.head||!ttf.cmap||!ttf.glyf||!ttf.loca||!maxp){kfree(data);ttf.data=0;return 0;}ttf.glyph_count=u16(data+maxp+4);}
     ttf.loca_format=s16(data+ttf.head+50);ttf.ready=1;return 1;
+#endif
 }
 
 int FbTtfReady(void) { return ttf.ready; }

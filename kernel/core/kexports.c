@@ -30,7 +30,7 @@ typedef struct _KERNEL_EXPORT {
     void *addr;
 } KERNEL_EXPORT;
 
-uint8_t back_buffer[640 * 480];
+extern uint8_t back_buffer[640 * 480];
 
 static KERNEL_EXPORT kernel_exports[] = {
     {"kmalloc", kmalloc},
@@ -137,6 +137,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"Win32kShowWindow", Win32kShowWindow},
     {"Win32kUpdateWindow", Win32kUpdateWindow},
     {"Win32kGetClientRect", Win32kGetClientRect},
+    {"Win32kGetClientScreenRect", Win32kGetClientScreenRect},
     {"Win32kGetWindowRect", Win32kGetWindowRect},
     {"Win32kDestroyWindow", Win32kDestroyWindow},
     {"Win32kHandleMouseDown", Win32kHandleMouseDown},
@@ -149,6 +150,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"Win32kIsResizing", Win32kIsResizing},
     {"Win32kGetActiveWindow", Win32kGetActiveWindow},
     {"Win32kActivateWindow", Win32kActivateWindow},
+    {"Win32kSetWindowIcons", Win32kSetWindowIcons},
     {"KeAttachCurrentThread", KeAttachCurrentThread},
     {"KeCreateThread", KeCreateThread},
     {"KeYield", KeYield},

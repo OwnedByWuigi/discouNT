@@ -749,6 +749,7 @@ static int csrss_spawn_gui_instance(const char *path) {
     }
 
     if (app->window != INVALID_HANDLE) {
+        SerialPutString("[CSRSS] GUI main window created\r\n");
         if (app->kind == GUI_APP_KIND_CUSTOM) {
             WINDOW *win = (WINDOW*)ObReferenceObject(app->window);
             if (win) {
@@ -773,10 +774,12 @@ static int csrss_spawn_gui_instance(const char *path) {
 
         Win32kActivateWindow(app->window);
         Win32kShowWindow(app->window);
+        SerialPutString("[CSRSS] GUI main window activated\r\n");
     }
 
     g_gui_app_count++;
     Win32kRedrawAll();
+    SerialPutString("[CSRSS] GUI spawn complete\r\n");
     return 0;
 }
 
@@ -985,6 +988,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         app->image = 0;
         return 0;
     }
+    SerialPutString("[CSRSS] GUI app init complete\r\n");
 
     /* A custom GUI console can provide the sink used by standard console
      * programs launched from it.  This keeps stdout attached to the owning
@@ -994,10 +998,13 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
             (void (*)(const char *, uint32_t))PeGetProcAddress(app->image, "CmdAppWriteConsole");
         if (sink) g_kernel32_set_console_sink(sink);
     }
+    SerialPutString("[CSRSS] GUI console sink configured\r\n");
 
     app->reset_exit();
+    SerialPutString("[CSRSS] Creating GUI main window\r\n");
     g_current_gui_pid = app->pid;
     app->window = create_window_fn();
+    SerialPutString("[CSRSS] GUI main window call returned\r\n");
     g_current_gui_pid = 0;
     if (app->window == 0xFFFFFFFFU) {
         SerialPutString("[CSRSS] GUI app failed to create main window\r\n");

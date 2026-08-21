@@ -1,6 +1,9 @@
 BUILD_DIR := build/loongarch64
 KERNEL := $(BUILD_DIR)/kernel.elf
 BOOT_ROM := $(BUILD_DIR)/boot.bin
+SYSTEM_ISO := $(BUILD_DIR)/discount-la64.iso
+CMD_APP := $(BUILD_DIR)/apps/cmd/cmd.exe
+CMD_OBJS := $(BUILD_DIR)/apps/cmd/cmd.o $(BUILD_DIR)/apps/cmd/util.o
 
 CLANG ?= clang
 LD := ld.lld
@@ -12,33 +15,93 @@ TARGET := loongarch64-unknown-elf
 CPPFLAGS := -Ikernel -Idrivers/input -Idrivers/serial -Idrivers/cdfs \
 	-Idrivers/fb -Idrivers/keyboard -Idrivers/mouse -Idrivers/net \
 	-Idrivers/vga -Idrivers/usb \
+	-Idrivers/fat32 -Idrivers/ide -Iinclude/win32 \
 	-Iwin32 -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := --target=$(TARGET) -ffreestanding -fno-stack-protector \
 	-fno-builtin -fno-pic -Wall -Wextra -O0
 LDFLAGS := -m elf64loongarch -nostdlib -static \
 	-T kernel/arch/loongarch64/linker.ld
+USER_CFLAGS := --target=$(TARGET) -ffreestanding -fno-builtin \
+	-fno-stack-protector -fPIC -Wall -Wextra -O0
+IMAGE_BUILDER := sh tools/build_la64_image.sh
+SYSTEM_DIR := $(BUILD_DIR)/system
+FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 C_SRCS := kernel/arch/loongarch64/boot.c \
 	kernel/arch/loongarch64/hal.c \
 	drivers/serial/serial.c \
+	drivers/fb/fb.c \
+	drivers/fb/storage.c \
+	drivers/fb/ttf.c \
+	drivers/vga/vga.c \
+	drivers/cdfs/cdfs.c \
+	drivers/fat32/fat32.c \
+	drivers/input/input.c \
+	drivers/ide/ide.c \
+	drivers/keyboard/keyboard.c \
+	drivers/mouse/mouse.c \
+	drivers/net/net.c \
+	drivers/usb/usb.c \
+	drivers/usb/usb_msc.c \
+	drivers/usb/uhci.c \
+	drivers/usb/ohci.c \
+	drivers/usb/ehci.c \
+	drivers/usb/xhci.c \
 	kernel/core/util.c \
 	kernel/core/invoke.c \
+	kernel/core/bugcheck.c \
 	kernel/core/ke.c \
 	kernel/core/subsystem.c \
+	kernel/rtl/rtlpath.c \
+	kernel/loader/peloader.c \
+	kernel/core/kexports.c \
 	kernel/mm/mm.c \
 	kernel/mm/pmm.c \
 	kernel/mm/vmm.c \
 	kernel/ob/object.c \
 	kernel/io/io.c \
+	kernel/io/driver.c \
+	win32/w32k/w32k.c \
 	win32/smss/smss_init.c \
-	win32/csrss/csrss_init.c
+	win32/smss/smss.c \
+	win32/csrss/csrss_init.c \
+	win32/csrss/csrss.c
 ASM_SRCS := kernel/arch/loongarch64/entry.S
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) \
 	$(patsubst %.S,$(BUILD_DIR)/%.o,$(ASM_SRCS))
 
-.PHONY: all portable-check run run-gui run-headless run-uefi clean check-tools
+.PHONY: all kernel userspace system portable-check run run-gui run-headless run-uefi clean check-tools
 
-all: $(KERNEL) $(BOOT_ROM)
+NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll shell32 shlwapi user32
+NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
+NATIVE_APPS := $(CMD_APP) $(BUILD_DIR)/apps/control/control.exe \
+	$(BUILD_DIR)/apps/control/desk/desk.cpl $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
+	$(BUILD_DIR)/apps/notepad/notepad.exe $(BUILD_DIR)/apps/winver/winver.exe \
+	$(BUILD_DIR)/apps/whoami/whoami.exe
+NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe $(BUILD_DIR)/win32/csrss/csrss.exe
+NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll $(BUILD_DIR)/win32/w32k/win32k.dll
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide
+NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
+
+all: kernel userspace system $(SYSTEM_ISO)
+kernel: $(KERNEL) $(BOOT_ROM)
+userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
+
+system: kernel userspace
+	@mkdir -p $(SYSTEM_DIR)/SYSTEM32/DRIVERS $(SYSTEM_DIR)/SYSTEM32/FONTS
+	cp $(KERNEL) $(SYSTEM_DIR)/SYSTEM32/NTOSKRNL.EXE
+	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
+		cp "$$image" "$(SYSTEM_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
+	done
+
+$(SYSTEM_ISO): system
+	xorriso -as mkisofs -quiet -V DISCOUNT -o $@ $(SYSTEM_DIR)
+	@for driver in $(NATIVE_DRIVERS); do \
+		cp "$$driver" "$(SYSTEM_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
+	done
+	@for font in $(FONT_SOURCES); do \
+		cp "$$font" "$(SYSTEM_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
+	done
 
 # Compile the complete user-facing session process even before all of its
 # device/runtime dependencies are linked into the LA64 image.  This keeps
@@ -75,16 +138,91 @@ $(KERNEL): $(OBJS) kernel/arch/loongarch64/linker.ld
 $(BOOT_ROM): $(KERNEL)
 	$(OBJCOPY) -O binary $< $@
 
-run: check-tools $(BOOT_ROM)
+$(BUILD_DIR)/apps/cmd/cmd.o: apps/cmd/cmd.c win32/guiapp.h kernel/core/version.h
+	@mkdir -p $(@D)
+	$(CLANG) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(BUILD_DIR)/apps/cmd/util.o: kernel/core/util.c
+	@mkdir -p $(@D)
+	$(CLANG) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(CMD_APP): $(CMD_OBJS)
+	$(LD) -m elf64loongarch -shared -e main -Bsymbolic $^ -o $@
+
+$(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ - $^
+
+$(BUILD_DIR)/apps/control/control.exe: apps/control/control.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+$(BUILD_DIR)/apps/control/desk/desk.cpl: apps/control/desk/desk.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+TASKMGR_SOURCES := $(filter %.c,$(wildcard apps/taskmgr/*.c)) kernel/core/util.c
+$(BUILD_DIR)/apps/taskmgr/taskmgr.exe: $(TASKMGR_SOURCES)
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' EXTRA_CFLAGS='-include string.h -include ctype.h' $(IMAGE_BUILDER) $@ WinMain $^
+
+$(BUILD_DIR)/apps/notepad/notepad.exe: apps/notepad/main.c apps/notepad/dialog.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' EXTRA_CFLAGS='-fshort-wchar -include string.h -include ctype.h -include stdlib.h' $(IMAGE_BUILDER) $@ WinMain $^
+
+$(BUILD_DIR)/apps/winver/winver.exe: apps/winver/winver.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' EXTRA_CFLAGS='-include string.h' $(IMAGE_BUILDER) $@ WinMain $^
+
+$(BUILD_DIR)/apps/whoami/whoami.exe: apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+$(BUILD_DIR)/win32/smss/smss.exe: win32/smss/smss_app.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+$(BUILD_DIR)/win32/csrss/csrss.exe: win32/csrss/csrss_app.c kernel/core/util.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+MSGINA_SOURCES := dlls/msgina/msgina.c dlls/msgina/gui.c \
+	dlls/msgina/compat/reactos_port.c dlls/msgina/compat/ui_port.c
+$(BUILD_DIR)/dlls/msgina.dll: $(MSGINA_SOURCES)
+	CPPFLAGS='$(CPPFLAGS) -Idlls/msgina/compat -Idlls/msgina' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ - $^
+	$(OBJCOPY) --add-section .disbmp_logo=dlls/msgina/resources/reactos.bmp --set-section-flags .disbmp_logo=readonly,data $@
+	$(OBJCOPY) --add-section .disbmp_bar=dlls/msgina/resources/line.bmp --set-section-flags .disbmp_bar=readonly,data $@
+
+$(BUILD_DIR)/win32/w32k/win32k.dll: win32/w32k/w32k.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ - $^
+
+$(BUILD_DIR)/drivers/serial.sys: drivers/serial/serial.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/vga.sys: drivers/vga/vga.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/cdfs.sys: drivers/cdfs/cdfs.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/keyboard.sys: drivers/keyboard/keyboard.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/mouse.sys: drivers/mouse/mouse.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/net.sys: drivers/net/net.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+$(BUILD_DIR)/drivers/fb.sys: drivers/fb/fb.c drivers/fb/ttf.c drivers/module_entry.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+
+USB_SOURCES := drivers/usb/usb.c drivers/usb/usb_msc.c drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c
+$(BUILD_DIR)/drivers/usb.sys: $(USB_SOURCES)
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+
+$(BUILD_DIR)/drivers/ide.sys: drivers/ide/ide.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+
+run: check-tools $(BOOT_ROM) $(SYSTEM_ISO)
 	$(QEMU) -machine virt -cpu la464 -m 512M \
 		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
+		-device qemu-xhci -drive file=$(SYSTEM_ISO),if=none,media=cdrom,readonly=on,id=systemcd \
+		-device usb-storage,drive=systemcd \
 		-serial stdio
 
 run-gui: run
 
-run-headless: check-tools $(BOOT_ROM)
+run-headless: check-tools $(BOOT_ROM) $(SYSTEM_ISO)
 	$(QEMU) -machine virt -cpu la464 -m 512M \
 		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
+		-device qemu-xhci -drive file=$(SYSTEM_ISO),if=none,media=cdrom,readonly=on,id=systemcd \
+		-device usb-storage,drive=systemcd \
 		-nographic -serial mon:stdio
 
 run-uefi: check-tools $(KERNEL)

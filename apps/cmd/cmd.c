@@ -34,6 +34,12 @@ extern int strcmp(const char *a, const char *b);
 extern void strcpy(char *d, const char *s);
 extern void strcat(char *d, const char *s);
 extern char *itoa(int value, char *str, int base);
+#if defined(__loongarch64)
+extern void SerialPutString(const char *str);
+#define CMD_LA_TRACE(text) SerialPutString(text)
+#else
+#define CMD_LA_TRACE(text) ((void)0)
+#endif
 
 static int cmd_visible_rows(int client_h) {
     int rows = (client_h - 16) / 10;
@@ -651,6 +657,7 @@ static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t
 }
 
 __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
+    CMD_LA_TRACE("[CMD] Init entered\r\n");
     g_api = api;
     cmd_class = 0xFFFFFFFFU;
     cmd_window = 0xFFFFFFFFU;
@@ -660,9 +667,13 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     cmd_scroll = 0;
     cmd_scroll_drag = 0;
     strcpy(current_path, "/");
+    CMD_LA_TRACE("[CMD] Current path initialized\r\n");
     strcpy(exec_path, "/SYSTEM32");
+    CMD_LA_TRACE("[CMD] Executable path initialized\r\n");
     cmd_pid = (g_api && g_api->GetProcessId) ? g_api->GetProcessId() : 0;
+    CMD_LA_TRACE("[CMD] Process id initialized\r\n");
     cmd_clear_lines();
+    CMD_LA_TRACE("[CMD] Init complete\r\n");
     return 1;
 }
 

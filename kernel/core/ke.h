@@ -28,6 +28,9 @@ typedef struct _THREAD {
     uintptr_t context_r13;
     uintptr_t context_r14;
     uintptr_t context_r15;
+    uintptr_t context_r16;
+    uintptr_t context_r17;
+    uintptr_t context_ra;
     uint32_t wait_handle;
     struct _THREAD *next;
 } THREAD;

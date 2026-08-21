@@ -10,6 +10,14 @@ static inline void CpuRelax(void) {
     __asm__ volatile("pause");
 #endif
 }
+
+static inline void CpuMemoryBarrier(void) {
+#if defined(__loongarch64)
+    __asm__ volatile("dbar 0" ::: "memory");
+#else
+    __asm__ volatile("" ::: "memory");
+#endif
+}
 static inline void CpuDisableInterrupts(void) {
 #if defined(__loongarch64)
     __asm__ volatile("dbar 0" ::: "memory");

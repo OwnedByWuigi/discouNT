@@ -24,6 +24,7 @@ typedef struct {
     uint32_t image_size;
     uintptr_t elf_base_vaddr;
     void *source_image;
+    void *allocation_base;
     uint32_t source_size;
     uint8_t elf_class;
     uint8_t reserved[3];
@@ -155,6 +156,13 @@ typedef struct {
 #define R_X86_64_RELATIVE  8
 #define R_X86_64_32        10
 #define R_X86_64_32S       11
+
+#define ELF_MACHINE_X86_64     62
+#define ELF_MACHINE_LOONGARCH 258
+#define R_LARCH_32             1
+#define R_LARCH_64             2
+#define R_LARCH_RELATIVE       3
+#define R_LARCH_JUMP_SLOT      5
 
 #define ELF32_R_SYM(info)  ((info) >> 8)
 #define ELF32_R_TYPE(info) ((uint8_t)((info) & 0xFF))
@@ -315,8 +323,14 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
     uintptr_t base = PeGetELF64LoadBase(elf), mem_end = 0;
     uint64_t span;
 
-    if (elf->machine != 62 || elf->phentsize < sizeof(ELF64_PHDR)) {
-        SerialPutString("[ELF64] FAIL: not x86-64\r\n");
+    if (
+#if defined(__loongarch64)
+        elf->machine != ELF_MACHINE_LOONGARCH ||
+#else
+        elf->machine != ELF_MACHINE_X86_64 ||
+#endif
+        elf->phentsize < sizeof(ELF64_PHDR)) {
+        SerialPutString("[ELF64] FAIL: image machine does not match kernel\r\n");
         return 0;
     }
     if (elf->phoff >= size || (uint64_t)elf->phoff +
@@ -333,10 +347,24 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
     span = mem_end - base;
     if (span > 0xFFFFFFFFULL) return 0;
 
-    alloc_base = (uint8_t*)kmalloc(sizeof(PE_RUNTIME_HEADER) + (uint32_t)span);
+    uint32_t allocation_slack = 0;
+#if defined(__loongarch64)
+    /* LoongArch PC-relative address pairs preserve the low bits of the load
+       bias.  Keep ET_DYN images page aligned just as a real ELF loader does. */
+    allocation_slack = 0xFFFFU;
+#endif
+    if (span > 0xFFFFFFFFULL - sizeof(PE_RUNTIME_HEADER) - allocation_slack)
+        return 0;
+    alloc_base = (uint8_t*)kmalloc(sizeof(PE_RUNTIME_HEADER) +
+                                  (uint32_t)span + allocation_slack);
     if (!alloc_base) { SerialPutString("[ELF64] FAIL: OOM\r\n"); return 0; }
-    runtime = (PE_RUNTIME_HEADER*)alloc_base;
+#if defined(__loongarch64)
+    image_base = (uint8_t*)(((uintptr_t)alloc_base + sizeof(PE_RUNTIME_HEADER) +
+                             0xFFFFU) & ~(uintptr_t)0xFFFFU);
+#else
     image_base = alloc_base + sizeof(PE_RUNTIME_HEADER);
+#endif
+    runtime = (PE_RUNTIME_HEADER*)(image_base - sizeof(PE_RUNTIME_HEADER));
     source_copy = (uint8_t*)kmalloc(size);
     if (!source_copy) { kfree(alloc_base); return 0; }
     memcpy(source_copy, image_data, size);
@@ -346,6 +374,7 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
     runtime->image_size = (uint32_t)span;
     runtime->elf_base_vaddr = base;
     runtime->source_image = source_copy;
+    runtime->allocation_base = alloc_base;
     runtime->source_size = size;
     runtime->elf_class = 2;
     runtime->image_path[0] = 0;
@@ -404,6 +433,12 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
                     uint64_t *patch64 = (uint64_t*)(image_base + (uint32_t)off);
                     int32_t *patch32 = (int32_t*)patch64;
                     switch (type) {
+#if defined(__loongarch64)
+                        case R_LARCH_RELATIVE: *patch64 = (uint64_t)(uintptr_t)image_base + rels[j].addend; break;
+                        case R_LARCH_64: *patch64 = (uint64_t)sym + rels[j].addend; break;
+                        case R_LARCH_32: *patch32 = (int32_t)((uint64_t)sym + rels[j].addend); break;
+                        case R_LARCH_JUMP_SLOT: *patch64 = (uint64_t)sym; break;
+#else
                         case R_X86_64_RELATIVE: *patch64 = (uint64_t)image_base + rels[j].addend; break;
                         case R_X86_64_64: *patch64 = (uint64_t)sym + rels[j].addend; break;
                         case R_X86_64_GLOB_DAT:
@@ -411,6 +446,7 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
                         case R_X86_64_PC32: *patch32 = (int32_t)((int64_t)sym + rels[j].addend - (int64_t)(uintptr_t)patch64); break;
                         case R_X86_64_32:
                         case R_X86_64_32S: *patch32 = (int32_t)((uint64_t)sym + rels[j].addend); break;
+#endif
                         default: break;
                     }
                 }
@@ -514,6 +550,7 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
     runtime->image_size = image_size;
     runtime->elf_base_vaddr = base;
     runtime->source_image = source_copy;
+    runtime->allocation_base = alloc_base;
     runtime->source_size = size;
     runtime->elf_class = 1;
     runtime->image_path[0] = 0;
@@ -736,6 +773,7 @@ void *PeLoadImage(void *image_data, uint32_t size) {
     runtime->image_size = image_size;
     runtime->elf_base_vaddr = 0;
     runtime->source_image = 0;
+    runtime->allocation_base = alloc_base;
     runtime->source_size = 0;
     runtime->image_path[0] = 0;
 
@@ -856,7 +894,7 @@ void PeFreeImage(void *image_base) {
         runtime->source_image = 0;
     }
 
-    kfree(runtime);
+    kfree(runtime->allocation_base ? runtime->allocation_base : runtime);
 }
 
 void PePerformRelocations(void *image_base) {

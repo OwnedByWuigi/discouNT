@@ -1,6 +1,7 @@
 // ntdll.c - NT Native API for NT-like OS
 #include <stdint.h>
 #include "core/version.h"
+#include "cpu.h"
 
 // DLL entry
 __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
@@ -346,7 +347,7 @@ __attribute__((stdcall)) int NtOpenProcess(void **process, uint32_t access, void
 __attribute__((stdcall)) int NtTerminateProcess(void *process, int status) {
     (void)process; (void)status;
     SerialPutString("[NT] Process terminated, halting\r\n");
-    while(1) __asm__ volatile("hlt");
+    CpuHalt();
     return 0;
 }
 
@@ -366,7 +367,7 @@ __attribute__((stdcall)) int NtQueryInformationProcess(void *process, uint32_t c
 }
 
 __attribute__((stdcall)) int NtYieldExecution(void) {
-    __asm__ volatile("pause");
+    CpuRelax();
     return 0;
 }
 
@@ -376,7 +377,7 @@ __attribute__((stdcall)) int NtDelayExecution(int alertable, void *interval) {
         int64_t *delay = (int64_t*)interval; // 100ns units
         if (*delay > 0) {
             uint32_t ms = (uint32_t)(*delay / 10000);
-            for (volatile uint32_t i = 0; i < ms * 500; i++) __asm__ volatile("pause");
+            for (volatile uint32_t i = 0; i < ms * 500; i++) CpuRelax();
         }
     }
     return 0;

@@ -124,6 +124,7 @@ static HANDLE (*pWin32kCreateWindowByClass)(HANDLE hClass, const char *title, in
 static void (*pWin32kShowWindow)(HANDLE hwnd) = 0;
 static void (*pWin32kUpdateWindow)(HANDLE hwnd) = 0;
 static void (*pWin32kGetClientRect)(HANDLE hwnd, RECT *rect) = 0;
+static void (*pWin32kGetClientScreenRect)(HANDLE hwnd, RECT *rect) = 0;
 static void (*pWin32kGetWindowRect)(HANDLE hwnd, RECT *rect) = 0;
 static void (*pWin32kDestroyWindow)(HANDLE hwnd) = 0;
 static void (*pWin32kHandleMouseDown)(int x, int y, int button) = 0;
@@ -136,6 +137,7 @@ static int (*pWin32kIsDragging)(void) = 0;
 static int (*pWin32kIsResizing)(void) = 0;
 static HANDLE (*pWin32kGetActiveWindow)(void) = 0;
 static void (*pWin32kActivateWindow)(HANDLE hwnd) = 0;
+static void (*pWin32kSetWindowIcons)(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon) = 0;
 
 int fb_width = 640;
 int fb_height = 480;
@@ -277,6 +279,7 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
 void Win32kShowWindow(HANDLE hwnd) { if (pWin32kShowWindow) pWin32kShowWindow(hwnd); }
 void Win32kUpdateWindow(HANDLE hwnd) { if (pWin32kUpdateWindow) pWin32kUpdateWindow(hwnd); }
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect) { if (pWin32kGetClientRect) pWin32kGetClientRect(hwnd, rect); }
+void Win32kGetClientScreenRect(HANDLE hwnd, RECT *rect) { if (pWin32kGetClientScreenRect) pWin32kGetClientScreenRect(hwnd, rect); }
 void Win32kGetWindowRect(HANDLE hwnd, RECT *rect) { if (pWin32kGetWindowRect) pWin32kGetWindowRect(hwnd, rect); }
 void Win32kDestroyWindow(HANDLE hwnd) { if (pWin32kDestroyWindow) pWin32kDestroyWindow(hwnd); }
 void Win32kHandleMouseDown(int x, int y, int button) { if (pWin32kHandleMouseDown) pWin32kHandleMouseDown(x, y, button); }
@@ -289,6 +292,9 @@ int Win32kIsDragging(void) { return pWin32kIsDragging ? pWin32kIsDragging() : 0;
 int Win32kIsResizing(void) { return pWin32kIsResizing ? pWin32kIsResizing() : 0; }
 HANDLE Win32kGetActiveWindow(void) { return pWin32kGetActiveWindow ? pWin32kGetActiveWindow() : INVALID_HANDLE; }
 void Win32kActivateWindow(HANDLE hwnd) { if (pWin32kActivateWindow) pWin32kActivateWindow(hwnd); }
+void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon) {
+    if (pWin32kSetWindowIcons) pWin32kSetWindowIcons(hwnd, big_icon, small_icon);
+}
 
 #define RESOLVE(dst, image, name) dst = (void*)PeGetProcAddress(image, name)
 
@@ -379,6 +385,7 @@ void DriverInstallWin32k(void *image) {
     RESOLVE(pWin32kShowWindow, image, "Win32kShowWindow");
     RESOLVE(pWin32kUpdateWindow, image, "Win32kUpdateWindow");
     RESOLVE(pWin32kGetClientRect, image, "Win32kGetClientRect");
+    RESOLVE(pWin32kGetClientScreenRect, image, "Win32kGetClientScreenRect");
     RESOLVE(pWin32kGetWindowRect, image, "Win32kGetWindowRect");
     RESOLVE(pWin32kDestroyWindow, image, "Win32kDestroyWindow");
     RESOLVE(pWin32kHandleMouseDown, image, "Win32kHandleMouseDown");
@@ -391,6 +398,7 @@ void DriverInstallWin32k(void *image) {
     RESOLVE(pWin32kIsResizing, image, "Win32kIsResizing");
     RESOLVE(pWin32kGetActiveWindow, image, "Win32kGetActiveWindow");
     RESOLVE(pWin32kActivateWindow, image, "Win32kActivateWindow");
+    RESOLVE(pWin32kSetWindowIcons, image, "Win32kSetWindowIcons");
 
     if (!pWin32kInit) SerialPutString("[STUB] Missing Win32kInit export\r\n");
     if (!pWin32kRegisterClass) SerialPutString("[STUB] Missing Win32kRegisterClass export\r\n");
