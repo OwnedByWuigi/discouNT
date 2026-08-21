@@ -15,6 +15,11 @@
 #define WS_THICKFRAME       0x00040000L
 #define WS_MINIMIZEBOX      0x00020000L
 #define WS_MAXIMIZEBOX      0x00010000L
+#define WS_BORDER           0x00800000L
+#define WS_DLGFRAME         0x00400000L
+#define WS_EX_TOPMOST       0x00000008L
+#define WS_EX_NOACTIVATE    0x08000000L
+#define WS_EX_CLIENTEDGE    0x00000200L
 
 #define WS_OVERLAPPEDWINDOW (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
 
@@ -31,11 +36,13 @@ typedef struct _WINDOW {
     int       restore_x, restore_y;
     int       restore_width, restore_height;
     uint32_t  style;
+    uint32_t  exstyle;
     uint8_t   visible;
     uint8_t   active;
     uint8_t   minimized;
     uint8_t   maximized;
     uint8_t   desktop;
+    HANDLE    owner;
     HANDLE    big_icon;
     HANDLE    small_icon;
     WNDCLASS  *wndClass;
@@ -49,6 +56,8 @@ typedef struct _RECT {
 void Win32kInit(void *mb_info);
 HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(HANDLE, uint32_t, uint32_t, uint32_t));
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
+HANDLE Win32kCreateWindowEx(const char *className, const char *title, int x, int y, int w, int h,
+                            uint32_t style, uint32_t exstyle, HANDLE owner);
 HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style);
 void Win32kShowWindow(HANDLE hwnd);
 void Win32kSetWindowShowState(HANDLE hwnd, int command);
@@ -70,6 +79,7 @@ HANDLE Win32kGetActiveWindow(void);
 void Win32kActivateWindow(HANDLE hwnd);
 void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon);
 void Win32kSetWindowRect(HANDLE hwnd, int x, int y, int width, int height);
+int Win32kSetWindowPos(HANDLE hwnd, HANDLE insert_after, int x, int y, int width, int height, uint32_t flags);
 int Win32kGetScreenWidth(void);
 int Win32kGetScreenHeight(void);
 

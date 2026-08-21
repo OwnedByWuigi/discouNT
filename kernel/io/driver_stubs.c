@@ -106,6 +106,8 @@ static void (*pFbFillRectRGB)(int x, int y, int w, int h, uint32_t rgb) = 0;
 static void (*pFbDrawRect)(int x, int y, int w, int h, uint8_t color) = 0;
 static void (*pFbDrawChar)(int x, int y, char c, uint8_t fg, uint8_t bg) = 0;
 static void (*pFbDrawString)(int x, int y, const char *str, uint8_t fg, uint8_t bg) = 0;
+static void (*pFbDrawCharTransparent)(int x, int y, char c, uint8_t fg) = 0;
+static void (*pFbDrawStringTransparent)(int x, int y, const char *str, uint8_t fg) = 0;
 static void (*pFbSwapBuffers)(void) = 0;
 static int (*pFbIsFramebuffer)(void) = 0;
 static int (*pFbGetWidth)(void) = 0;
@@ -241,6 +243,8 @@ void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb) { if (pFbFillRectRG
 void FbDrawRect(int x, int y, int w, int h, uint8_t color) { if (pFbDrawRect) pFbDrawRect(x, y, w, h, color); }
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) { if (pFbDrawChar) pFbDrawChar(x, y, c, fg, bg); }
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) { if (pFbDrawString) pFbDrawString(x, y, str, fg, bg); }
+void FbDrawCharTransparent(int x, int y, char c, uint8_t fg) { if (pFbDrawCharTransparent) pFbDrawCharTransparent(x, y, c, fg); }
+void FbDrawStringTransparent(int x, int y, const char *str, uint8_t fg) { if (pFbDrawStringTransparent) pFbDrawStringTransparent(x, y, str, fg); }
 void FbSwapBuffers(void) { if (pFbSwapBuffers) pFbSwapBuffers(); }
 int FbIsFramebuffer(void) { return pFbIsFramebuffer ? pFbIsFramebuffer() : 0; }
 int FbGetWidth(void) { return pFbGetWidth ? pFbGetWidth() : fb_width; }
@@ -365,6 +369,8 @@ void DriverInstallFb(void *image) {
     RESOLVE(pFbDrawRect, image, "FbDrawRect");
     RESOLVE(pFbDrawChar, image, "FbDrawChar");
     RESOLVE(pFbDrawString, image, "FbDrawString");
+    RESOLVE(pFbDrawCharTransparent, image, "FbDrawCharTransparent");
+    RESOLVE(pFbDrawStringTransparent, image, "FbDrawStringTransparent");
     RESOLVE(pFbSwapBuffers, image, "FbSwapBuffers");
     RESOLVE(pFbIsFramebuffer, image, "FbIsFramebuffer");
     RESOLVE(pFbGetWidth, image, "FbGetWidth");
