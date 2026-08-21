@@ -371,7 +371,9 @@ BOOL InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, 
     int i;
     if (!menu || menu->count >= 32) return FALSE;
     if (!(uFlags & MF_BYPOSITION)) return AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem);
-    if ((int)uPosition > menu->count) uPosition = (UINT)menu->count;
+    /* Win32 callers use (UINT)-1 to append.  Normalize it before indexing;
+       otherwise the signed -1 position writes immediately before items[]. */
+    if ((int)uPosition < 0 || (int)uPosition > menu->count) uPosition = (UINT)menu->count;
     for (i = menu->count; i > (int)uPosition; i--) menu->items[i] = menu->items[i - 1];
     memset(&menu->items[uPosition], 0, sizeof(menu->items[uPosition]));
     menu->items[uPosition].id = (UINT)uIDNewItem;
@@ -408,7 +410,7 @@ BOOL TrackPopupMenuEx(HMENU hmenu, UINT fuFlags, int x, int y, HWND hwnd, void *
     u32_get_absolute_rect(root_win, &abs);
     client_x -= abs.left + u32_client_offset_x(root_win);
     client_y -= abs.top + u32_client_offset_y(root_win);
-    root_win->popup_menu = u32_create_menu_popup(root, root, hmenu, client_x, client_y);
+    root_win->popup_menu = u32_create_menu_popup(root, root, hmenu, client_x, client_y, fuFlags);
     g_open_menu_popup = root_win->popup_menu;
     SendMessageW(root, WM_ENTERMENULOOP, 0, 0);
     u32_mark_invalid(root);

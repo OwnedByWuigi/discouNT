@@ -1,13 +1,13 @@
 #include <stdint.h>
 
-__attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
+int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
     (void)hModule;
     (void)reason;
     (void)lpReserved;
     return 1;
 }
 
-__attribute__((stdcall)) int RegOpenKeyExW(void *hKey, const uint16_t *lpSubKey, uint32_t ulOptions, uint32_t samDesired, void **phkResult) {
+int RegOpenKeyExW(void *hKey, const uint16_t *lpSubKey, uint32_t ulOptions, uint32_t samDesired, void **phkResult) {
     (void)hKey;
     (void)lpSubKey;
     (void)ulOptions;
@@ -16,11 +16,11 @@ __attribute__((stdcall)) int RegOpenKeyExW(void *hKey, const uint16_t *lpSubKey,
     return 2;
 }
 
-__attribute__((stdcall)) int RegOpenKeyW(void *hKey, const uint16_t *lpSubKey, void **phkResult) {
+int RegOpenKeyW(void *hKey, const uint16_t *lpSubKey, void **phkResult) {
     return RegOpenKeyExW(hKey, lpSubKey, 0, 0, phkResult);
 }
 
-__attribute__((stdcall)) int RegCreateKeyExW(void *hKey, const uint16_t *lpSubKey, uint32_t Reserved, uint16_t *lpClass,
+int RegCreateKeyExW(void *hKey, const uint16_t *lpSubKey, uint32_t Reserved, uint16_t *lpClass,
                                              uint32_t dwOptions, uint32_t samDesired, void *lpSecurityAttributes,
                                              void **phkResult, uint32_t *lpdwDisposition) {
     (void)hKey; (void)lpSubKey; (void)Reserved; (void)lpClass; (void)dwOptions;
@@ -30,7 +30,7 @@ __attribute__((stdcall)) int RegCreateKeyExW(void *hKey, const uint16_t *lpSubKe
     return 0;
 }
 
-__attribute__((stdcall)) int RegQueryValueExW(void *hKey, const uint16_t *lpValueName, uint32_t *lpReserved, uint32_t *lpType,
+int RegQueryValueExW(void *hKey, const uint16_t *lpValueName, uint32_t *lpReserved, uint32_t *lpType,
                                               uint8_t *lpData, uint32_t *lpcbData) {
     (void)hKey; (void)lpValueName; (void)lpReserved;
     if (lpType) *lpType = 3;
@@ -41,24 +41,34 @@ __attribute__((stdcall)) int RegQueryValueExW(void *hKey, const uint16_t *lpValu
     return 2;
 }
 
-__attribute__((stdcall)) int RegSetValueExW(void *hKey, const uint16_t *lpValueName, uint32_t Reserved, uint32_t dwType,
+int RegSetValueExW(void *hKey, const uint16_t *lpValueName, uint32_t Reserved, uint32_t dwType,
                                             const uint8_t *lpData, uint32_t cbData) {
     (void)hKey; (void)lpValueName; (void)Reserved; (void)dwType; (void)lpData; (void)cbData;
     return 0;
 }
 
-__attribute__((stdcall)) int RegCloseKey(void *hKey) {
+int RegSetValueExA(void *key, const char *name, uint32_t reserved,
+                                            uint32_t type, const uint8_t *data, uint32_t bytes) {
+    (void)key;(void)name;(void)reserved;(void)type;(void)data;(void)bytes;return 0;
+}
+
+int RegGetValueW(void *key,const uint16_t *subkey,const uint16_t *value,
+                                          uint32_t flags,uint32_t *type,void *data,uint32_t *bytes) {
+    (void)subkey;(void)flags;return RegQueryValueExW(key,value,0,type,(uint8_t*)data,bytes);
+}
+
+int RegCloseKey(void *hKey) {
     (void)hKey;
     return 0;
 }
 
-__attribute__((stdcall)) int OpenProcessToken(void *ProcessHandle, uint32_t DesiredAccess, void **TokenHandle) {
+int OpenProcessToken(void *ProcessHandle, uint32_t DesiredAccess, void **TokenHandle) {
     (void)ProcessHandle; (void)DesiredAccess;
     if (TokenHandle) *TokenHandle = (void*)0x200;
     return 1;
 }
 
-__attribute__((stdcall)) int AdjustTokenPrivileges(void *TokenHandle, int DisableAllPrivileges,
+int AdjustTokenPrivileges(void *TokenHandle, int DisableAllPrivileges,
                                                    void *NewState, uint32_t BufferLength,
                                                    void *PreviousState, uint32_t *ReturnLength) {
     (void)TokenHandle; (void)DisableAllPrivileges; (void)NewState;
@@ -67,7 +77,7 @@ __attribute__((stdcall)) int AdjustTokenPrivileges(void *TokenHandle, int Disabl
     return 1;
 }
 
-__attribute__((stdcall)) int LookupPrivilegeValueW(const uint16_t *lpSystemName, const uint16_t *lpName, void *lpLuid) {
+int LookupPrivilegeValueW(const uint16_t *lpSystemName, const uint16_t *lpName, void *lpLuid) {
     (void)lpSystemName; (void)lpName;
     if (lpLuid) {
         uint32_t *v = (uint32_t*)lpLuid;
@@ -77,7 +87,7 @@ __attribute__((stdcall)) int LookupPrivilegeValueW(const uint16_t *lpSystemName,
     return 1;
 }
 
-__attribute__((stdcall)) int GetUserNameW(uint16_t *lpBuffer, uint32_t *pcbBuffer) {
+int GetUserNameW(uint16_t *lpBuffer, uint32_t *pcbBuffer) {
     static const uint16_t name[] = { 'A','d','m','i','n','i','s','t','r','a','t','o','r',0 };
     uint32_t need = sizeof(name) / sizeof(name[0]);
     uint32_t i;

@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include "windows.h"
+#include "ntuser.h"
 #include "commctrl.h"
 #include "icon.h"
 #include "discount_dialog.h"
@@ -14,15 +15,21 @@ extern void KeYield(void);
 extern uint32_t GetTickCount(void);
 extern uint32_t GetCurrentProcessId(void);
 extern void SerialPutString(const char *str);
+extern void CsrssShutdownSystem(void);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 extern const char *PeGetImagePath(void *image_base);
 extern void *Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(void *, uint32_t, uint32_t, uint32_t));
 extern void *Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
 extern void Win32kShowWindow(void *hwnd);
+extern void Win32kSetWindowShowState(void *hwnd, int command);
+extern int Win32kIsWindowMinimized(void *hwnd);
 extern void Win32kUpdateWindow(void *hwnd);
 extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kDestroyWindow(void *hwnd);
 extern void Win32kActivateWindow(void *hwnd);
+extern int Win32kGetScreenWidth(void);
+extern int Win32kGetScreenHeight(void);
+extern void Win32kSetWindowRect(void *hwnd, int x, int y, int width, int height);
 extern void *Win32kGetActiveWindow(void);
 extern void Win32kSetWindowIcons(void *hwnd, HANDLE big_icon, HANDLE small_icon);
 extern void Win32kRedrawAll(void);
@@ -69,6 +76,8 @@ typedef struct _U32_MENU_ITEM {
     UINT flags;
     WCHAR text[64];
     HMENU submenu;
+    ULONG_PTR item_data;
+    HBITMAP bitmap;
 } U32_MENU_ITEM;
 
 typedef struct _U32_MENU {
@@ -76,6 +85,8 @@ typedef struct _U32_MENU {
     HMENU handle;
     int count;
     int default_item;
+    DWORD style;
+    ULONG_PTR menu_data;
     U32_MENU_ITEM items[32];
 } U32_MENU;
 
@@ -711,6 +722,16 @@ static int u32_vsnprintfw(LPWSTR out, int max, LPCWSTR fmt, va_list ap) {
 
 static U32_CLASS *u32_find_class(LPCWSTR name) {
     int i;
+    if (!name) return NULL;
+    if (u32_is_int_resource(name)) {
+        UINT atom = u32_resource_id(name);
+        /* Atoms returned by RegisterClass are one-based slots in our local
+           class table.  Predefined system atoms are materialised by
+           CreateWindowExW before reaching this lookup. */
+        if (atom >= 1 && atom <= MAX_U32_CLASSES && g_classes[atom - 1].used)
+            return &g_classes[atom - 1];
+        return NULL;
+    }
     for (i = 0; i < MAX_U32_CLASSES; i++) {
         if (g_classes[i].used && u32_wstrcmp(g_classes[i].name, name) == 0) return &g_classes[i];
     }
@@ -1143,6 +1164,26 @@ static void u32_forget_native_window(HWND hwnd) {
     memset(win, 0, sizeof(*win));
 }
 
+static U32_WINDOW *u32_find_desktop_window(void) {
+    int i;
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (g_windows[i].used && g_windows[i].top_level && g_windows[i].klass &&
+            u32_wstrcmp(g_windows[i].klass->name, L"Desktop") == 0)
+            return &g_windows[i];
+    }
+    return NULL;
+}
+
+static void u32_notify_desktop_window(HWND hwnd, UINT event) {
+    U32_WINDOW *desktop = u32_find_desktop_window();
+    U32_WINDOW *win = u32_lookup_window(hwnd);
+    if (!desktop || !win || desktop == win || !win->top_level) return;
+    /* Explorer only tracks windows from other processes.  Suppress its own
+       tray/popups here rather than relying on ambient process-id state. */
+    if (desktop->owner_pid == win->owner_pid) return;
+    SendMessageW(desktop->hwnd, WM_PARENTNOTIFY, MAKEWPARAM(event, 0), (LPARAM)hwnd);
+}
+
 static int u32_has_top_level_window_for_pid(DWORD pid, HWND except) {
     int i;
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
@@ -1155,8 +1196,8 @@ static int u32_has_top_level_window_for_pid(DWORD pid, HWND except) {
 static HWND u32_find_menu_root(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
     while (win) {
-        if (win->top_level) return win->hwnd;
         if (win->ctrl_type == U32_CTRL_MENUPOPUP && win->menu_owner) return win->menu_owner;
+        if (win->top_level) return win->hwnd;
         if (!win->parent) break;
         win = u32_lookup_window(win->parent);
     }
@@ -1207,7 +1248,8 @@ static int u32_popup_item_at(U32_MENU *menu, int y) {
     return -1;
 }
 
-static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu, int x, int y) {
+static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu,
+                                  int x, int y, UINT align_flags) {
     U32_WINDOW *pwin = u32_lookup_window(parent);
     U32_WINDOW *owner = u32_lookup_window(owner_hwnd);
     U32_MENU *menu = u32_lookup_menu(hMenu);
@@ -1215,7 +1257,12 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu, int
     int i;
     int width = 64;
     int height = 4;
+    RECT parent_abs;
     if (!pwin || !owner || !menu) return NULL;
+    /* Applications commonly populate submenus lazily from this message.  It
+       must be delivered before the popup is measured, not after its window
+       has already been created with the dimensions of an empty menu. */
+    SendMessageW(owner_hwnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
     for (i = 0; i < menu->count; i++) {
         WCHAR text[64];
         int len = u32_menu_text_copy(menu->items[i].text, text, 64, 1);
@@ -1223,16 +1270,41 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu, int
         if (item_width > width) width = item_width;
         height += u32_popup_item_height(&menu->items[i]);
     }
+    u32_get_absolute_rect(pwin, &parent_abs);
+    x += parent_abs.left + u32_client_offset_x(pwin);
+    y += parent_abs.top + u32_client_offset_y(pwin);
+    if (align_flags & TPM_BOTTOMALIGN) y -= height;
+    if (x + width > GetSystemMetrics(SM_CXSCREEN)) x = GetSystemMetrics(SM_CXSCREEN) - width;
+    if (y + height > GetSystemMetrics(SM_CYSCREEN)) y = GetSystemMetrics(SM_CYSCREEN) - height;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    /* Menu popups are allocated directly below instead of going through
+       CreateWindowExW, so make sure their native win32k class exists first.
+       Without this registration Win32kCreateWindow("MenuPopup", ...) always
+       returns INVALID_HANDLE and TrackPopupMenuEx silently displays nothing. */
+    if (!u32_find_class(L"MenuPopup")) {
+        WNDCLASSW wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.lpszClassName = L"MenuPopup";
+        if (!RegisterClassW(&wc)) return NULL;
+    }
     win = u32_alloc_window();
     if (!win) return NULL;
-    win->hwnd = (HWND)win;
-    win->parent = parent;
+    win->hwnd = (HWND)Win32kCreateWindow("MenuPopup", "", x, y, width, height,
+                                         WS_POPUP | WS_VISIBLE);
+    if (!win->hwnd) {
+        win->used = 0;
+        return NULL;
+    }
+    win->parent = NULL;
     win->owner = owner_hwnd;
-    win->top_level = 0;
+    win->top_level = 1;
     win->visible = 1;
     win->enabled = 1;
     win->owner_pid = owner->owner_pid;
-    win->style = WS_CHILD | WS_VISIBLE | WS_BORDER;
+    win->style = WS_POPUP | WS_VISIBLE | WS_BORDER;
     win->ctrl_type = U32_CTRL_MENUPOPUP;
     win->menu = hMenu;
     win->popup_menu = NULL;
@@ -1240,8 +1312,9 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu, int
     win->hot_index = -1;
     win->active_menu_index = -1;
     u32_set_rect(win, x, y, width, height);
-    u32_mark_invalid(parent);
-    SendMessageW(owner_hwnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
+    u32_mark_invalid(win->hwnd);
+    Win32kShowWindow((HANDLE)win->hwnd);
+    Win32kRedrawAll();
     return win->hwnd;
 }
 
@@ -1259,7 +1332,7 @@ static HWND u32_open_submenu(HWND owner_hwnd, HWND parent_popup_hwnd, int item_i
     for (i = 0; i < item_index; i++) yoff += u32_popup_item_height(&menu->items[i]);
     popup_win->active_menu_index = item_index;
     popup_win->popup_menu = u32_create_menu_popup(parent_popup_hwnd, owner_hwnd, menu->items[item_index].submenu,
-                                                  popup_win->rect.right - popup_win->rect.left - 1, yoff - 1);
+                                                  popup_win->rect.right - popup_win->rect.left - 1, yoff - 1, 0);
     return popup_win->popup_menu;
 }
 
@@ -1276,7 +1349,7 @@ static HWND u32_open_menu_bar_popup(HWND owner_hwnd, int menu_index) {
     SendMessageW(owner_hwnd, WM_ENTERMENULOOP, 0, 0);
     for (i = 0; i < menu_index; i++) left += u32_menu_bar_item_width(menu->items[i].text);
     owner->popup_menu = u32_create_menu_popup(owner_hwnd, owner_hwnd, menu->items[menu_index].submenu,
-                                              left, U32_MENU_HEIGHT);
+                                              left, U32_MENU_HEIGHT, 0);
     owner->active_menu_index = menu_index;
     owner->hot_index = menu_index;
     g_open_menu_popup = owner->popup_menu;
@@ -1541,6 +1614,7 @@ static void u32_win32k_callback(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint
         u32_paint_children((HWND)hwnd);
     }
     if (msg == WM_DESTROY) {
+        u32_notify_desktop_window((HWND)hwnd, WM_DESTROY);
         /* Win32k can destroy a window during caption handling or CSRSS
          * cleanup. Keep USER32's handle table in sync with that native event. */
         u32_forget_native_window((HWND)hwnd);
@@ -2067,7 +2141,12 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     int x = (short)(lParam & 0xFFFF);
     int y = (short)((lParam >> 16) & 0xFFFF);
     (void)wParam;
-    if (Msg == WM_CLOSE) {
+    if (Msg == WM_SYSCOMMAND) {
+        UINT command = (UINT)wParam & 0xfff0;
+        if (command == SC_MINIMIZE) ShowWindow(hWnd, SW_MINIMIZE);
+        else if (command == SC_RESTORE) ShowWindow(hWnd, SW_RESTORE);
+        return 0;
+    } else if (Msg == WM_CLOSE) {
         if (win && win->popup_menu) u32_close_popup_chain(hWnd);
         if (win && win->dialog) {
             win->ended = 1;
@@ -2204,7 +2283,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                     g_mouse_capture_window = NULL;
                 GetClientRect(hWnd, &rc);
                 if (x >= 0 && y >= 0 && x < rc.right && y < rc.bottom && win->parent) {
-                    if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
+                    if ((win->style & 0x0f) == BS_AUTOCHECKBOX) {
                         win->check_state = (win->check_state == BST_CHECKED) ? BST_UNCHECKED : BST_CHECKED;
                     }
                     SerialPutString("[USER32] button command sent\r\n");
@@ -2224,7 +2303,10 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                             u32_open_submenu(win->menu_owner, hWnd, index);
                         } else if (win->menu_owner) {
                             HWND root = u32_find_menu_root(win->menu_owner);
-                            SendMessageW(win->menu_owner, WM_COMMAND, item->id, 0);
+                            if (menu->style & MNS_NOTIFYBYPOS)
+                                SendMessageW(win->menu_owner, WM_MENUCOMMAND, index, (LPARAM)win->menu);
+                            else
+                                SendMessageW(win->menu_owner, WM_COMMAND, item->id, 0);
                             u32_close_popup_chain(root);
                         }
                     }
@@ -2340,7 +2422,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 if (dark_pen) DeleteObject(dark_pen);
                 if (black_pen) DeleteObject(black_pen);
             }
-            if ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX) {
+            if ((win->style & 0x0f) == BS_AUTOCHECKBOX) {
                 Rectangle(hdc, 1, 1, 11, 11);
                 if (win->check_state == BST_CHECKED) {
                     MoveToEx(hdc, 3, 6, 0);
@@ -2349,7 +2431,7 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 }
             }
             if (win->title[0]) TextOutW(hdc,
-                                        ((win->style & BS_AUTOCHECKBOX) == BS_AUTOCHECKBOX ? 14 : 4) + (win->pressed ? 1 : 0),
+                                        ((win->style & 0x0f) == BS_AUTOCHECKBOX ? 14 : 4) + (win->pressed ? 1 : 0),
                                         ((rc.bottom > 12) ? ((rc.bottom - 8) / 2) - 2 : 0) + (win->pressed ? 1 : 0),
                                         win->title, -1);
             break;
@@ -2490,18 +2572,20 @@ BOOL TranslateMessage(const MSG *lpMsg) {
 int ShowWindow(HWND hWnd, int nCmdShow) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
     if (!win) return FALSE;
+    if (win->top_level) {
+        win->visible = nCmdShow == SW_HIDE ? 0 : 1;
+        Win32kSetWindowShowState((HANDLE)hWnd, nCmdShow);
+        return TRUE;
+    }
     if (nCmdShow == SW_HIDE) {
         win->visible = 0;
         if (win->parent) u32_mark_invalid(win->parent);
         return TRUE;
     }
     win->visible = 1;
-    if (win->top_level) Win32kShowWindow((HANDLE)hWnd);
-    else {
-        u32_mark_invalid_descendants(hWnd);
-        u32_mark_invalid(hWnd);
-        if (win->parent) u32_mark_invalid(win->parent);
-    }
+    u32_mark_invalid_descendants(hWnd);
+    u32_mark_invalid(hWnd);
+    if (win->parent) u32_mark_invalid(win->parent);
     return TRUE;
 }
 
@@ -2546,6 +2630,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     U32_WINDOW *win;
     char class_name[64];
     char title[128];
+    LPCWSTR resolved_class_name = lpClassName;
     (void)hInstance;
     (void)lpParam;
 
@@ -2553,14 +2638,33 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     if (!cls) {
         WNDCLASSW wc;
         memset(&wc, 0, sizeof(wc));
-        wc.lpszClassName = lpClassName;
+        if (u32_is_int_resource(lpClassName)) {
+            /* Wine Explorer uses the predefined desktop class atom.  Give it
+               a named local class with DefWindowProc so GWLP_WNDPROC
+               subclassing returns a callable original procedure. */
+            if (u32_resource_id(lpClassName) != 32769) return NULL;
+            resolved_class_name = L"Desktop";
+            wc.lpfnWndProc = DefWindowProcW;
+        }
+        wc.lpszClassName = resolved_class_name;
         RegisterClassW(&wc);
-        cls = u32_find_class(lpClassName);
+        cls = u32_find_class(resolved_class_name);
         if (!cls) return NULL;
     }
 
     win = u32_alloc_window();
     if (!win) return NULL;
+
+    /* CW_USEDEFAULT is a request for placement, not a screen coordinate.
+       Passing its 0x80000000 sentinel through to win32k leaves otherwise
+       valid top-level windows (notably Explorer) far outside the desktop. */
+    if (!(hWndParent && (dwStyle & WS_CHILD))) {
+        int cascade = (int)(win - g_windows) & 7;
+        if (X == CW_USEDEFAULT) X = 24 + cascade * 24;
+        if (Y == CW_USEDEFAULT) Y = 24 + cascade * 24;
+        if (nWidth == CW_USEDEFAULT || nWidth <= 0) nWidth = 480;
+        if (nHeight == CW_USEDEFAULT || nHeight <= 0) nHeight = 320;
+    }
     u32_wstrcpy(win->title, lpWindowName, 128);
     win->parent = hWndParent;
     win->owner = hWndParent;
@@ -2576,7 +2680,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     win->hIcon = cls->hIcon;
     win->hIconSm = cls->hIconSm ? cls->hIconSm : cls->hIcon;
     win->dialog = FALSE;
-    win->ctrl_type = u32_pick_ctrl_type(lpClassName, dwStyle);
+    win->ctrl_type = u32_pick_ctrl_type(cls->name, dwStyle);
     u32_scroll_init(win);
     u32_set_rect(win, X, Y, nWidth, nHeight);
 
@@ -2592,8 +2696,6 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
         }
         u32_wide_to_ansi(cls->name, class_name, 64);
         u32_wide_to_ansi(win->title, title, 128);
-        if (nWidth <= 0) nWidth = 480;
-        if (nHeight <= 0) nHeight = 320;
         win->hwnd = (HWND)Win32kCreateWindow(class_name, title, X, Y, nWidth, nHeight, dwStyle);
         if (!win->hwnd) {
             win->used = 0;
@@ -2605,6 +2707,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
     SendMessageW(win->hwnd, WM_CREATE, 0, 0);
     SendMessageW(win->hwnd, WM_SIZE, SIZE_RESTORED,
                  MAKELPARAM(win->rect.right - win->rect.left, win->rect.bottom - win->rect.top));
+    if (win->top_level) u32_notify_desktop_window(win->hwnd, WM_CREATE);
     if (win->visible && win->top_level) {
         /* A newly shown application window receives the foreground once at
          * creation time.  Subsequent repaint/refresh operations must not
@@ -3313,6 +3416,52 @@ BOOL ShowScrollBar(HWND hWnd, int wBar, BOOL bShow) {
 }
 
 #include "user32_resources.inc"
+
+LRESULT WINAPI NtUserMessageCall(HWND hwnd,UINT msg,WPARAM wparam,LPARAM lparam,void *result,UINT type,BOOL ansi)
+{
+    (void)result;(void)ansi;
+    if(type==NtUserClipboardWindowProc)return DefWindowProcW(hwnd,msg,wparam,lparam);
+    /* Returning -1 asks Wine Explorer's tray code to use its local fallback. */
+    if(type==NtUserSystemTrayCall)return -1;
+    return SendMessageW(hwnd,msg,wparam,lparam);
+}
+BOOL WINAPI EqualRect(const RECT*a,const RECT*b){return a&&b&&a->left==b->left&&a->top==b->top&&a->right==b->right&&a->bottom==b->bottom;}
+BOOL WINAPI SubtractRect(RECT*out,const RECT*a,const RECT*b){if(!out||!a||!b)return FALSE;*out=*a;if(b->left<=a->left&&b->right>=a->right){if(b->top<=a->top&&b->bottom<a->bottom)out->top=b->bottom;else if(b->bottom>=a->bottom&&b->top>a->top)out->bottom=b->top;}return out->right>out->left&&out->bottom>out->top;}
+BOOL WINAPI ExitWindows(DWORD reserved,UINT reason){(void)reserved;(void)reason;CsrssShutdownSystem();return TRUE;}
+BOOL WINAPI AdjustWindowRectEx(RECT *rect, DWORD style, BOOL menu, DWORD exstyle)
+{
+    int border_x = 0, border_y = 0, caption = 0, menu_height = 0;
+    (void)exstyle;
+    if (!rect) return FALSE;
+    if (style & WS_THICKFRAME) {
+        border_x = GetSystemMetrics(SM_CXFRAME);
+        border_y = GetSystemMetrics(SM_CYFRAME);
+    } else if (style & (WS_BORDER | WS_DLGFRAME)) {
+        border_x = GetSystemMetrics(SM_CXBORDER);
+        border_y = GetSystemMetrics(SM_CYBORDER);
+    }
+    if (style & WS_CAPTION) caption = GetSystemMetrics(SM_CYCAPTION);
+    if (menu) menu_height = GetSystemMetrics(SM_CYMENU);
+    rect->left -= border_x;
+    rect->right += border_x;
+    rect->top -= border_y + caption + menu_height;
+    rect->bottom += border_y;
+    return TRUE;
+}
+
+BOOL WINAPI AdjustWindowRect(RECT*r,DWORD style,BOOL menu){return AdjustWindowRectEx(r,style,menu,0);}
+BOOL WINAPI DrawIconEx(HDC dc,int x,int y,HICON icon,int cx,int cy,UINT step,HBRUSH brush,UINT flags){(void)dc;(void)x;(void)y;(void)icon;(void)cx;(void)cy;(void)step;(void)brush;(void)flags;return TRUE;}
+BOOL WINAPI UpdateLayeredWindow(HWND hwnd,HDC dst,const POINT*dp,const SIZE*s,HDC src,const POINT*sp,COLORREF key,const BLENDFUNCTION*b,DWORD flags){(void)dst;(void)dp;(void)s;(void)src;(void)sp;(void)key;(void)b;(void)flags;InvalidateRect(hwnd,0,TRUE);return TRUE;}
+BOOL WINAPI SendNotifyMessageW(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){PostMessageW(hwnd,msg,wp,lp);return TRUE;}
+HWND WINAPI SetParent(HWND child,HWND parent){(void)child;return parent;}
+HICON WINAPI CopyIcon(HICON icon){return icon;}
+HWND WINAPI GetAncestor(HWND hwnd,UINT flags){(void)flags;while(GetParent(hwnd))hwnd=GetParent(hwnd);return hwnd;}
+HWND WINAPI GetForegroundWindow(void){return GetActiveWindow();}
+BOOL WINAPI SystemParametersInfoW(UINT action,UINT param,PVOID data,UINT flags){(void)param;(void)flags;if(action==SPI_SETDESKWALLPAPER)return TRUE;if(!data)return FALSE;if(action==SPI_GETWORKAREA){RECT*r=data;r->left=r->top=0;r->right=GetSystemMetrics(SM_CXSCREEN);r->bottom=GetSystemMetrics(SM_CYSCREEN)-28;return TRUE;}if(action==SPI_GETICONTITLELOGFONT){memset(data,0,sizeof(LOGFONTW));((LOGFONTW*)data)->lfHeight=16;return TRUE;}if(action==SPI_GETNONCLIENTMETRICS){NONCLIENTMETRICSW*n=data;n->lfCaptionFont.lfHeight=16;return TRUE;}return FALSE;}
+HICON WINAPI CreateIcon(HINSTANCE i,int w,int h,BYTE p,BYTE b,const BYTE*a,const BYTE*x){(void)i;(void)w;(void)h;(void)p;(void)b;(void)a;(void)x;return (HICON)(ULONG_PTR)1;}
+BOOL WINAPI DrawFrameControl(HDC dc,LPRECT r,UINT type,UINT state){(void)dc;(void)r;(void)type;(void)state;return TRUE;}
+BOOL WINAPI DrawCaptionTempW(HWND h,HDC dc,const RECT*r,HFONT f,HICON i,LPCWSTR t,UINT flags){(void)h;(void)dc;(void)r;(void)f;(void)i;(void)t;(void)flags;return TRUE;}
+BOOL WINAPI IsWindowEnabled(HWND hwnd){return IsWindow(hwnd);}
 #include "user32_menu.inc"
 BOOL BringWindowToTop(HWND hWnd) {
     U32_WINDOW *win = u32_lookup_window(hWnd);
@@ -3500,7 +3649,7 @@ ULONG_PTR SetClassLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong) {
     return old;
 }
 BOOL IsWindowVisible(HWND hWnd) { U32_WINDOW *win = u32_lookup_window(hWnd); return win ? win->visible : FALSE; }
-BOOL IsIconic(HWND hWnd) { (void)hWnd; return FALSE; }
+BOOL IsIconic(HWND hWnd) { U32_WINDOW *win=u32_lookup_window(hWnd);return win&&win->top_level?Win32kIsWindowMinimized((HANDLE)hWnd):FALSE; }
 HWND GetWindow(HWND hWnd, UINT uCmd) { (void)uCmd; return hWnd; }
 LRESULT CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) { return lpPrevWndFunc ? lpPrevWndFunc(hWnd, Msg, wParam, lParam) : 0; }
 DWORD GetSysColor(int nIndex) { (void)nIndex; return RGB(192,192,192); }
@@ -3598,3 +3747,26 @@ HWND CreateWindowW(LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle,
     return CreateWindowExW(0, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
                            hWndParent, hMenu, hInstance, lpParam);
 }
+
+BOOL IntersectRect(LPRECT out,const RECT *a,const RECT *b){if(!out||!a||!b)return FALSE;out->left=a->left>b->left?a->left:b->left;out->top=a->top>b->top?a->top:b->top;out->right=a->right<b->right?a->right:b->right;out->bottom=a->bottom<b->bottom?a->bottom:b->bottom;if(out->right<=out->left||out->bottom<=out->top){memset(out,0,sizeof(*out));return FALSE;}return TRUE;}
+HCURSOR SetCursor(HCURSOR cursor){static HCURSOR current;HCURSOR old=current;current=cursor;return old;}
+HCURSOR LoadCursorA(HINSTANCE instance,LPCSTR cursor){return LoadCursorW(instance,(LPCWSTR)cursor);}
+BOOL ClipCursor(const RECT *rect){(void)rect;return TRUE;}
+HWINSTA GetProcessWindowStation(void){return (HWINSTA)(ULONG_PTR)1;}
+HDESK GetThreadDesktop(DWORD thread){(void)thread;return (HDESK)(ULONG_PTR)1;}
+HDESK CreateDesktopW(LPCWSTR desktop,LPCWSTR device,DEVMODEW *mode,DWORD flags,DWORD access,void *attributes){(void)desktop;(void)device;(void)mode;(void)flags;(void)access;(void)attributes;return (HDESK)(ULONG_PTR)1;}
+BOOL GetUserObjectInformationW(HANDLE object,int index,PVOID info,DWORD length,DWORD *needed){(void)object;if(index==UOI_FLAGS){if(needed)*needed=sizeof(USEROBJECTFLAGS);if(info&&length>=sizeof(USEROBJECTFLAGS)){USEROBJECTFLAGS*f=info;f->fInherit=FALSE;f->fReserved=FALSE;f->dwFlags=WSF_VISIBLE;return TRUE;}}return FALSE;}
+BOOL SetShellWindow(HWND shell){(void)shell;return TRUE;}
+BOOL PaintDesktop(HDC dc){RECT r={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};HBRUSH b=CreateSolidBrush(RGB(0,0,128));BOOL ok=FillRect(dc,&r,b);if(b)DeleteObject(b);return ok;}
+BOOL PeekMessageW(LPMSG msg,HWND hwnd,UINT min,UINT max,UINT remove){return u32_dequeue_message(msg,hwnd,min,max,(remove&PM_REMOVE)!=0);}
+DWORD MsgWaitForMultipleObjects(DWORD count,const HANDLE *handles,BOOL all,DWORD timeout,DWORD mask){(void)mask;return WaitForMultipleObjects(count,handles,all,timeout);}
+LONG ChangeDisplaySettingsExW(LPCWSTR device,DEVMODEW *mode,HWND hwnd,DWORD flags,LPVOID param){(void)device;(void)mode;(void)hwnd;(void)flags;(void)param;return 0;}
+BOOL EnumDisplayDevicesW(LPCWSTR device,DWORD index,PDISPLAY_DEVICEW display,DWORD flags){(void)device;(void)flags;if(index||!display)return FALSE;display->StateFlags=4;u32_wstrcpy(display->DeviceName,L"DISPLAY1",32);return TRUE;}
+BOOL EnumDisplaySettingsExW(LPCWSTR device,DWORD mode,LPDEVMODEW settings,DWORD flags){(void)device;(void)mode;(void)flags;if(!settings)return FALSE;settings->dmPelsWidth=GetSystemMetrics(SM_CXSCREEN);settings->dmPelsHeight=GetSystemMetrics(SM_CYSCREEN);settings->dmBitsPerPel=32;settings->dmDisplayFrequency=60;settings->dmFields=DM_PELSWIDTH|DM_PELSHEIGHT;return TRUE;}
+UINT ExtractIconExW(LPCWSTR file,int index,HICON *large,HICON *small,UINT count){(void)file;(void)index;if(!count)return 1;if(large)*large=LoadIconW(0,IDI_WINLOGO);if(small)*small=LoadIconW(0,IDI_WINLOGO);return 1;}
+static U32_MENU_ITEM *u32_info_item(U32_MENU*m,UINT item,BOOL pos){if(!m)return 0;if(pos)return item<(UINT)m->count?&m->items[item]:0;for(int i=0;i<m->count;i++)if(m->items[i].id==item)return&m->items[i];return 0;}
+BOOL GetMenuItemInfoW(HMENU h,UINT item,BOOL pos,LPMENUITEMINFOW info){U32_MENU_ITEM*m=u32_info_item(u32_lookup_menu(h),item,pos);if(!m||!info)return FALSE;if(info->fMask&MIIM_ID)info->wID=m->id;if(info->fMask&MIIM_STATE)info->fState=m->flags;if(info->fMask&MIIM_FTYPE)info->fType=m->flags;if(info->fMask&MIIM_SUBMENU)info->hSubMenu=m->submenu;if(info->fMask&MIIM_DATA)info->dwItemData=m->item_data;if(info->fMask&MIIM_BITMAP)info->hbmpItem=m->bitmap;if((info->fMask&MIIM_STRING)&&info->dwTypeData&&info->cch)u32_wstrcpy(info->dwTypeData,m->text,(int)info->cch);return TRUE;}
+BOOL SetMenuItemInfoW(HMENU h,UINT item,BOOL pos,const MENUITEMINFOW *info){U32_MENU_ITEM*m=u32_info_item(u32_lookup_menu(h),item,pos);if(!m||!info)return FALSE;if(info->fMask&MIIM_ID)m->id=info->wID;if(info->fMask&MIIM_STATE)m->flags=info->fState;if(info->fMask&MIIM_FTYPE)m->flags=info->fType;if(info->fMask&MIIM_SUBMENU)m->submenu=info->hSubMenu;if(info->fMask&MIIM_DATA)m->item_data=info->dwItemData;if(info->fMask&MIIM_BITMAP)m->bitmap=info->hbmpItem;if((info->fMask&MIIM_STRING)&&info->dwTypeData)u32_wstrcpy(m->text,info->dwTypeData,64);return TRUE;}
+BOOL InsertMenuItemW(HMENU h,UINT item,BOOL pos,const MENUITEMINFOW *info){U32_MENU*m=u32_lookup_menu(h);int at;if(!m||!info||m->count>=32)return FALSE;at=pos&&(int)item>=0&&(int)item<=m->count?(int)item:m->count;for(int i=m->count;i>at;i--)m->items[i]=m->items[i-1];memset(&m->items[at],0,sizeof(m->items[at]));m->count++;return SetMenuItemInfoW(h,(UINT)at,TRUE,info);}
+BOOL GetMenuInfo(HMENU menu,LPMENUINFO info){U32_MENU*m=u32_lookup_menu(menu);if(!m||!info)return FALSE;if(info->fMask&MIM_STYLE)info->dwStyle=m->style;if(info->fMask&MIM_MENUDATA)info->dwMenuData=m->menu_data;return TRUE;}
+BOOL SetMenuInfo(HMENU menu,const MENUINFO *info){U32_MENU*m=u32_lookup_menu(menu);if(!m||!info)return FALSE;if(info->fMask&MIM_STYLE)m->style=info->dwStyle;if(info->fMask&MIM_MENUDATA)m->menu_data=info->dwMenuData;return TRUE;}

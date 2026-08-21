@@ -35,6 +35,7 @@ typedef struct _WINDOW {
     uint8_t   active;
     uint8_t   minimized;
     uint8_t   maximized;
+    uint8_t   desktop;
     HANDLE    big_icon;
     HANDLE    small_icon;
     WNDCLASS  *wndClass;
@@ -50,6 +51,8 @@ HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc
 HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
 HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style);
 void Win32kShowWindow(HANDLE hwnd);
+void Win32kSetWindowShowState(HANDLE hwnd, int command);
+int Win32kIsWindowMinimized(HANDLE hwnd);
 void Win32kUpdateWindow(HANDLE hwnd);
 void Win32kGetClientRect(HANDLE hwnd, RECT *rect);
 void Win32kGetClientScreenRect(HANDLE hwnd, RECT *rect);
@@ -66,5 +69,8 @@ int Win32kIsResizing(void);
 HANDLE Win32kGetActiveWindow(void);
 void Win32kActivateWindow(HANDLE hwnd);
 void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon);
+void Win32kSetWindowRect(HANDLE hwnd, int x, int y, int width, int height);
+int Win32kGetScreenWidth(void);
+int Win32kGetScreenHeight(void);
 
 #endif

@@ -366,6 +366,12 @@ __attribute__((stdcall)) int NtQueryInformationProcess(void *process, uint32_t c
     return 0;
 }
 
+__attribute__((stdcall)) int NtSetInformationProcess(void *process, uint32_t class_, void *info,
+                                                      uint32_t info_len) {
+    (void)process; (void)class_; (void)info; (void)info_len;
+    return 0;
+}
+
 __attribute__((stdcall)) int NtYieldExecution(void) {
     CpuRelax();
     return 0;

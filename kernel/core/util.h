@@ -4,6 +4,8 @@
 
 void *memset(void *s, int c, uint32_t n);
 void *memcpy(void *d, const void *s, uint32_t n);
+void *memmove(void *d, const void *s, uint32_t n);
+uint32_t wcstoul(const uint16_t *text, uint16_t **end, int base);
 uint32_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
 void strcpy(char *d, const char *s);

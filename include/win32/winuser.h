@@ -2,6 +2,10 @@
 #define DISCOUNT_WINUSER_H
 
 #include "windef.h"
+typedef struct _BLENDFUNCTION BLENDFUNCTION;
+typedef struct _USEROBJECTFLAGS { BOOL fInherit,fReserved; DWORD dwFlags; } USEROBJECTFLAGS,*PUSEROBJECTFLAGS;
+typedef struct _DEVMODEW { WCHAR dmDeviceName[32]; WORD dmSpecVersion,dmDriverVersion,dmSize,dmDriverExtra; DWORD dmFields; struct { POINT dmPosition; DWORD dmDisplayOrientation,dmDisplayFixedOutput; }; WCHAR dmFormName[32]; WORD dmLogPixels; DWORD dmBitsPerPel,dmPelsWidth,dmPelsHeight,dmDisplayFlags,dmDisplayFrequency; } DEVMODEW,*LPDEVMODEW;
+typedef struct _DISPLAY_DEVICEW { DWORD cb; WCHAR DeviceName[32],DeviceString[128]; DWORD StateFlags; WCHAR DeviceID[128],DeviceKey[128]; } DISPLAY_DEVICEW,*PDISPLAY_DEVICEW;
 
 typedef LRESULT (CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
 typedef INT_PTR (CALLBACK *DLGPROC)(HWND, UINT, WPARAM, LPARAM);
@@ -56,9 +60,18 @@ typedef struct tagMINMAXINFO {
     POINT ptMinTrackSize;
     POINT ptMaxTrackSize;
 } MINMAXINFO, *PMINMAXINFO, *LPMINMAXINFO;
+typedef struct tagCREATESTRUCTW { LPVOID lpCreateParams; HINSTANCE hInstance; HMENU hMenu; HWND hwndParent; int cy,cx,y,x; LONG style; LPCWSTR lpszName,lpszClass; DWORD dwExStyle; } CREATESTRUCTW,*LPCREATESTRUCTW;
+typedef struct tagWINDOWPOS { HWND hwnd,hwndInsertAfter; int x,y,cx,cy; UINT flags; } WINDOWPOS,*LPWINDOWPOS;
 typedef struct tagDRAWITEMSTRUCT { UINT CtlType; UINT CtlID; UINT itemID; UINT itemAction; UINT itemState; HWND hwndItem; HDC hDC; RECT rcItem; ULONG_PTR itemData; } DRAWITEMSTRUCT, *PDRAWITEMSTRUCT, *LPDRAWITEMSTRUCT;
+typedef struct tagCOPYDATASTRUCT { ULONG_PTR dwData; DWORD cbData; LPVOID lpData; } COPYDATASTRUCT, *PCOPYDATASTRUCT;
+typedef struct tagTPMPARAMS { UINT cbSize; RECT rcExclude; } TPMPARAMS,*LPTPMPARAMS;
+typedef struct tagMENUITEMINFOW { UINT cbSize,fMask,fType,fState,wID; HMENU hSubMenu; HBITMAP hbmpChecked,hbmpUnchecked; ULONG_PTR dwItemData; LPWSTR dwTypeData; UINT cch; HBITMAP hbmpItem; } MENUITEMINFOW,*LPMENUITEMINFOW;
+typedef struct tagMENUINFO { DWORD cbSize,fMask,dwStyle; UINT cyMax; HBRUSH hbrBack; DWORD dwContextHelpID; ULONG_PTR dwMenuData; } MENUINFO,*LPMENUINFO;
+typedef struct tagMEASUREITEMSTRUCT { UINT CtlType,CtlID,itemID,itemWidth,itemHeight; ULONG_PTR itemData; } MEASUREITEMSTRUCT,*LPMEASUREITEMSTRUCT;
 
 #define CW_USEDEFAULT ((int)0x80000000)
+#define MAKEINTATOM(i) ((LPCWSTR)(ULONG_PTR)(WORD)(i))
+#define HWND_MESSAGE ((HWND)(LONG_PTR)-3)
 
 #define WS_OVERLAPPED       0x00000000L
 #define WS_POPUP            0x80000000L
@@ -125,6 +138,8 @@ typedef struct tagSCROLLINFO {
 #define WM_DESTROY          0x0002
 #define WM_MOVE             0x0003
 #define WM_SIZE             0x0005
+#define WM_WINDOWPOSCHANGING 0x0046
+#define WM_WINDOWPOSCHANGED 0x0047
 #define WM_ACTIVATE         0x0006
 #define WM_SETFOCUS         0x0007
 #define WM_KILLFOCUS        0x0008
@@ -160,6 +175,15 @@ typedef struct tagSCROLLINFO {
 #define WM_INITDIALOG       0x0110
 #define WM_NEXTDLGCTL       0x0028
 #define WM_NOTIFY           0x004E
+#define WM_COPYDATA         0x004A
+#define WM_APPCOMMAND       0x0319
+#define WM_MENUCOMMAND      0x0126
+#define WM_CONTEXTMENU      0x007b
+#define WM_SETTINGCHANGE    0x001a
+#define WM_DISPLAYCHANGE    0x007e
+#define WM_PARENTNOTIFY     0x0210
+#define WM_RENDERFORMAT     0x0305
+#define WM_CLIPBOARDUPDATE  0x031d
 #define WM_USER             0x0400
 #define WM_APP              0x8000
 #define WM_DROPFILES        0x0233
@@ -218,6 +242,7 @@ typedef struct tagSCROLLINFO {
 #define MB_OK              0x00000000L
 #define MB_OKCANCEL        0x00000001L
 #define MB_YESNO           0x00000004L
+#define MB_SYSTEMMODAL     0x00001000L
 #define MB_YESNOCANCEL     0x00000003L
 #define MB_ICONSTOP        0x00000010L
 #define MB_ICONHAND        MB_ICONSTOP
@@ -237,6 +262,9 @@ typedef struct tagSCROLLINFO {
 #define BM_CLICK 0x00F5
 #define CB_RESETCONTENT 0x014B
 #define CB_FINDSTRINGEXACT 0x0158
+#define CB_GETITEMDATA 0x0150
+#define EM_GETLINE 0x00C4
+#define BN_CLICKED 0
 #define LANG_CHINESE 0x04
 #define LANG_JAPANESE 0x11
 #define LANG_KOREAN 0x12
@@ -251,6 +279,7 @@ typedef struct tagSCROLLINFO {
 #define SW_SHOW            5
 #define SW_MINIMIZE        6
 #define SW_RESTORE         9
+#define SW_SHOWDEFAULT     10
 
 #define VK_RETURN 0x0D
 #define VK_TAB    0x09
@@ -271,8 +300,121 @@ typedef struct tagSCROLLINFO {
 #define IMAGE_ICON 1
 
 #define COLOR_WINDOW 5
+#define COLOR_BACKGROUND 1
 #define COLOR_3DSHADOW 16
 #define COLOR_3DHILIGHT 20
+#define APPCOMMAND_BROWSER_BACKWARD 1
+#define APPCOMMAND_BROWSER_FORWARD 2
+#define GET_APPCOMMAND_LPARAM(lParam) ((short)HIWORD(lParam)&~0xf000)
+#define MIIM_STATE 1
+#define MIIM_ID 2
+#define MIIM_SUBMENU 4
+#define MIIM_DATA 0x20
+#define MIIM_STRING 0x40
+#define MIIM_BITMAP 0x80
+#define MIIM_FTYPE 0x100
+#define MIM_MENUDATA 8
+#define MIM_STYLE 0x10
+#define MNS_NOTIFYBYPOS 0x08000000
+#define MNS_NOCHECK 0x80000000
+#define MFT_SEPARATOR 0x800
+#define HBMMENU_CALLBACK ((HBITMAP)(LONG_PTR)-1)
+#define TPM_BOTTOMALIGN 0x20
+#define TPM_VERTICAL 0x40
+#define ODT_MENU 1
+#define MA_NOACTIVATE 3
+#define CS_VREDRAW 1
+#define CS_HREDRAW 2
+#define CS_DBLCLKS 8
+#define WS_EX_LAYERED 0x00080000
+#define WS_EX_NOACTIVATE 0x08000000
+#define ULW_ALPHA 2
+#define DI_MASK 1
+#define DI_NORMAL 3
+#define DI_DEFAULTSIZE 8
+#define SWP_HIDEWINDOW 0x0080
+#define GA_ROOTOWNER 3
+#define WC_BUTTONW L"Button"
+#define BS_OWNERDRAW 0x0000000b
+#define SPI_GETWORKAREA 0x0030
+#define SPI_GETNONCLIENTMETRICS 0x0029
+#define SPI_GETICONTITLELOGFONT 0x001f
+#define SPI_SETDESKWALLPAPER 0x0014
+#define DFC_BUTTON 4
+#define DFCS_BUTTONPUSH 0x10
+#define DFCS_PUSHED 0x200
+#define DFCS_ADJUSTRECT 0x2000
+#define ODS_SELECTED 1
+#define DC_ACTIVE 1
+#define DC_TEXT 8
+#define DC_ICON 4
+#define DC_INBUTTON 0x10
+#define SC_MINIMIZE 0xf020
+#define SC_RESTORE 0xf120
+#define SC_CLOSE 0xf060
+#define HTCLIENT 1
+#define GW_CHILD 5
+#define GW_HWNDNEXT 2
+#define IDI_WINLOGO ((LPCWSTR)32517)
+#define OIC_WINLOGO 32517
+#define DT_WORDBREAK 0x10
+#define DT_EDITCONTROL 0x2000
+#define DT_END_ELLIPSIS 0x8000
+#define PM_REMOVE 1
+#define QS_ALLINPUT 0x04ff
+#define UOI_FLAGS 1
+#define UOI_NAME 2
+#define WSF_VISIBLE 1
+#define DF_WINE_ROOT_DESKTOP 0x40000000
+#define DF_WINE_VIRTUAL_DESKTOP 0x80000000
+#define SM_CXICON 11
+#define SM_CYICON 12
+#define SM_XVIRTUALSCREEN 76
+#define SM_YVIRTUALSCREEN 77
+#define SM_CXVIRTUALSCREEN 78
+#define SM_CYVIRTUALSCREEN 79
+#define DM_POSITION 0x20
+#define DM_PELSWIDTH 0x00080000
+#define DM_PELSHEIGHT 0x00100000
+#define ENUM_CURRENT_SETTINGS ((DWORD)-1)
+#define CDS_UPDATEREGISTRY 1
+#define CDS_GLOBAL 8
+#define CDS_NORESET 0x10000000
+BOOL WINAPI AdjustWindowRect(LPRECT rect,DWORD style,BOOL menu);
+BOOL WINAPI DrawIconEx(HDC dc,int x,int y,HICON icon,int cx,int cy,UINT step,HBRUSH brush,UINT flags);
+BOOL WINAPI UpdateLayeredWindow(HWND hwnd,HDC dst,const POINT *dst_pt,const SIZE *size,HDC src,const POINT *src_pt,COLORREF key,const BLENDFUNCTION *blend,DWORD flags);
+BOOL WINAPI SendNotifyMessageW(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp);
+HWND WINAPI SetParent(HWND child,HWND parent);
+HICON WINAPI CopyIcon(HICON icon);
+HWND WINAPI GetAncestor(HWND hwnd,UINT flags);
+HWND WINAPI GetForegroundWindow(void);
+HWND WINAPI GetActiveWindow(void);
+BOOL WINAPI SystemParametersInfoW(UINT action,UINT param,PVOID data,UINT flags);
+HICON WINAPI CreateIcon(HINSTANCE instance,int width,int height,BYTE planes,BYTE bpp,const BYTE *and_bits,const BYTE *xor_bits);
+BOOL WINAPI DrawFrameControl(HDC dc,LPRECT rect,UINT type,UINT state);
+BOOL WINAPI DrawCaptionTempW(HWND hwnd,HDC dc,const RECT *rect,HFONT font,HICON icon,LPCWSTR text,UINT flags);
+BOOL WINAPI IsWindowEnabled(HWND hwnd);
+BOOL WINAPI IntersectRect(LPRECT out,const RECT *a,const RECT *b);
+UINT WINAPI ExtractIconExW(LPCWSTR file,int index,HICON *large,HICON *small,UINT count);
+BOOL WINAPI GetUserObjectInformationW(HANDLE object,int index,PVOID info,DWORD length,DWORD *needed);
+HWINSTA WINAPI GetProcessWindowStation(void);
+BOOL WINAPI PeekMessageW(LPMSG msg,HWND hwnd,UINT min,UINT max,UINT remove);
+DWORD WINAPI MsgWaitForMultipleObjects(DWORD count,const HANDLE *handles,BOOL all,DWORD timeout,DWORD mask);
+LONG WINAPI ChangeDisplaySettingsExW(LPCWSTR device,DEVMODEW *mode,HWND hwnd,DWORD flags,LPVOID param);
+BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device,DWORD index,PDISPLAY_DEVICEW display,DWORD flags);
+BOOL WINAPI EnumDisplaySettingsExW(LPCWSTR device,DWORD mode,LPDEVMODEW settings,DWORD flags);
+HCURSOR WINAPI SetCursor(HCURSOR cursor);
+HCURSOR WINAPI LoadCursorA(HINSTANCE instance,LPCSTR cursor);
+BOOL WINAPI PaintDesktop(HDC dc);
+HDESK WINAPI GetThreadDesktop(DWORD thread);
+BOOL WINAPI SetShellWindow(HWND shell);
+HDESK WINAPI CreateDesktopW(LPCWSTR desktop,LPCWSTR device,DEVMODEW *mode,DWORD flags,DWORD access,void *attributes);
+BOOL WINAPI ClipCursor(const RECT *rect);
+BOOL WINAPI GetMenuItemInfoW(HMENU menu,UINT item,BOOL by_position,LPMENUITEMINFOW info);
+BOOL WINAPI SetMenuItemInfoW(HMENU menu,UINT item,BOOL by_position,const MENUITEMINFOW *info);
+BOOL WINAPI InsertMenuItemW(HMENU menu,UINT item,BOOL by_position,const MENUITEMINFOW *info);
+BOOL WINAPI GetMenuInfo(HMENU menu,LPMENUINFO info);
+BOOL WINAPI SetMenuInfo(HMENU menu,const MENUINFO *info);
 
 #define WS_EX_TOPMOST      0x00000008L
 #define WS_EX_TOOLWINDOW   0x00000080L
@@ -305,6 +447,12 @@ typedef struct tagSCROLLINFO {
 
 #define SM_CXSCREEN        0
 #define SM_CYSCREEN        1
+#define SM_CYCAPTION       4
+#define SM_CXBORDER        5
+#define SM_CYBORDER        6
+#define SM_CYMENU          15
+#define SM_CXFRAME         32
+#define SM_CYFRAME         33
 #define SM_CXSMICON        49
 #define SM_CYSMICON        50
 
@@ -450,6 +598,9 @@ BOOL WINAPI CheckDlgButton(HWND hDlg, int nIDButton, UINT uCheck);
 UINT WINAPI IsDlgButtonChecked(HWND hDlg, int nIDButton);
 BOOL WINAPI CheckRadioButton(HWND hDlg, int firstID, int lastID, int checkID);
 BOOL WINAPI SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom);
+BOOL WINAPI EqualRect(const RECT *first,const RECT *second);
+BOOL WINAPI SubtractRect(LPRECT result,const RECT *first,const RECT *second);
+BOOL WINAPI ExitWindows(DWORD reserved,UINT reason);
 int WINAPI GetSystemMetrics(int nIndex);
 BOOL WINAPI SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags);
 BOOL WINAPI MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint);

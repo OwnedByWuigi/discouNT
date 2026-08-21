@@ -227,8 +227,13 @@ void MouseHandleByte(uint8_t data) {
             }
             
             {
-                int max_x = FbGetWidth() - 12;
-                int max_y = FbGetHeight() - 18;
+                /* Clamp the cursor hotspot, not the full cursor bitmap.  The
+                   drawing code already clips the bitmap at framebuffer
+                   edges.  Reserving its 11x18 extent here made the bottom
+                   and right screen edges unreachable, including most of a
+                   bottom-aligned taskbar. */
+                int max_x = FbGetWidth() - 1;
+                int max_y = FbGetHeight() - 1;
                 if (max_x < 0) max_x = 0;
                 if (max_y < 0) max_y = 0;
                 if (mouse.x < 0) mouse.x = 0;

@@ -49,6 +49,7 @@ __attribute__((stdcall)) int ImageList_Remove(void *himl, int i) {
     (void)himl; (void)i;
     return 1;
 }
+__attribute__((stdcall)) int ImageList_Draw(void *himl,int image,void *dc,int x,int y,uint32_t style){(void)himl;(void)image;(void)dc;(void)x;(void)y;(void)style;return 1;}
 
 __attribute__((stdcall)) int ListView_InsertItemW(void *hwnd, const void *pitem) {
     return (int)SendMessageW(hwnd, 0x1000 + 77, 0, (intptr_t)pitem);

@@ -5,6 +5,10 @@
 
 typedef DWORD COLORREF;
 typedef struct tagBITMAP { LONG bmType; LONG bmWidth; LONG bmHeight; LONG bmWidthBytes; WORD bmPlanes; WORD bmBitsPixel; LPVOID bmBits; } BITMAP, *PBITMAP;
+typedef struct tagRGBQUAD { BYTE rgbBlue,rgbGreen,rgbRed,rgbReserved; } RGBQUAD;
+typedef struct tagBITMAPINFOHEADER { DWORD biSize; LONG biWidth,biHeight; WORD biPlanes,biBitCount; DWORD biCompression,biSizeImage; LONG biXPelsPerMeter,biYPelsPerMeter; DWORD biClrUsed,biClrImportant; } BITMAPINFOHEADER;
+typedef struct tagBITMAPINFO { BITMAPINFOHEADER bmiHeader; RGBQUAD bmiColors[1]; } BITMAPINFO;
+typedef struct _BLENDFUNCTION { BYTE BlendOp,BlendFlags,SourceConstantAlpha,AlphaFormat; } BLENDFUNCTION;
 int WINAPI GetObject(HGDIOBJ object, int bytes, LPVOID buffer);
 int WINAPI GetObjectW(HGDIOBJ object, int bytes, LPVOID buffer);
 
@@ -48,6 +52,10 @@ typedef struct tagDOCINFOW {
 #define PS_SOLID    0
 #define SRCCOPY     0x00CC0020
 #define SRCPAINT    0x00EE0086
+#define BI_RGB 0
+#define DIB_RGB_COLORS 0
+#define AC_SRC_OVER 0
+#define AC_SRC_ALPHA 1
 
 #define FW_REGULAR          400
 #define DEFAULT_CHARSET     1
@@ -105,6 +113,7 @@ BOOL WINAPI DeleteObject(HGDIOBJ ho);
 BOOL WINAPI DeleteDC(HDC hdc);
 HDC WINAPI CreateCompatibleDC(HDC hdc);
 HBITMAP WINAPI CreateCompatibleBitmap(HDC hdc, int cx, int cy);
+HBITMAP WINAPI CreateDIBSection(HDC dc,const BITMAPINFO *info,UINT usage,void **bits,HANDLE section,DWORD offset);
 HBITMAP WINAPI LoadBitmapW(HINSTANCE hInstance, LPCWSTR lpBitmapName);
 BOOL WINAPI MoveToEx(HDC hdc, int x, int y, LPPOINT lppt);
 BOOL WINAPI LineTo(HDC hdc, int x, int y);
@@ -119,6 +128,8 @@ HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lplf);
 int WINAPI GetDeviceCaps(HDC hdc, int index);
 BOOL WINAPI GetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm);
 BOOL WINAPI GetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl);
+BOOL WINAPI GetTextExtentPointA(HDC dc,LPCSTR text,int count,LPSIZE size);
+BOOL WINAPI GetTextExtentPointW(HDC dc,LPCWSTR text,int count,LPSIZE size);
 BOOL WINAPI GetTextExtentExPointW(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent,
                                   LPINT lpnFit, LPINT alpDx, LPSIZE lpSize);
 int WINAPI SetMapMode(HDC hdc, int mode);

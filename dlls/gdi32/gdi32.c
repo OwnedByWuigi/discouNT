@@ -8,6 +8,10 @@ extern void *memset(void *dest, int c, uint32_t n);
 extern void *memcpy(void *dest, const void *src, uint32_t n);
 extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kGetClientRect(void *hwnd, LPRECT lpRect);
+
+HBITMAP WINAPI CreateDIBSection(HDC dc,const BITMAPINFO *info,UINT usage,void **bits,HANDLE section,DWORD offset){SIZE_T bytes;(void)dc;(void)usage;(void)section;(void)offset;if(!info||!bits)return 0;bytes=(SIZE_T)(info->bmiHeader.biWidth<0?-info->bmiHeader.biWidth:info->bmiHeader.biWidth)*(SIZE_T)(info->bmiHeader.biHeight<0?-info->bmiHeader.biHeight:info->bmiHeader.biHeight)*4;*bits=kmalloc((uint32_t)bytes);if(!*bits)return 0;memset(*bits,0,(uint32_t)bytes);return (HBITMAP)*bits;}
+BOOL WINAPI GetTextExtentPointA(HDC dc,LPCSTR text,int count,LPSIZE size){(void)dc;(void)text;if(!size)return FALSE;size->cx=count*8;size->cy=16;return TRUE;}
+BOOL WINAPI GetTextExtentPointW(HDC dc,LPCWSTR text,int count,LPSIZE size){return GetTextExtentPoint32W(dc,text,count,size);}
 extern void Win32kGetClientScreenRect(void *hwnd, LPRECT lpRect);
 
 extern void FbPutPixel(int x, int y, uint8_t color);

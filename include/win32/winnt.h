@@ -2,6 +2,11 @@
 #define DISCOUNT_WINNT_H
 
 #include "windef.h"
+#define CONTAINING_RECORD(address,type,field) ((type *)((BYTE *)(address)-__builtin_offsetof(type,field)))
+#define FIELD_OFFSET(type,field) ((LONG)__builtin_offsetof(type,field))
+#define LongToHandle(value) ((HANDLE)(LONG_PTR)(LONG)(value))
+#define UlongToHandle(value) ((HANDLE)(ULONG_PTR)(ULONG)(value))
+#define MAXLONG 0x7fffffff
 
 typedef LONG NTSTATUS;
 typedef NTSTATUS *PNTSTATUS;
@@ -64,14 +69,28 @@ typedef struct _TOKEN_PRIVILEGES {
     LUID_AND_ATTRIBUTES Privileges[1];
 } TOKEN_PRIVILEGES, *PTOKEN_PRIVILEGES;
 
+typedef struct _RTL_CRITICAL_SECTION_DEBUG {
+    WORD Type;
+    WORD CreatorBackTraceIndex;
+    struct _CRITICAL_SECTION *CriticalSection;
+    LIST_ENTRY ProcessLocksList;
+    DWORD EntryCount;
+    DWORD ContentionCount;
+    DWORD Flags;
+    WORD CreatorBackTraceIndexHigh;
+    WORD SpareWORD;
+    ULONG_PTR Spare[2];
+} RTL_CRITICAL_SECTION_DEBUG, *PRTL_CRITICAL_SECTION_DEBUG;
+
 typedef struct _CRITICAL_SECTION {
-    void *DebugInfo;
+    PRTL_CRITICAL_SECTION_DEBUG DebugInfo;
     LONG LockCount;
     LONG RecursionCount;
     HANDLE OwningThread;
     HANDLE LockSemaphore;
     ULONG_PTR SpinCount;
 } CRITICAL_SECTION, *PCRITICAL_SECTION, *LPCRITICAL_SECTION;
+#define RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO 0x01000000
 
 typedef struct _IO_COUNTERS {
     ULONGLONG ReadOperationCount;

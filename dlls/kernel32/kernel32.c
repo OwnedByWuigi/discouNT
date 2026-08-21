@@ -20,6 +20,7 @@ extern void *memset(void *dest, int c, uint32_t n);
 extern void *memcpy(void *dest, const void *src, uint32_t n);
 extern void SerialPutString(const char *str);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
+extern int CsrssExecuteImage(const char *path);
 
 typedef void (*K32_CONSOLE_SINK)(const char *buffer, uint32_t length);
 static K32_CONSOLE_SINK g_console_sink;
@@ -58,6 +59,30 @@ static void k32_wstrncpy(LPWSTR dst, LPCWSTR src, int max_chars) {
         i++;
     }
     dst[i] = 0;
+}
+
+/* Windows resolves an extensionless module name as a DLL.  Preserve paths
+   and explicit extensions, and only add the suffix to the final component. */
+static void k32_normalize_module_name(char *name, uint32_t capacity) {
+    uint32_t i = 0, base = 0;
+    int has_extension = 0;
+    if (!name || capacity < 5) return;
+    while (name[i]) {
+        if (name[i] == '/' || name[i] == '\\') {
+            base = i + 1;
+            has_extension = 0;
+        } else if (name[i] == '.' && i > base) {
+            has_extension = 1;
+        }
+        i++;
+    }
+    if (!has_extension && i + 4 < capacity) {
+        name[i++] = '.';
+        name[i++] = 'D';
+        name[i++] = 'L';
+        name[i++] = 'L';
+        name[i] = 0;
+    }
 }
 
 static int k32_wstrcmp(LPCWSTR a, LPCWSTR b) {
@@ -259,10 +284,35 @@ void *GetProcessHeap(void) {
     return (void*)1;
 }
 
+void *calloc(SIZE_T count,SIZE_T size) {
+    SIZE_T total;
+    void *memory;
+    if (count && size > (SIZE_T)-1 / count) return 0;
+    total = count * size;
+    memory = kmalloc((uint32_t)total);
+    if (memory) memset(memory,0,(uint32_t)total);
+    return memory;
+}
+
+LONG InterlockedIncrement(volatile LONG *value) { return __atomic_add_fetch(value,1,__ATOMIC_SEQ_CST); }
+LONG InterlockedDecrement(volatile LONG *value) { return __atomic_sub_fetch(value,1,__ATOMIC_SEQ_CST); }
+PVOID InterlockedCompareExchangePointer(PVOID volatile *destination,PVOID exchange,PVOID compare){__atomic_compare_exchange_n(destination,&compare,exchange,FALSE,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST);return compare;}
+
+DWORD GetFullPathNameW(LPCWSTR path,DWORD size,LPWSTR buffer,LPWSTR *file_part) {
+    DWORD needed=(DWORD)k32_wstrlen(path)+1,i;
+    if(file_part)*file_part=0;
+    if(!path)return 0;
+    if(!buffer||size<needed)return needed;
+    k32_wstrcpy(buffer,path);
+    if(file_part)for(i=0;i+1<needed;i++)if(buffer[i]==L'/'||buffer[i]==L'\\')*file_part=&buffer[i+1];
+    return needed-1;
+}
+
 void *GetModuleHandleA(const char *name) {
     char upper_name[128];
     if (!name) return g_process_image_base ? g_process_image_base : (void*)0x400000;
     k32_uppercase_copy(name, upper_name, sizeof(upper_name));
+    k32_normalize_module_name(upper_name, sizeof(upper_name));
     return PeGetLoadedModuleHandle(upper_name);
 }
 
@@ -270,20 +320,38 @@ void *GetModuleHandleW(LPCWSTR name) {
     char upper_name[128];
     if (!name) return g_process_image_base ? g_process_image_base : (void*)0x400000;
     k32_wide_to_ansi_name(name, upper_name, sizeof(upper_name));
+    k32_normalize_module_name(upper_name, sizeof(upper_name));
     return PeGetLoadedModuleHandle(upper_name);
 }
+BOOL FreeLibrary(HMODULE module){(void)module;return TRUE;}
+LPVOID MapViewOfFile(HANDLE mapping,DWORD access,DWORD high,DWORD low,SIZE_T bytes){(void)access;(void)high;(void)low;(void)bytes;return mapping;}
+BOOL UnmapViewOfFile(LPCVOID address){(void)address;return TRUE;}
+BOOL ReadDirectoryChangesW(HANDLE d,LPVOID b,DWORD l,BOOL s,DWORD f,DWORD*r,LPOVERLAPPED o,LPVOID c){(void)d;(void)b;(void)l;(void)s;(void)f;(void)c;if(r)*r=0;if(o&&o->hEvent)ResetEvent(o->hEvent);SetLastError(ERROR_FILE_NOT_FOUND);return FALSE;}
+BOOL GetOverlappedResult(HANDLE f,LPOVERLAPPED o,DWORD*t,BOOL w){(void)f;(void)o;(void)w;if(t)*t=0;return FALSE;}
+DWORD WaitForMultipleObjects(DWORD count,const HANDLE*h,BOOL all,DWORD ms){(void)all;if(!count)return WAIT_FAILED;return WaitForSingleObject(h[0],ms);}
+BOOL FindNextFileW(HANDLE find,LPWIN32_FIND_DATAW data){(void)find;(void)data;SetLastError(ERROR_FILE_NOT_FOUND);return FALSE;}
+HANDLE CreateMutexW(LPSECURITY_ATTRIBUTES a,BOOL owner,LPCWSTR name){(void)a;(void)owner;(void)name;return CreateEventW(0,FALSE,TRUE,0);}
+int CompareStringW(LCID locale,DWORD flags,LPCWSTR a,int na,LPCWSTR b,int nb){int i=0;(void)locale;while((na<0?a[i]:i<na)&&(nb<0?b[i]:i<nb)){WCHAR x=a[i],y=b[i];if(flags&NORM_IGNORECASE){if(x>=L'a'&&x<=L'z')x-=32;if(y>=L'a'&&y<=L'z')y-=32;}if(x!=y)return x<y?CSTR_LESS_THAN:3;if(!x)break;i++;}return CSTR_EQUAL;}
 
 HMODULE LoadLibraryW(LPCWSTR name) {
     char ansi_name[128];
+    HMODULE loaded;
     k32_wide_to_ansi_name(name, ansi_name, sizeof(ansi_name));
     if (!ansi_name[0]) return 0;
+    k32_normalize_module_name(ansi_name, sizeof(ansi_name));
+    loaded = (HMODULE)PeGetLoadedModuleHandle(ansi_name);
+    if (loaded) return loaded;
     return (HMODULE)PeLoadDll(ansi_name);
 }
 
 HMODULE LoadLibraryA(const char *name) {
     char upper_name[128];
+    HMODULE loaded;
     k32_uppercase_copy(name, upper_name, sizeof(upper_name));
     if (!upper_name[0]) return 0;
+    k32_normalize_module_name(upper_name, sizeof(upper_name));
+    loaded = (HMODULE)PeGetLoadedModuleHandle(upper_name);
+    if (loaded) return loaded;
     return (HMODULE)PeLoadDll(upper_name);
 }
 
@@ -383,6 +451,9 @@ DWORD GetCurrentProcessId(void) {
     return 1;
 }
 
+DWORD GetCurrentThreadId(void) { return 1; }
+HANDLE GetCurrentThread(void) { return (HANDLE)(ULONG_PTR)1; }
+
 HANDLE GetCurrentProcess(void) {
     return (HANDLE)1;
 }
@@ -425,11 +496,25 @@ DWORD GetPriorityClass(HANDLE hProcess) {
 
 void InitializeCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
     if (lpCriticalSection) {
+        lpCriticalSection->DebugInfo = 0;
         lpCriticalSection->LockCount = 0;
         lpCriticalSection->RecursionCount = 0;
         lpCriticalSection->OwningThread = 0;
         lpCriticalSection->LockSemaphore = 0;
     }
+}
+
+BOOL InitializeCriticalSectionEx(LPCRITICAL_SECTION section, DWORD spin, DWORD flags) {
+    InitializeCriticalSection(section);
+    if (!section) return FALSE;
+    section->SpinCount = spin;
+    if (flags & RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO) {
+        section->DebugInfo = (PRTL_CRITICAL_SECTION_DEBUG)kmalloc(sizeof(*section->DebugInfo));
+        if (!section->DebugInfo) return FALSE;
+        memset(section->DebugInfo, 0, sizeof(*section->DebugInfo));
+        section->DebugInfo->CriticalSection = section;
+    }
+    return TRUE;
 }
 
 void EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
@@ -476,7 +561,10 @@ BOOL CreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
                     BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
                     LPCWSTR lpCurrentDirectory, STARTUPINFOW *lpStartupInfo,
                     PROCESS_INFORMATION *lpProcessInformation) {
-    (void)lpApplicationName; (void)lpCommandLine; (void)lpProcessAttributes; (void)lpThreadAttributes;
+    char command[512];
+    int pos = 0;
+    LPCWSTR source = lpCommandLine && lpCommandLine[0] ? lpCommandLine : lpApplicationName;
+    (void)lpProcessAttributes; (void)lpThreadAttributes;
     (void)bInheritHandles; (void)dwCreationFlags; (void)lpEnvironment; (void)lpCurrentDirectory; (void)lpStartupInfo;
     if (lpProcessInformation) {
         lpProcessInformation->hProcess = 0;
@@ -484,8 +572,24 @@ BOOL CreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
         lpProcessInformation->dwProcessId = 0;
         lpProcessInformation->dwThreadId = 0;
     }
-    g_last_error = 120;
-    return 0;
+    if (!source) {
+        g_last_error = ERROR_FILE_NOT_FOUND;
+        return FALSE;
+    }
+    while (source[pos] && pos < (int)sizeof(command) - 1) {
+        WCHAR ch = source[pos];
+        command[pos] = ch < 128 ? (char)ch : '?';
+        pos++;
+    }
+    command[pos] = 0;
+    if (CsrssExecuteImage(command) < 0) {
+        g_last_error = ERROR_FILE_NOT_FOUND;
+        return FALSE;
+    }
+    /* The launcher is asynchronous, but per-process handles are not exposed
+       yet; leave the already-zeroed output handles safely closable. */
+    g_last_error = 0;
+    return TRUE;
 }
 
 HANDLE CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
@@ -920,6 +1024,122 @@ LPWSTR lstrcatW(LPWSTR lpString1, LPCWSTR lpString2) {
 
 int lstrcmpW(LPCWSTR lpString1, LPCWSTR lpString2) {
     return k32_wstrcmp(lpString1, lpString2);
+}
+
+int lstrcmpiW(LPCWSTR a, LPCWSTR b) {
+    WCHAR ca, cb;
+    if (!a) return b ? -1 : 0;
+    if (!b) return 1;
+    do {
+        ca = *a++;
+        cb = *b++;
+        if (ca >= L'A' && ca <= L'Z') ca += L'a' - L'A';
+        if (cb >= L'A' && cb <= L'Z') cb += L'a' - L'A';
+        if (ca != cb) return ca < cb ? -1 : 1;
+    } while (ca);
+    return 0;
+}
+
+static int k32_emit_char(char *buffer, size_t count, int pos, char ch) {
+    if (buffer && count && (uint32_t)pos < count - 1) buffer[pos] = ch;
+    return pos + 1;
+}
+
+static int k32_emit_unsigned(char *buffer, size_t count, int pos, ULONGLONG value,
+                             unsigned base, int width, char pad) {
+    char digits[32];
+    int used = 0;
+    do {
+        unsigned digit = (unsigned)(value % base);
+        digits[used++] = (char)(digit < 10 ? '0' + digit : 'a' + digit - 10);
+        value /= base;
+    } while (value && used < (int)sizeof(digits));
+    while (width-- > used) pos = k32_emit_char(buffer, count, pos, pad);
+    while (used) pos = k32_emit_char(buffer, count, pos, digits[--used]);
+    return pos;
+}
+
+int vsnprintf(char *buffer, size_t count, const char *format, va_list args) {
+    int pos = 0;
+    while (format && *format) {
+        int width = 0, is_long = 0;
+        char pad = ' ';
+        if (*format != '%') {
+            pos = k32_emit_char(buffer, count, pos, *format++);
+            continue;
+        }
+        format++;
+        if (*format == '%') {
+            pos = k32_emit_char(buffer, count, pos, *format++);
+            continue;
+        }
+        if (*format == '0') { pad = '0'; format++; }
+        while (*format >= '0' && *format <= '9') width = width * 10 + *format++ - '0';
+        while (*format == 'l') { is_long++; format++; }
+        switch (*format ? *format++ : 0) {
+        case 's': {
+            const char *str = va_arg(args, const char *);
+            if (!str) str = "(null)";
+            while (*str) pos = k32_emit_char(buffer, count, pos, *str++);
+            break;
+        }
+        case 'c': pos = k32_emit_char(buffer, count, pos, (char)va_arg(args, int)); break;
+        case 'd':
+        case 'i': {
+            LONGLONG value = is_long ? va_arg(args, long) : va_arg(args, int);
+            ULONGLONG magnitude;
+            if (value < 0) {
+                pos = k32_emit_char(buffer, count, pos, '-');
+                magnitude = (ULONGLONG)(-(value + 1)) + 1;
+            } else magnitude = (ULONGLONG)value;
+            pos = k32_emit_unsigned(buffer, count, pos, magnitude, 10, width, pad);
+            break;
+        }
+        case 'p':
+            pos = k32_emit_char(buffer, count, pos, '0');
+            pos = k32_emit_char(buffer, count, pos, 'x');
+            pos = k32_emit_unsigned(buffer, count, pos, (ULONG_PTR)va_arg(args, void *), 16,
+                                    sizeof(void *) * 2, '0');
+            break;
+        case 'x':
+        case 'X':
+            pos = k32_emit_unsigned(buffer, count, pos,
+                                    is_long ? va_arg(args, unsigned long) : va_arg(args, unsigned int),
+                                    16, width, pad);
+            break;
+        case 'u':
+            pos = k32_emit_unsigned(buffer, count, pos,
+                                    is_long ? va_arg(args, unsigned long) : va_arg(args, unsigned int),
+                                    10, width, pad);
+            break;
+        default: break;
+        }
+    }
+    if (buffer && count) buffer[(uint32_t)pos < count ? pos : count - 1] = 0;
+    return pos;
+}
+
+int snprintf(char *buffer, size_t count, const char *format, ...) {
+    int result;
+    va_list args;
+    va_start(args, format);
+    result = vsnprintf(buffer, count, format, args);
+    va_end(args);
+    return result;
+}
+
+int sprintf(char *buffer, const char *format, ...) {
+    int result;
+    va_list args;
+    va_start(args, format);
+    result = vsnprintf(buffer, 0xffffffffu, format, args);
+    va_end(args);
+    return result;
+}
+
+HRESULT SetThreadDescription(HANDLE thread, LPCWSTR description) {
+    (void)thread; (void)description;
+    return S_OK;
 }
 
 ULONGLONG __udivdi3(ULONGLONG num, ULONGLONG den) {

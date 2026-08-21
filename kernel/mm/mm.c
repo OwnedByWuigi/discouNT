@@ -2,6 +2,7 @@
 #include "mm/mm.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "core/util.h"
 
 #define MM_ALIGN 8U
 #define MM_SPLIT_MIN 16U
@@ -95,6 +96,38 @@ void kfree(void *pointer) {
         }
     }
 }
+
+void *malloc(uint32_t size) { return kmalloc(size); }
+
+void *calloc(uint32_t count, uint32_t size) {
+    uint32_t bytes;
+    void *pointer;
+    if (count && size > 0xffffffffU / count) return 0;
+    bytes = count * size;
+    pointer = kmalloc(bytes);
+    if (pointer) memset(pointer, 0, bytes);
+    return pointer;
+}
+
+void *realloc(void *pointer, uint32_t size) {
+    HEAP_BLOCK *block;
+    void *replacement;
+    uint32_t copy_size;
+    if (!pointer) return kmalloc(size);
+    if (!size) { kfree(pointer); return 0; }
+    for (block = heap_head; block; block = block->next)
+        if ((void *)(block + 1) == pointer) break;
+    if (!block || block->free) return 0;
+    if (block->size >= size) return pointer;
+    replacement = kmalloc(size);
+    if (!replacement) return 0;
+    copy_size = block->size < size ? block->size : size;
+    memcpy(replacement, pointer, copy_size);
+    kfree(pointer);
+    return replacement;
+}
+
+void free(void *pointer) { kfree(pointer); }
 
 uint32_t MmGetHeapUsed(void) {
     HEAP_BLOCK *block;

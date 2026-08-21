@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include "windows.h"
+#include "shellapi.h"
+#include "shlobj.h"
 #include "wingdi.h"
 #include "string.h"
 #include "core/version.h"
@@ -8,6 +10,26 @@ static WCHAR g_about_caption[128];
 static WCHAR g_about_other[256];
 static int g_about_result = IDOK;
 static HICON g_about_icon = 0;
+
+/* Explorer traditionally calls shell32 ordinal 61.  Our ELF DLL exports by
+   name, so provide the public spelling and let Explorer resolve it safely. */
+void WINAPI RunFileDlg(HWND owner, HICON icon, const char *dir,
+                       const char *title, const char *desc, DWORD flags)
+{
+    STARTUPINFOW startup;
+    PROCESS_INFORMATION process;
+    WCHAR command[] = L"/SYSTEM32/CMD.EXE";
+    (void)icon;
+    (void)dir;
+    (void)title;
+    (void)desc;
+    (void)flags;
+    (void)owner;
+    ZeroMemory(&startup, sizeof(startup));
+    ZeroMemory(&process, sizeof(process));
+    startup.cb = sizeof(startup);
+    CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process);
+}
 
 static int sh_wstrlen(const WCHAR *s) {
     int n = 0;
@@ -222,13 +244,13 @@ __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpRes
     return 1;
 }
 
-__attribute__((stdcall)) int Shell_NotifyIconW(uint32_t dwMessage, void *lpData) {
+BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW lpData) {
     (void)dwMessage;
     (void)lpData;
     return 1;
 }
 
-__attribute__((stdcall)) int ShellAboutA(void *hWnd, const char *szApp, const char *szOtherStuff, void *hIcon) {
+int WINAPI ShellAboutA(HWND hWnd, LPCSTR szApp, LPCSTR szOtherStuff, HICON hIcon) {
     WCHAR caption[128];
     WCHAR other[256];
     (void)hWnd;
@@ -238,8 +260,25 @@ __attribute__((stdcall)) int ShellAboutA(void *hWnd, const char *szApp, const ch
     return sh_run_about_window(caption, other);
 }
 
-__attribute__((stdcall)) int ShellAboutW(void *hWnd, const uint16_t *szApp, const uint16_t *szOtherStuff, void *hIcon) {
+int WINAPI ShellAboutW(HWND hWnd, LPCWSTR szApp, LPCWSTR szOtherStuff, HICON hIcon) {
     (void)hWnd;
     g_about_icon = (HICON)hIcon;
-    return sh_run_about_window((const WCHAR*)szApp, (const WCHAR*)szOtherStuff);
+    return sh_run_about_window(szApp, szOtherStuff);
 }
+
+HINSTANCE WINAPI ShellExecuteW(HWND hwnd,LPCWSTR operation,LPCWSTR file,LPCWSTR parameters,LPCWSTR directory,INT show) {
+    STARTUPINFOW startup;
+    PROCESS_INFORMATION process;
+    WCHAR command[512];
+    int pos=0,i;
+    (void)hwnd;(void)operation;
+    if(!file||!file[0])return (HINSTANCE)(ULONG_PTR)2;
+    for(i=0;file[i]&&pos<510;i++)command[pos++]=file[i];
+    if(parameters&&parameters[0]&&pos<510){command[pos++]=L' ';for(i=0;parameters[i]&&pos<511;i++)command[pos++]=parameters[i];}
+    command[pos]=0;
+    memset(&startup,0,sizeof(startup));memset(&process,0,sizeof(process));startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=(WORD)show;
+    if(!CreateProcessW(file,command,0,0,FALSE,0,0,directory,&startup,&process))return (HINSTANCE)(ULONG_PTR)2;
+    CloseHandle(process.hThread);CloseHandle(process.hProcess);
+    return (HINSTANCE)(ULONG_PTR)33;
+}
+BOOL WINAPI ShellExecuteExW(LPSHELLEXECUTEINFOW info){HINSTANCE result;if(!info)return FALSE;if((info->fMask&SEE_MASK_IDLIST)&&info->lpIDList){WCHAR path[MAX_PATH];if(!SHGetPathFromIDListW(info->lpIDList,path))return FALSE;result=ShellExecuteW(info->hwnd,info->lpVerb,path,info->lpParameters,info->lpDirectory,info->nShow);}else result=ShellExecuteW(info->hwnd,info->lpVerb,info->lpFile,info->lpParameters,info->lpDirectory,info->nShow);info->hInstApp=result;return (ULONG_PTR)result>32;}

@@ -266,9 +266,16 @@ BOOL SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {
 int GetSystemMetrics(int nIndex) {
     switch (nIndex) {
     case SM_CXSCREEN:
-        return 800;
+        return Win32kGetScreenWidth();
     case SM_CYSCREEN:
-        return 600;
+        return Win32kGetScreenHeight();
+    case SM_XVIRTUALSCREEN:
+    case SM_YVIRTUALSCREEN:
+        return 0;
+    case SM_CXVIRTUALSCREEN:
+        return Win32kGetScreenWidth();
+    case SM_CYVIRTUALSCREEN:
+        return Win32kGetScreenHeight();
     case SM_CXSMICON:
     case SM_CYSMICON:
         return 16;
@@ -303,7 +310,13 @@ BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy,
         win->rect.bottom = win->rect.top + cy;
     }
     if (uFlags & SWP_SHOWWINDOW) win->visible = 1;
-    u32_sync_top_level(win);
+    if (win->top_level) {
+        Win32kSetWindowRect((HANDLE)hWnd, win->rect.left, win->rect.top,
+                            win->rect.right - win->rect.left,
+                            win->rect.bottom - win->rect.top);
+        if (uFlags & SWP_SHOWWINDOW) Win32kShowWindow((HANDLE)hWnd);
+        u32_sync_top_level(win);
+    }
     if (moved || sized) {
         u32_mark_invalid_descendants(hWnd);
         u32_mark_invalid(hWnd);

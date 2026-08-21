@@ -22,6 +22,8 @@
 #include "core/bugcheck.h"
 
 extern void CsrssGinaShowLogon(void);
+extern int CsrssExecuteImage(const char *path);
+extern void CsrssShutdownSystem(void);
 extern uint32_t KeGetProcessorCount(void);
 extern uint32_t KeGetPhysicalMemoryPages(void);
 
@@ -35,6 +37,10 @@ extern uint8_t back_buffer[640 * 480];
 static KERNEL_EXPORT kernel_exports[] = {
     {"kmalloc", kmalloc},
     {"kfree", kfree},
+    {"malloc", malloc},
+    {"calloc", calloc},
+    {"realloc", realloc},
+    {"free", free},
     {"MmGetHeapUsed", MmGetHeapUsed},
     {"MmGetHeapTotal", MmGetHeapTotal},
     {"PmmAllocatePage", PmmAllocatePage},
@@ -49,6 +55,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"VmmMapMmioRange", VmmMapMmioRange},
     {"memset", memset},
     {"memcpy", memcpy},
+    {"memmove", memmove},
+    {"wcstoul", wcstoul},
     {"strlen", strlen},
     {"strcmp", strcmp},
     {"strcpy", strcpy},
@@ -169,6 +177,8 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"PeGetProcAddress", PeGetProcAddress},
     {"PeResolveExternalSymbol", PeResolveExternalSymbol},
     {"CsrssGinaShowLogon", CsrssGinaShowLogon},
+    {"CsrssExecuteImage", CsrssExecuteImage},
+    {"CsrssShutdownSystem", CsrssShutdownSystem},
 };
 
 void *KernelResolveSymbol(const char *name) {

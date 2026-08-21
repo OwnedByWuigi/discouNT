@@ -16,5 +16,6 @@ static inline int tolower(int ch) {
 static inline int toupper(int ch) {
     return (ch >= 'a' && ch <= 'z') ? (ch - 'a' + 'A') : ch;
 }
+static inline int iswspace(WCHAR ch) { return ch==L' '||ch==L'\t'||ch==L'\n'||ch==L'\r'||ch==L'\f'||ch==L'\v'; }
 
 #endif

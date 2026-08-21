@@ -137,3 +137,15 @@ __attribute__((stdcall)) const uint16_t *PathFindFileNameW(const uint16_t *path)
     }
     return last;
 }
+
+__attribute__((stdcall)) int PathRemoveBackslashW(uint16_t *path) {
+    int length=0;
+    if(!path)return 0;
+    while(path[length])length++;
+    if(length>1&&(path[length-1]=='/'||path[length-1]=='\\')){path[length-1]=0;return 1;}
+    return 0;
+}
+
+__attribute__((stdcall)) int PathIsDirectoryW(const uint16_t *path) {
+    return path&&path[0];
+}

@@ -11,5 +11,7 @@ LPWSTR WINAPI StrRStrIW(LPCWSTR pszSource, LPCWSTR pszLast, LPCWSTR pszSrch);
 LPWSTR WINAPI StrStrW(LPCWSTR pszFirst, LPCWSTR pszSrch);
 LPWSTR WINAPI StrStrIW(LPCWSTR pszFirst, LPCWSTR pszSrch);
 LPCWSTR WINAPI PathFindFileNameW(LPCWSTR path);
+BOOL WINAPI PathRemoveBackslashW(LPWSTR path);
+BOOL WINAPI PathIsDirectoryW(LPCWSTR path);
 
 #endif

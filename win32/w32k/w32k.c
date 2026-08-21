@@ -38,6 +38,11 @@
 #define BUTTON_MARGIN        2
 #define ICON_BOX_SIZE        14
 #define MINIMIZED_WIDTH      180
+#define W32K_SW_HIDE           0
+#define W32K_SW_SHOWNORMAL     1
+#define W32K_SW_SHOWMINIMIZED  2
+#define W32K_SW_MINIMIZE       6
+#define W32K_SW_RESTORE        9
 
 static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
@@ -84,6 +89,12 @@ static void layout_minimized_window(HANDLE hwnd, WINDOW *win);
 static int hit_resize_edge(WINDOW *win, int x, int y);
 static void update_cursor_for_point(int x, int y);
 static HANDLE find_window_at(int x, int y);
+
+static int window_is_topmost(const WINDOW *win) {
+    if (!win || !win->wndClass) return 0;
+    return strcmp(win->wndClass->className, "Shell_TrayWnd") == 0 ||
+           strcmp(win->wndClass->className, "MenuPopup") == 0;
+}
 
 static int minimized_window_height(void) {
     return FRAME_THICKNESS + TITLEBAR_HEIGHT + FRAME_THICKNESS;
@@ -320,6 +331,17 @@ static void draw_window_frame(WINDOW *win) {
 }
 
 static void set_window_active(HANDLE hwnd) {
+    WINDOW *candidate;
+
+    if (hwnd != INVALID_HANDLE) {
+        candidate = (WINDOW*)ObReferenceObject(hwnd);
+        if (!candidate) return;
+        if (candidate->desktop) {
+            ObDereferenceObject(hwnd);
+            return;
+        }
+        ObDereferenceObject(hwnd);
+    }
     active_window = hwnd;
 
     for (int i = 0; i < window_count; i++) {
@@ -333,18 +355,36 @@ static void set_window_active(HANDLE hwnd) {
 
 static void raise_window(HANDLE hwnd) {
     int pos = -1;
+    int target;
+    WINDOW *candidate = (WINDOW*)ObReferenceObject(hwnd);
+    if (!candidate) return;
+    if (candidate->desktop) {
+        ObDereferenceObject(hwnd);
+        return;
+    }
+    target = window_is_topmost(candidate) ? window_count - 1 : 0;
+    ObDereferenceObject(hwnd);
     for (int i = 0; i < window_count; i++) {
         if (window_list[i] == hwnd) {
             pos = i;
             break;
         }
     }
-    if (pos < 0 || pos == window_count - 1) return;
-
-    for (int i = pos; i < window_count - 1; i++) {
-        window_list[i] = window_list[i + 1];
+    if (pos < 0) return;
+    if (target == 0) {
+        target = window_count - 1;
+        for (int i = 0; i < window_count; i++) {
+            WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
+            int topmost = window_is_topmost(win);
+            if (win) ObDereferenceObject(window_list[i]);
+            if (topmost) { target = i - (pos < i ? 1 : 0); break; }
+        }
+        if (target < 0) target = 0;
     }
-    window_list[window_count - 1] = hwnd;
+    if (pos == target) return;
+    if (pos < target) for (int i = pos; i < target; i++) window_list[i] = window_list[i + 1];
+    else for (int i = pos; i > target; i--) window_list[i] = window_list[i - 1];
+    window_list[target] = hwnd;
 }
 
 static int is_in_window(WINDOW *win, int x, int y) {
@@ -417,7 +457,7 @@ static void update_cursor_for_point(int x, int y) {
 static HANDLE find_topmost_visible_window(void) {
     for (int i = window_count - 1; i >= 0; i--) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && win->visible && !win->minimized) {
+        if (win && win->visible && !win->minimized && !win->desktop) {
             ObDereferenceObject(window_list[i]);
             return window_list[i];
         }
@@ -634,8 +674,11 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
     int len = strlen(title);
     if (len > 63) len = 63;
     memcpy(win->title, title, len);
-    if (w < 96) w = 96;
-    if (h < 64) h = 64;
+    if (strcmp(wc->className, "Desktop") != 0 &&
+        strcmp(wc->className, "Shell_TrayWnd") != 0) {
+        if (w < 96) w = 96;
+        if (h < 64) h = 64;
+    }
     win->x = x; win->y = y;
     win->width = w; win->height = h;
     win->restore_x = x; win->restore_y = y;
@@ -645,6 +688,7 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
     win->active = 0;
     win->minimized = 0;
     win->maximized = 0;
+    win->desktop = strcmp(wc->className, "Desktop") == 0;
     win->wndClass = wc;
     win->wndProc = wc->wndProc;
     
@@ -659,13 +703,22 @@ HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y,
     }
     
     if (window_count < MAX_WINDOWS) {
-        window_list[window_count++] = hwnd;
+        if (win->desktop) {
+            int i;
+            for (i = window_count; i > 0; i--) window_list[i] = window_list[i - 1];
+            window_list[0] = hwnd;
+            window_count++;
+        } else {
+            window_list[window_count++] = hwnd;
+        }
     } else {
         SerialPutString("[Win32k] CreateWindowByClass window list full\r\n");
     }
 
-    raise_window(hwnd);
-    set_window_active(hwnd);
+    if (!win->desktop) {
+        raise_window(hwnd);
+        set_window_active(hwnd);
+    }
     
     if (win->wndProc) win->wndProc(hwnd, WM_CREATE, 0, 0);
     ObDereferenceObject(hClass);
@@ -693,7 +746,7 @@ void Win32kDestroyWindow(HANDLE hwnd) {
     }
 
     if (active_window == hwnd) {
-        active_window = (window_count > 0) ? window_list[window_count - 1] : INVALID_HANDLE;
+        active_window = find_topmost_visible_window();
         set_window_active(active_window);
     }
     
@@ -707,8 +760,40 @@ void Win32kShowWindow(HANDLE hwnd) {
     if (!win) return;
     win->minimized = 0;
     win->visible = 1;
-    draw_window_frame(win);
+    if (win->desktop) Win32kRedrawAll();
+    else draw_window_frame(win);
     ObDereferenceObject(hwnd);
+}
+
+void Win32kSetWindowShowState(HANDLE hwnd, int command) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win) return;
+    if (command == W32K_SW_HIDE) {
+        win->visible = 0;
+    } else if (command == W32K_SW_MINIMIZE || command == W32K_SW_SHOWMINIMIZED) {
+        win->visible = 1;
+        minimize_window(hwnd, win);
+        ObDereferenceObject(hwnd);
+        set_window_active(find_topmost_visible_window());
+        Win32kRedrawAll();
+        return;
+    } else {
+        win->visible = 1;
+        if (command == W32K_SW_RESTORE || command == W32K_SW_SHOWNORMAL) restore_window_if_needed(hwnd, win);
+        ObDereferenceObject(hwnd);
+        Win32kActivateWindow(hwnd);
+        Win32kRedrawAll();
+        return;
+    }
+    ObDereferenceObject(hwnd);
+    Win32kRedrawAll();
+}
+
+int Win32kIsWindowMinimized(HANDLE hwnd) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    int minimized = win ? win->minimized : 0;
+    if (win) ObDereferenceObject(hwnd);
+    return minimized;
 }
 
 void Win32kUpdateWindow(HANDLE hwnd) {
@@ -756,13 +841,19 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     if (button != 1) return;
     
     HANDLE hwnd = find_window_at(x, y);
+    WINDOW *win;
     if (hwnd == INVALID_HANDLE) return;
 
-    raise_window(hwnd);
-    set_window_active(hwnd);
-    
-    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
+
+    /* The desktop is an input surface, but never a foreground window.  It
+       must remain at the bottom of the compositor and background clicks must
+       not replace the active application. */
+    if (!win->desktop) {
+        raise_window(hwnd);
+        set_window_active(hwnd);
+    }
     
     switch (hit_caption_button(win, x, y)) {
     case CAPBTN_CLOSE:
@@ -1045,8 +1136,26 @@ HANDLE Win32kGetActiveWindow(void) {
     return active_window;
 }
 
+int Win32kGetScreenWidth(void) {
+    int width = FbGetWidth();
+    return width > 0 ? width : 800;
+}
+
+int Win32kGetScreenHeight(void) {
+    int height = FbGetHeight();
+    return height > 0 ? height : 600;
+}
+
 void Win32kActivateWindow(HANDLE hwnd) {
+    WINDOW *win;
     if (hwnd == INVALID_HANDLE) return;
+    win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win) return;
+    if (win->desktop && active_window != INVALID_HANDLE && active_window != hwnd) {
+        ObDereferenceObject(hwnd);
+        return;
+    }
+    ObDereferenceObject(hwnd);
     raise_window(hwnd);
     set_window_active(hwnd);
 }
@@ -1056,6 +1165,24 @@ void Win32kSetWindowIcons(HANDLE hwnd, HANDLE big_icon, HANDLE small_icon) {
     if (!win) return;
     win->big_icon = big_icon;
     win->small_icon = small_icon ? small_icon : big_icon;
+    ObDereferenceObject(hwnd);
+}
+
+void Win32kSetWindowRect(HANDLE hwnd, int x, int y, int width, int height) {
+    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    if (!win) return;
+    if (width > 0 && height > 0) {
+        win->x = x;
+        win->y = y;
+        win->width = width;
+        win->height = height;
+        if (!win->maximized) {
+            win->restore_x = x;
+            win->restore_y = y;
+            win->restore_width = width;
+            win->restore_height = height;
+        }
+    }
     ObDereferenceObject(hwnd);
 }
 

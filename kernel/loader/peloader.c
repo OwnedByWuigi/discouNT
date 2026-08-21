@@ -1027,6 +1027,20 @@ static void *PeFindLoadedDllSymbol(const char *func_name) {
     return 0;
 }
 
+static void *PeFindCoreDllSymbol(const char *func_name,
+                                 const char *const *core_dlls,
+                                 uint32_t core_dll_count) {
+    uint32_t i;
+    for (i = 0; i < core_dll_count; i++) {
+        void *image = PeGetLoadedModuleHandle(core_dlls[i]);
+        void *addr;
+        if (!image) continue;
+        addr = PeGetProcAddress(image, func_name);
+        if (addr) return addr;
+    }
+    return 0;
+}
+
 void *PeResolveExternalSymbol(const char *func_name) {
     static const char *core_dlls[] = {
         "NTDLL.DLL",
@@ -1034,26 +1048,35 @@ void *PeResolveExternalSymbol(const char *func_name) {
         "ADVAPI32.DLL",
         "GDI32.DLL",
         "USER32.DLL",
+        "OLE32.DLL",
+        "OLEAUT32.DLL",
+        "RPCRT4.DLL",
         "SHELL32.DLL",
         "SHLWAPI.DLL",
         "COMCTL32.DLL",
         "COMDLG32.DLL"
     };
+    const uint32_t core_dll_count = sizeof(core_dlls) / sizeof(core_dlls[0]);
     void *addr;
 
     if (!func_name || !*func_name) return 0;
 
-    addr = PeFindLoadedDllSymbol(func_name);
+    /* ELF imports lack PE's provider DLL field.  Prefer the canonical system
+       DLL set so private compatibility exports in MSGINA (or any later DLL)
+       cannot override User32/Kernel32 APIs merely because of load order. */
+    addr = PeFindCoreDllSymbol(func_name, core_dlls, core_dll_count);
     if (addr) return addr;
 
     if (pe_current_loading_dll) {
-        return 0;
+        return PeFindLoadedDllSymbol(func_name);
     }
 
-    for (uint32_t i = 0; i < (sizeof(core_dlls) / sizeof(core_dlls[0])); i++) {
+    for (uint32_t i = 0; i < core_dll_count; i++) {
         PeLoadDll(core_dlls[i]);
     }
 
+    addr = PeFindCoreDllSymbol(func_name, core_dlls, core_dll_count);
+    if (addr) return addr;
     return PeFindLoadedDllSymbol(func_name);
 }
 
@@ -1067,16 +1090,21 @@ void PeClearLastError(void) {
 
 void *PeGetProcAddress(void *dll_base, const char *func_name) {
     PE_RUNTIME_HEADER *runtime;
+    uintptr_t requested_ordinal = (uintptr_t)func_name;
 
     if (!dll_base || !func_name) return 0;
 
     runtime = PeGetRuntimeHeader(dll_base);
     if (runtime && (runtime->flags & PE_RUNTIME_FLAG_ELF)) {
+        /* ELF exports have names but no Win32 ordinal table.  In particular,
+           never pass a MAKEINTRESOURCE-style ordinal to strcmp(). */
+        if (requested_ordinal <= 0xffffu) return 0;
         if (runtime->elf_class == 2) return PeGetELF64ProcAddress(dll_base, func_name);
         return PeGetELFProcAddress(dll_base, func_name);
     }
 
     if (*(uint32_t*)dll_base == 0x464C457F) {
+        if (requested_ordinal <= 0xffffu) return 0;
         return PeGetELFProcAddress(dll_base, func_name);
     }
 
@@ -1096,6 +1124,15 @@ void *PeGetProcAddress(void *dll_base, const char *func_name) {
     uint32_t *functions = (uint32_t*)((uint8_t*)dll_base + exp->AddressOfFunctions);
     uint32_t *names = (uint32_t*)((uint8_t*)dll_base + exp->AddressOfNames);
     uint16_t *ordinals = (uint16_t*)((uint8_t*)dll_base + exp->AddressOfNameOrdinals);
+
+    if (requested_ordinal <= 0xffffu) {
+        uint32_t ordinal = (uint32_t)requested_ordinal;
+        uint32_t index;
+        if (ordinal < exp->Base) return 0;
+        index = ordinal - exp->Base;
+        if (index >= exp->NumberOfFunctions || !functions[index]) return 0;
+        return (uint8_t*)dll_base + functions[index];
+    }
     
     for (uint32_t i = 0; i < exp->NumberOfNames; i++) {
         const char *name = (const char*)((uint8_t*)dll_base + names[i]);

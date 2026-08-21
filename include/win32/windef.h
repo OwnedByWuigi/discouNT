@@ -9,6 +9,7 @@ typedef int BOOL;
 typedef uint8_t BYTE;
 typedef BYTE *PBYTE;
 typedef uint16_t WORD;
+typedef uint16_t USHORT;
 typedef int16_t SHORT;
 typedef uint8_t BOOLEAN;
 typedef uint32_t DWORD;
@@ -31,7 +32,9 @@ typedef void *HANDLE;
 typedef void *PVOID;
 typedef void VOID;
 typedef HANDLE HWND;
+typedef HANDLE HDWP;
 typedef HANDLE HDESK;
+typedef HANDLE HWINSTA;
 typedef HANDLE HINSTANCE;
 typedef HANDLE HMODULE;
 typedef HANDLE HICON;
@@ -64,6 +67,8 @@ typedef wchar_t WCHAR;
 typedef WCHAR *PWSTR;
 typedef const WCHAR *PCWSTR;
 typedef LONG HRESULT;
+typedef DWORD LCID;
+typedef DWORD COLORREF;
 typedef void *FARPROC;
 #ifndef __cdecl
 #define __cdecl

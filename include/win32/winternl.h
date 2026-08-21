@@ -167,6 +167,14 @@ NTSTATUS WINAPI NtQueryInformationProcess(
     PULONG ReturnLength
 );
 
+#define ProcessWineGrantAdminToken ((PROCESSINFOCLASS)1002)
+NTSTATUS WINAPI NtSetInformationProcess(
+    HANDLE ProcessHandle,
+    PROCESSINFOCLASS ProcessInformationClass,
+    PVOID ProcessInformation,
+    ULONG ProcessInformationLength
+);
+
 PTEB WINAPI NtCurrentTeb(void);
 
 #endif

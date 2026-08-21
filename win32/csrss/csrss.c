@@ -28,6 +28,7 @@ typedef void (*GuiAppHandleMouseFn)(int x, int y, uint8_t buttons, uint8_t event
 typedef int (*GuiAppShouldExitFn)(void);
 typedef void (*GuiAppResetExitFn)(void);
 typedef int (*GuiWinMainFn)(void *hInstance, void *hPrevInstance, char *lpCmdLine, int nCmdShow);
+typedef int (*GuiWWinMainFn)(void *hInstance, void *hPrevInstance, uint32_t *lpCmdLine, int nCmdShow);
 typedef int (*GuiMainFn)(void);
 typedef int (*User32PostMessageWFn)(GUI_HANDLE hWnd, uint32_t Msg, uint32_t wParam, uint32_t lParam);
 typedef GUI_HANDLE (*User32FindTopLevelWindowForProcessIdFn)(uint32_t pid);
@@ -128,12 +129,14 @@ typedef enum _CSRSS_SESSION_STATE {
 typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
     GUI_APP_KIND_WINMAIN,
+    GUI_APP_KIND_WWINMAIN,
     GUI_APP_KIND_MAIN
 } GUI_APP_KIND;
 
 typedef struct _GUI_APP_INSTANCE {
     uint32_t pid;
     char path[256];
+    char command_line[256];
     void *image;
     GUI_HANDLE window;
     HANDLE thread;
@@ -150,6 +153,8 @@ typedef struct _GUI_APP_THREAD_CTX {
     GUI_APP_INSTANCE *app;
     void *entry;
     GUI_APP_KIND kind;
+    char command_line[256];
+    uint32_t wide_command_line[256];
 } GUI_APP_THREAD_CTX;
 
 #define MAX_GUI_APPS 8
@@ -217,6 +222,13 @@ static void uppercase_copy(char *dst, const char *src, int max_len) {
         if (c >= 'a' && c <= 'z') c -= 32;
         dst[i++] = c;
     }
+    dst[i] = 0;
+}
+
+static void bounded_copy(char *dst, const char *src, int max_len) {
+    int i = 0;
+    if (!dst || max_len <= 0) return;
+    if (src) while (src[i] && i < max_len - 1) { dst[i] = src[i]; i++; }
     dst[i] = 0;
 }
 
@@ -655,10 +667,16 @@ static void csrss_gui_thread_main(void *arg) {
     if (g_kernel32_set_process_image_base) g_kernel32_set_process_image_base(ctx->app->image);
     if (ctx->kind == GUI_APP_KIND_WINMAIN) {
         SerialPutString("[CSRSS] GUI thread dispatch WinMain\r\n");
-        ret = KeInvokeWinMain(ctx->entry, ctx->app->image, exe_stack, 65536);
+        ret = KeInvokeWinMain(ctx->entry, ctx->app->image, ctx->command_line,
+                              exe_stack, 65536);
+    } else if (ctx->kind == GUI_APP_KIND_WWINMAIN) {
+        SerialPutString("[CSRSS] GUI thread dispatch wWinMain\r\n");
+        ret = KeInvokeWWinMain(ctx->entry, ctx->app->image, ctx->wide_command_line,
+                              exe_stack, 65536);
     } else {
         SerialPutString("[CSRSS] GUI thread dispatch main\r\n");
-        ret = KeInvokeMain(ctx->entry, exe_stack, 65536);
+        ret = KeInvokeMainArgs(ctx->entry, ctx->app->path, ctx->command_line,
+                               exe_stack, 65536);
     }
     g_current_gui_pid = 0;
     if (g_user32_set_process_id) g_user32_set_process_id(1);
@@ -713,7 +731,7 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
     return ret;
 }
 
-static int csrss_spawn_gui_instance(const char *path) {
+static int csrss_spawn_gui_instance(const char *path, const char *command_line) {
     GUI_APP_INSTANCE *app;
 
     if (g_gui_app_count >= MAX_GUI_APPS) return -5;
@@ -722,6 +740,7 @@ static int csrss_spawn_gui_instance(const char *path) {
     memset(app, 0, sizeof(*app));
     app->pid = g_next_gui_pid++;
     strcpy(app->path, path);
+    bounded_copy(app->command_line, command_line, sizeof(app->command_line));
     app->window = INVALID_HANDLE;
     app->thread = INVALID_HANDLE;
     app->kind = GUI_APP_KIND_CUSTOM;
@@ -786,17 +805,46 @@ static int csrss_spawn_gui_instance(const char *path) {
 
 static int csrss_execute_image(const char *path) {
     char upper_path[256];
+    char image_path[256];
+    const char *args;
+    int src = 0;
+    int dst = 0;
+    char quote = 0;
 
     if (!path || !*path) return -1;
 
-    uppercase_copy(upper_path, path, sizeof(upper_path));
-    if (csrss_spawn_gui_instance(upper_path) == 0) {
+    while (path[src] == ' ' || path[src] == '\t') src++;
+    if (path[src] == '\"' || path[src] == '\'') quote = path[src++];
+    while (path[src] && dst < (int)sizeof(image_path) - 1) {
+        if ((quote && path[src] == quote) ||
+            (!quote && (path[src] == ' ' || path[src] == '\t'))) break;
+        image_path[dst++] = path[src++];
+    }
+    image_path[dst] = 0;
+    if (quote && path[src] == quote) src++;
+    while (path[src] == ' ' || path[src] == '\t') src++;
+    args = path + src;
+
+    uppercase_copy(upper_path, image_path, sizeof(upper_path));
+    if (csrss_spawn_gui_instance(upper_path, args) == 0) {
         return 0;
     }
 
     strcpy(g_pending_launch_path, upper_path);
     g_pending_launch = 1;
     return 0;
+}
+
+/* Kernel-exported process service used by KERNEL32's CreateProcessW shim. */
+int CsrssExecuteImage(const char *path)
+{
+    return csrss_execute_image(path);
+}
+
+void CsrssShutdownSystem(void)
+{
+    SerialPutString("[CSRSS] Powering off system\r\n");
+    CpuPowerOff();
 }
 
 static int csrss_set_screen_resolution(int width, int height) {
@@ -900,6 +948,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     GuiAppInitFn init_fn;
     GuiAppCreateMainWindowFn create_window_fn;
     GuiWinMainFn winmain_fn;
+    GuiWWinMainFn wwinmain_fn;
     GuiMainFn main_fn;
     GUI_APP_THREAD_CTX *thread_ctx;
 
@@ -938,10 +987,11 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     app->should_exit = (GuiAppShouldExitFn)PeGetProcAddress(app->image, "CmdAppShouldExit");
     app->reset_exit = (GuiAppResetExitFn)PeGetProcAddress(app->image, "CmdAppResetExit");
     winmain_fn = (GuiWinMainFn)PeGetProcAddress(app->image, "WinMain");
+    wwinmain_fn = (GuiWWinMainFn)PeGetProcAddress(app->image, "wWinMain");
     main_fn = (GuiMainFn)PeGetProcAddress(app->image, "main");
 
     if (!init_fn || !create_window_fn || !app->handle_key || !app->should_exit || !app->reset_exit) {
-        if (!winmain_fn && !main_fn) {
+        if (!winmain_fn && !wwinmain_fn && !main_fn) {
             SerialPutString("[CSRSS] GUI app missing required exports\r\n");
             csrss_show_launch_error(path, "The application is not a valid Win32 program.");
             PeFreeImage(app->image);
@@ -952,7 +1002,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         SerialPutString("[CSRSS] Standard app path selected pid=");
         SerialPrintDec(app->pid);
         SerialPutString(" mode=");
-        SerialPutString(winmain_fn ? "WinMain" : "main");
+        SerialPutString(winmain_fn ? "WinMain" : (wwinmain_fn ? "wWinMain" : "main"));
         SerialPutString("\r\n");
 
         thread_ctx = (GUI_APP_THREAD_CTX*)kmalloc(sizeof(GUI_APP_THREAD_CTX));
@@ -963,8 +1013,24 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         }
         memset(thread_ctx, 0, sizeof(*thread_ctx));
         thread_ctx->app = app;
-        thread_ctx->kind = winmain_fn ? GUI_APP_KIND_WINMAIN : GUI_APP_KIND_MAIN;
-        thread_ctx->entry = winmain_fn ? (void*)winmain_fn : (void*)main_fn;
+        thread_ctx->kind = winmain_fn ? GUI_APP_KIND_WINMAIN :
+                           (wwinmain_fn ? GUI_APP_KIND_WWINMAIN : GUI_APP_KIND_MAIN);
+        thread_ctx->entry = winmain_fn ? (void*)winmain_fn :
+                            (wwinmain_fn ? (void*)wwinmain_fn : (void*)main_fn);
+        /* lpCmdLine excludes the executable name.  The current spawn API
+           receives only an image path, so its correct command line is empty;
+           keeping it in the thread context makes ownership valid for the
+           entire invocation and allows arguments to be added later. */
+        bounded_copy(thread_ctx->command_line, app->command_line,
+                     sizeof(thread_ctx->command_line));
+        {
+            int i;
+            for (i = 0; thread_ctx->command_line[i] &&
+                        i < (int)(sizeof(thread_ctx->wide_command_line) /
+                                  sizeof(thread_ctx->wide_command_line[0])) - 1; i++)
+                thread_ctx->wide_command_line[i] = (uint8_t)thread_ctx->command_line[i];
+            thread_ctx->wide_command_line[i] = 0;
+        }
 
         app->kind = thread_ctx->kind;
         app->thread = KeCreateThread(csrss_gui_thread_main, thread_ctx, 32768);
@@ -1123,6 +1189,12 @@ void CsrssSessionRun(void *mb_info) {
                 (User32SetProcessIdFn)PeGetProcAddress(user32_image, "User32SetProcessId");
         }
     }
+    /* Shell32's COM interfaces are real DLL imports now.  Load their
+       providers before Shell32 so the freestanding ELF relocator can bind
+       the interface GUIDs and COM entry points while loading the image. */
+    PeLoadDll("RPCRT4.DLL");
+    PeLoadDll("OLEAUT32.DLL");
+    PeLoadDll("OLE32.DLL");
     PeLoadDll("SHELL32.DLL");
     PeLoadDll("SHLWAPI.DLL");
     PeLoadDll("COMCTL32.DLL");
@@ -1139,8 +1211,8 @@ void CsrssSessionRun(void *mb_info) {
     while (running) {
         UsbPoll();
         if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
-            if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE") < 0) {
-                csrss_queue_launch_error("/SYSTEM32/CMD.EXE", "The logon shell could not be started.");
+            if (csrss_spawn_gui_instance("/SYSTEM32/EXPLORER.EXE", "/DESKTOP") < 0) {
+                csrss_queue_launch_error("/SYSTEM32/EXPLORER.EXE", "The logon shell could not be started.");
                 g_session_state = CSRSS_SESSION_LOGGING_OFF;
             } else {
                 g_shell_started = 1;

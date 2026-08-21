@@ -36,6 +36,40 @@ void *memcpy(void *d, const void *s, uint32_t n) {
     return d;
 }
 
+void *memmove(void *d, const void *s, uint32_t n) {
+    uint8_t *dst = (uint8_t *)d;
+    const uint8_t *src = (const uint8_t *)s;
+    if (dst == src || !n) return d;
+    if (dst < src || dst >= src + n) {
+        for (uint32_t i = 0; i < n; i++) dst[i] = src[i];
+    } else {
+        while (n) { n--; dst[n] = src[n]; }
+    }
+    return d;
+}
+
+uint32_t wcstoul(const uint16_t *text, uint16_t **end, int base) {
+    uint32_t value = 0, digit;
+    const uint16_t *p = text;
+    if (!p) { if (end) *end = 0; return 0; }
+    while (*p == ' ' || *p == '\t') p++;
+    if (!base) {
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { base = 16; p += 2; }
+        else base = p[0] == '0' ? 8 : 10;
+    }
+    while (*p) {
+        if (*p >= '0' && *p <= '9') digit = *p - '0';
+        else if (*p >= 'a' && *p <= 'z') digit = *p - 'a' + 10;
+        else if (*p >= 'A' && *p <= 'Z') digit = *p - 'A' + 10;
+        else break;
+        if (digit >= (uint32_t)base) break;
+        value = value * (uint32_t)base + digit;
+        p++;
+    }
+    if (end) *end = (uint16_t *)p;
+    return value;
+}
+
 uint32_t strlen(const char *s) {
     uint32_t n = 0;
     while (*s++) n++;

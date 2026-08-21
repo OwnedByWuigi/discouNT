@@ -72,12 +72,12 @@ OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) \
 
 .PHONY: all kernel userspace system portable-check run run-gui run-headless run-uefi clean check-tools
 
-NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll shell32 shlwapi user32
+NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(CMD_APP) $(BUILD_DIR)/apps/control/control.exe \
 	$(BUILD_DIR)/apps/control/desk/desk.cpl $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
 	$(BUILD_DIR)/apps/notepad/notepad.exe $(BUILD_DIR)/apps/winver/winver.exe \
-	$(BUILD_DIR)/apps/whoami/whoami.exe
+	$(BUILD_DIR)/apps/whoami/whoami.exe $(BUILD_DIR)/apps/explorer/explorer.exe
 NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll $(BUILD_DIR)/win32/w32k/win32k.dll
 DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide
@@ -170,6 +170,9 @@ $(BUILD_DIR)/apps/winver/winver.exe: apps/winver/winver.c kernel/core/util.c
 
 $(BUILD_DIR)/apps/whoami/whoami.exe: apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
+
+$(BUILD_DIR)/apps/explorer/explorer.exe: $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
+	CPPFLAGS='$(CPPFLAGS) -Iapps/explorer' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ wWinMain $^
 
 $(BUILD_DIR)/win32/smss/smss.exe: win32/smss/smss_app.c kernel/core/util.c
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^

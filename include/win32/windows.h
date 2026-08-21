@@ -2,6 +2,7 @@
 #define DISCOUNT_WINDOWS_H
 
 #include "windef.h"
+#include "guiddef.h"
 #include "winnt.h"
 #include "winternl.h"
 #include "winuser.h"
@@ -9,6 +10,7 @@
 
 typedef struct tagNMHDR NMHDR;
 typedef struct tagMINMAXINFO MINMAXINFO;
+typedef struct tagNONCLIENTMETRICSW { UINT cbSize; int iBorderWidth,iScrollWidth,iScrollHeight,iCaptionWidth,iCaptionHeight; LOGFONTW lfCaptionFont; int iSmCaptionWidth,iSmCaptionHeight; LOGFONTW lfSmCaptionFont; int iMenuWidth,iMenuHeight; LOGFONTW lfMenuFont,lfStatusFont,lfMessageFont; } NONCLIENTMETRICSW;
 
 typedef struct _STARTUPINFOW {
     DWORD cb;
@@ -88,6 +90,8 @@ typedef struct _WIN32_FIND_DATAW {
     WCHAR cFileName[MAX_PATH];
     WCHAR cAlternateFileName[14];
 } WIN32_FIND_DATAW, *LPWIN32_FIND_DATAW;
+typedef struct _FILE_NOTIFY_INFORMATION { DWORD NextEntryOffset,Action,FileNameLength; WCHAR FileName[1]; } FILE_NOTIFY_INFORMATION,*PFILE_NOTIFY_INFORMATION;
+typedef struct _OVERLAPPED { ULONG_PTR Internal,InternalHigh; union { struct { DWORD Offset,OffsetHigh; }; PVOID Pointer; }; HANDLE hEvent; } OVERLAPPED,*LPOVERLAPPED;
 
 typedef struct _CPINFOEXW {
     UINT MaxCharSize;
@@ -108,12 +112,21 @@ UINT WINAPI GetOEMCP(void);
 HANDLE WINAPI GetStdHandle(DWORD handle);
 void *malloc(SIZE_T size);
 void free(void *ptr);
+void *calloc(SIZE_T count,SIZE_T size);
+LONG WINAPI InterlockedIncrement(volatile LONG *value);
+LONG WINAPI InterlockedDecrement(volatile LONG *value);
+PVOID WINAPI InterlockedCompareExchangePointer(PVOID volatile *destination,PVOID exchange,PVOID compare);
 void WINAPI SetLastError(DWORD dwErrCode);
 HANDLE WINAPI OpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId);
 BOOL WINAPI CloseHandle(HANDLE hObject);
+BOOL WINAPI FreeLibrary(HMODULE module);
+LPVOID WINAPI MapViewOfFile(HANDLE mapping,DWORD access,DWORD offset_high,DWORD offset_low,SIZE_T bytes);
+BOOL WINAPI UnmapViewOfFile(LPCVOID address);
 DWORD WINAPI GetCurrentProcessId(void);
+DWORD WINAPI GetCurrentThreadId(void);
 HANDLE WINAPI GetCurrentProcess(void);
 void WINAPI InitializeCriticalSection(LPCRITICAL_SECTION lpCriticalSection);
+BOOL WINAPI InitializeCriticalSectionEx(LPCRITICAL_SECTION section,DWORD spin,DWORD flags);
 void WINAPI EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection);
 void WINAPI LeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection);
 BOOL WINAPI OpenProcessToken(HANDLE ProcessHandle, DWORD DesiredAccess, HANDLE *TokenHandle);
@@ -157,7 +170,12 @@ HANDLE WINAPI CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwSha
 BOOL WINAPI ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
                      DWORD *lpNumberOfBytesRead, LPVOID lpOverlapped);
 BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
-                      DWORD *lpNumberOfBytesWritten, LPVOID lpOverlapped);
+                     DWORD *lpNumberOfBytesWritten, LPVOID lpOverlapped);
+BOOL WINAPI ReadDirectoryChangesW(HANDLE directory,LPVOID buffer,DWORD length,BOOL subtree,DWORD filter,DWORD *returned,LPOVERLAPPED overlapped,LPVOID completion);
+BOOL WINAPI GetOverlappedResult(HANDLE file,LPOVERLAPPED overlapped,DWORD *transferred,BOOL wait);
+DWORD WINAPI WaitForMultipleObjects(DWORD count,const HANDLE *handles,BOOL wait_all,DWORD milliseconds);
+BOOL WINAPI FindNextFileW(HANDLE find,LPWIN32_FIND_DATAW data);
+HANDLE WINAPI CreateMutexW(LPSECURITY_ATTRIBUTES attributes,BOOL initial_owner,LPCWSTR name);
 DWORD WINAPI GetFileSize(HANDLE hFile, DWORD *lpFileSizeHigh);
 BOOL WINAPI SetEndOfFile(HANDLE hFile);
 HANDLE WINAPI FindFirstFileW(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData);
@@ -185,7 +203,9 @@ LPWSTR WINAPI lstrcpyW(LPWSTR lpString1, LPCWSTR lpString2);
 LPWSTR WINAPI lstrcpynW(LPWSTR lpString1, LPCWSTR lpString2, int iMaxLength);
 LPWSTR WINAPI lstrcatW(LPWSTR lpString1, LPCWSTR lpString2);
 int WINAPI lstrcmpW(LPCWSTR lpString1, LPCWSTR lpString2);
+int WINAPI lstrcmpiW(LPCWSTR lpString1, LPCWSTR lpString2);
 void WINAPI ExitProcess(UINT uExitCode);
+DWORD WINAPI GetFullPathNameW(LPCWSTR path,DWORD size,LPWSTR buffer,LPWSTR *file_part);
 
 #define ERROR_SUCCESS            0L
 #define NO_ERROR                 0L
@@ -204,6 +224,11 @@ void WINAPI ExitProcess(UINT uExitCode);
 #define OPEN_EXISTING            3
 #define OPEN_ALWAYS              4
 #define FILE_ATTRIBUTE_NORMAL    0x00000080
+#define FILE_MAP_WRITE           0x00000002
+#define NORM_IGNORECASE          0x00000001
+#define CSTR_LESS_THAN           1
+#define CSTR_EQUAL               2
+int WINAPI CompareStringW(LCID locale,DWORD flags,LPCWSTR first,int first_count,LPCWSTR second,int second_count);
 #define WC_NO_BEST_FIT_CHARS     0x00000400
 #define IS_TEXT_UNICODE_SIGNATURE         0x0008
 #define IS_TEXT_UNICODE_REVERSE_SIGNATURE 0x0010
@@ -213,6 +238,8 @@ void WINAPI ExitProcess(UINT uExitCode);
 #define KEY_WRITE                0x20006
 #define KEY_ALL_ACCESS           0xF003F
 #define REG_OPTION_NON_VOLATILE  0x00000000
+#define REG_OPTION_VOLATILE      0x00000001
+#define RRF_RT_REG_DWORD         0x00000018
 #define REG_SZ                   1
 #define REG_BINARY               3
 #define REG_DWORD                4
@@ -230,6 +257,21 @@ void WINAPI ExitProcess(UINT uExitCode);
 #define STARTF_USESHOWWINDOW     0x00000001
 #define CREATE_UNICODE_ENVIRONMENT 0x00000400
 #define ERROR_FILE_NOT_FOUND     2
+#define ERROR_OUTOFMEMORY        14
+#define ERROR_ALREADY_EXISTS     183
+#define ERROR_CLASS_ALREADY_EXISTS 1410
+#define ERROR_MOD_NOT_FOUND      126
+#define ERROR_DLL_INIT_FAILED    1114
+#define ERROR_INVALID_WINDOW_HANDLE 1400
+#define FILE_LIST_DIRECTORY      0x0001
+#define SYNCHRONIZE              0x00100000
+#define FILE_FLAG_BACKUP_SEMANTICS 0x02000000
+#define FILE_FLAG_OVERLAPPED     0x40000000
+#define FILE_NOTIFY_CHANGE_FILE_NAME 0x00000001
+#define FILE_ACTION_ADDED 1
+#define FILE_ACTION_REMOVED 2
+#define FILE_ACTION_RENAMED_OLD_NAME 4
+#define FILE_ACTION_RENAMED_NEW_NAME 5
 #define GWLP_USERDATA            (-21)
 #define IMAGE_BITMAP             0
 #define LR_DEFAULTCOLOR          0
@@ -242,12 +284,14 @@ void WINAPI ExitProcess(UINT uExitCode);
 #define SM_REMOTESESSION         0x1000
 #define VK_SHIFT                 0x10
 #define ASSERT(x) do { (void)sizeof(x); } while (0)
+#define USER_DEFAULT_SCREEN_DPI 96
 
 #define HKEY_CURRENT_USER        ((HKEY)(ULONG_PTR)0x80000001)
 #define HKEY_LOCAL_MACHINE       ((HKEY)(ULONG_PTR)0x80000002)
 
 #define VER_PLATFORM_WIN32_NT    2
 #define LOCALE_USER_DEFAULT      0x0400
+#define LOCALE_SYSTEM_DEFAULT    0x0800
 #define TIME_NOSECONDS           0x00000002
 
 LONG WINAPI RegOpenKeyExW(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, DWORD samDesired, HKEY *phkResult);
@@ -258,7 +302,9 @@ LONG WINAPI RegCreateKeyExW(HKEY hKey, LPCWSTR lpSubKey, DWORD Reserved, LPWSTR 
 LONG WINAPI RegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, DWORD *lpReserved, DWORD *lpType,
                              LPBYTE lpData, DWORD *lpcbData);
 LONG WINAPI RegSetValueExW(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType,
-                           const BYTE *lpData, DWORD cbData);
+                             const BYTE *lpData, DWORD cbData);
+LONG WINAPI RegSetValueExA(HKEY key,LPCSTR name,DWORD reserved,DWORD type,const BYTE *data,DWORD bytes);
+LONG WINAPI RegGetValueW(HKEY key,LPCWSTR subkey,LPCWSTR value,DWORD flags,DWORD *type,PVOID data,DWORD *bytes);
 LONG WINAPI RegCloseKey(HKEY hKey);
 short WINAPI GetFileTitleW(LPCWSTR lpFile, LPWSTR lpTitle, WORD cbBuf);
 int WINAPI MulDiv(int nNumber, int nNumerator, int nDenominator);
@@ -282,6 +328,7 @@ DWORD WINAPI ExpandEnvironmentStringsW(LPCWSTR src, LPWSTR dst, DWORD size);
 BOOL WINAPI GetTokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS cls, LPVOID info, DWORD len, PDWORD ret);
 HANDLE WINAPI OpenThreadToken(HANDLE thread, DWORD access, BOOL openAsSelf, PHANDLE token);
 HANDLE WINAPI GetCurrentThread(void);
+HRESULT WINAPI SetThreadDescription(HANDLE thread, LPCWSTR description);
 BOOL WINAPI AllocateLocallyUniqueId(PLUID luid);
 BOOL WINAPI GetComputerNameW(LPWSTR name, PDWORD size);
 BOOL WINAPI RtlEqualSid(PSID a, PSID b);

@@ -296,6 +296,40 @@ static int resolve_exec_path(const char *name, char *resolved_path) {
     return 0;
 }
 
+/* Resolve only argv[0].  Previously CMD handed the whole input line to the
+   filesystem resolver, so "program.exe argument" was searched as one long
+   filename and arguments could never reach CSRSS. */
+static int cmd_launch_external(const char *command_line) {
+    char image[256];
+    char resolved[256];
+    char launch[512];
+    const char *p = command_line;
+    const char *arguments;
+    char quote = 0;
+    int n = 0;
+
+    if (!g_api || !g_api->ExecuteImage || !p) return 0;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\"' || *p == '\'') quote = *p++;
+    while (*p && n < (int)sizeof(image) - 1) {
+        if ((quote && *p == quote) || (!quote && (*p == ' ' || *p == '\t'))) break;
+        image[n++] = *p++;
+    }
+    image[n] = 0;
+    if (quote && *p == quote) p++;
+    while (*p == ' ' || *p == '\t') p++;
+    arguments = p;
+
+    if (!image[0] || !resolve_exec_path(image, resolved)) return 0;
+    strcpy(launch, resolved);
+    if (*arguments && strlen(launch) + strlen(arguments) + 2 < sizeof(launch)) {
+        strcat(launch, " ");
+        strcat(launch, arguments);
+    }
+    g_api->ExecuteImage(launch);
+    return 1;
+}
+
 static void cmd_append_line(const char *text) {
     if (line_count == CMD_ROWS) {
         for (int i = 1; i < CMD_ROWS; i++) {
@@ -365,6 +399,7 @@ static void cmd_process_input(void) {
     char *args = 0;
     int i;
     char pathbuf[256];
+    const char *original_args = 0;
 
     cmd_prompt_line();
 
@@ -380,7 +415,9 @@ static void cmd_process_input(void) {
         if (cmd[i] == ' ') {
             cmd[i] = 0;
             args = raw + i + 1;
+            original_args = input_buf + i + 1;
             trim_spaces(args);
+            original_args = skip_spaces(original_args);
             break;
         }
     }
@@ -491,15 +528,11 @@ static void cmd_process_input(void) {
             cmd_append_line(ping_out[0] ? ping_out : "Ping failed");
         }
     } else if (strcmp(cmd, "EXEC") == 0 && args && *args) {
-        if (resolve_exec_path(args, pathbuf)) {
-            g_api->ExecuteImage(pathbuf);
-        } else {
+        if (!cmd_launch_external(original_args)) {
             cmd_append_line("File not found in current directory or PATH");
         }
     } else if (cmd[0] != 0) {
-        if (resolve_exec_path(raw, pathbuf)) {
-            g_api->ExecuteImage(pathbuf);
-        } else {
+        if (!cmd_launch_external(input_buf)) {
             cmd_append_line("Bad command or file name");
         }
     }

@@ -6,6 +6,7 @@
 
 void *memset(void *s, int c, uint32_t n);
 void *memcpy(void *d, const void *s, uint32_t n);
+void *memmove(void *d,const void *s,uint32_t n);
 int memcmp(const void *a, const void *b, uint32_t n);
 int strcmp(const char *a, const char *b);
 uint32_t strlen(const char *s);
@@ -13,6 +14,7 @@ void strcpy(char *d, const char *s);
 void strcat(char *d, const char *s);
 
 #define ZeroMemory(dst,len) memset((dst), 0, (len))
+#define CopyMemory(dst,src,len) memcpy((dst),(src),(len))
 
 static inline WCHAR *wcscat(WCHAR *dst, const WCHAR *src) {
     WCHAR *out = dst;
@@ -45,6 +47,9 @@ static inline WCHAR *wcschr(const WCHAR *s, WCHAR ch) {
         s++;
     }
     return ch == 0 ? (WCHAR*)s : 0;
+}
+static inline int wcsnicmp(const WCHAR *a,const WCHAR *b,SIZE_T count) {
+    while(count--){WCHAR x=*a++,y=*b++;if(x>=L'a'&&x<=L'z')x-=L'a'-L'A';if(y>=L'a'&&y<=L'z')y-=L'a'-L'A';if(x!=y)return x<y?-1:1;if(!x)return 0;}return 0;
 }
 
 #endif

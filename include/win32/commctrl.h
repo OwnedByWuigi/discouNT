@@ -83,9 +83,95 @@ typedef struct tagNMLVDISPINFOW {
 
 typedef NMLVDISPINFOW LV_DISPINFOW;
 
+typedef struct tagCOMBOBOXEXITEMW { UINT mask; INT_PTR iItem; LPWSTR pszText; int cchTextMax; int iImage; int iSelectedImage; int iOverlay; int iIndent; LPARAM lParam; } COMBOBOXEXITEMW;
+typedef struct tagNMCOMBOBOXEXW { NMHDR hdr; COMBOBOXEXITEMW ceItem; } NMCOMBOBOXEXW;
+#define CBEMAXSTRLEN 260
+typedef struct tagNMCBEENDEDITW { NMHDR hdr; BOOL fChanged; int iNewSelection; WCHAR szText[CBEMAXSTRLEN]; int iWhy; } NMCBEENDEDITW;
+typedef struct tagNMCBEENDEDITA { NMHDR hdr; BOOL fChanged; int iNewSelection; char szText[CBEMAXSTRLEN]; int iWhy; } NMCBEENDEDITA;
+typedef struct tagTBADDBITMAP { HINSTANCE hInst; UINT_PTR nID; } TBADDBITMAP;
+typedef struct tagTBBUTTON { int iBitmap; int idCommand; BYTE fsState; BYTE fsStyle; BYTE bReserved[2]; DWORD_PTR dwData; INT_PTR iString; } TBBUTTON;
+typedef struct tagREBARBANDINFOW { UINT cbSize,fMask,fStyle; COLORREF clrFore,clrBack; LPWSTR lpText; UINT cch; int iImage; HWND hwndChild; UINT cxMinChild,cyMinChild,cx; HBITMAP hbmBack; UINT wID,cyChild,cyMaxChild,cyIntegral,cxIdeal; LPARAM lParam; UINT cxHeader; } REBARBANDINFOW;
+typedef struct tagNMRBAUTOSIZE { NMHDR hdr; BOOL fChanged; RECT rcTarget; RECT rcActual; } NMRBAUTOSIZE;
+typedef struct tagTOOLINFOW { UINT cbSize,uFlags; HWND hwnd; UINT_PTR uId; RECT rect; HINSTANCE hinst; LPWSTR lpszText; LPARAM lParam; void *lpReserved; } TTTOOLINFOW;
+
 #define ICC_LISTVIEW_CLASSES  0x00000001
 #define ICC_BAR_CLASSES       0x00000004
 #define ICC_TAB_CLASSES       0x00000008
+#define ICC_COOL_CLASSES      0x00000400
+#define ICC_USEREX_CLASSES    0x00000200
+#define ICC_STANDARD_CLASSES 0x00004000
+#define CBEIF_TEXT 0x00000001
+#define CBEIF_IMAGE 0x00000002
+#define CBEIF_SELECTEDIMAGE 0x00000004
+#define CBEIF_OVERLAY 0x00000008
+#define CBEIF_INDENT 0x00000010
+#define CBEIF_LPARAM 0x00000020
+#define CBEM_INSERTITEMW (WM_USER + 11)
+#define CBEM_SETIMAGELIST (WM_USER + 2)
+#define CBEM_GETEDITCONTROL (WM_USER + 7)
+#define CBEM_SETITEMW (WM_USER + 12)
+#define CBEN_FIRST ((UINT)-800)
+#define CBEN_DELETEITEM (CBEN_FIRST - 1)
+#define CBEN_BEGINEDIT (CBEN_FIRST - 4)
+#define CBEN_ENDEDITA (CBEN_FIRST - 5)
+#define CBEN_ENDEDITW (CBEN_FIRST - 6)
+#define WC_COMBOBOXEXW L"ComboBoxEx32"
+#define REBARCLASSNAMEW L"ReBarWindow32"
+#define TOOLBARCLASSNAMEW L"ToolbarWindow32"
+#define RBN_FIRST ((UINT)-831)
+#define RBN_AUTOSIZE (RBN_FIRST - 3)
+#define RB_INSERTBANDW (WM_USER + 10)
+#define RB_SETBARINFO (WM_USER + 4)
+#define RBBS_BREAK 0x00000001
+#define RBBS_CHILDEDGE 0x00000004
+#define RBBS_FIXEDBMP 0x00000020
+#define RBBIM_STYLE 0x00000001
+#define RBBIM_TEXT 0x00000004
+#define RBBIM_CHILD 0x00000010
+#define RBBIM_CHILDSIZE 0x00000020
+#define RBBIM_SIZE 0x00000040
+#define TB_BUTTONSTRUCTSIZE (WM_USER + 30)
+#define TB_ADDBITMAP (WM_USER + 19)
+#define TB_ADDBUTTONSW (WM_USER + 68)
+#define TBSTATE_ENABLED 0x04
+#define TBSTYLE_BUTTON 0x00
+#define TBSTYLE_FLAT 0x0800
+#define CCS_NORESIZE 0x00000004
+#define CCS_NOPARENTALIGN 0x00000008
+#define CCS_TOP 0x00000001
+#define CCS_NODIVIDER 0x00000040
+#define RBS_VARHEIGHT 0x00000200
+#define RBBS_GRIPPERALWAYS 0x00000080
+#define TBSTYLE_EX_MIXEDBUTTONS 0x00000008
+#define BTNS_BUTTON 0x00
+#define BTNS_AUTOSIZE 0x10
+#define HINST_COMMCTRL ((HINSTANCE)(LONG_PTR)-1)
+#define IDB_HIST_LARGE_COLOR 9
+#define IDB_VIEW_LARGE_COLOR 6
+#define HIST_BACK 0
+#define HIST_FORWARD 1
+#define VIEW_PARENTFOLDER 8
+#define CBENF_DROPDOWN 4
+#define CBENF_RETURN 2
+#define CBENF_ESCAPE 3
+#define TOOLTIPS_CLASSW L"tooltips_class32"
+#define TTS_ALWAYSTIP 1
+#define TTS_NOPREFIX 2
+#define TTS_BALLOON 0x40
+#define TTS_CLOSE 0x80
+#define TTF_IDISHWND 1
+#define TTF_SUBCLASS 0x10
+#define TTF_TRACK 0x20
+#define TTM_ADDTOOLW (WM_USER+50)
+#define TTM_NEWTOOLRECTW (WM_USER+52)
+#define TTM_UPDATETIPTEXTW (WM_USER+57)
+#define TTM_TRACKACTIVATE (WM_USER+17)
+#define TTM_TRACKPOSITION (WM_USER+18)
+#define TTM_SETTITLEW (WM_USER+33)
+#define TTM_RELAYEVENT (WM_USER+7)
+#define TTI_ERROR 3
+#define ILD_NORMAL 0
+BOOL WINAPI ImageList_Draw(HIMAGELIST image_list,int image,HDC dc,int x,int y,UINT style);
 
 #define LVS_ICON              0x0000
 #define LVS_REPORT            0x0001

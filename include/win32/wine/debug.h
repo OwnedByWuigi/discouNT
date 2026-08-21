@@ -1,6 +1,23 @@
 #ifndef DISCOUNT_WINE_DEBUG_H
 #define DISCOUNT_WINE_DEBUG_H
 
+#include <stdarg.h>
+#include <stddef.h>
+
+int vsnprintf(char *buffer, size_t count, const char *format, va_list args);
+
+static inline const char *wine_dbg_sprintf(const char *format, ...)
+{
+    static char buffers[4][256];
+    static unsigned int next;
+    char *buffer = buffers[next++ & 3];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffers[0]), format, args);
+    va_end(args);
+    return buffer;
+}
+
 struct __wine_debug_channel {
     char name[32];
     unsigned char flags;
