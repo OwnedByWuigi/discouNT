@@ -55,6 +55,7 @@ KERNEL_CORE_SRCS := \
 	kernel/arch/x86/hal.c \
 	kernel/ob/object.c \
 	kernel/io/io.c \
+	kernel/io/service.c \
 	kernel/core/ke.c \
 	kernel/loader/peloader.c \
 	kernel/core/kexports.c \
