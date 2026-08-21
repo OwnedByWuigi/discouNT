@@ -2,7 +2,7 @@
 #include "mouse.h"
 #include "vga.h"
 #include "fb.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 #include "serial.h"
 
 static MOUSE_STATE mouse = {320, 240, 0, 0, 0, 0};

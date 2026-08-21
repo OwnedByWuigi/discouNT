@@ -2,7 +2,7 @@
 #include "csrss.h"
 #include "core/util.h"
 #include "serial.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 #include "hal.h"
 #include "cdfs.h"
 #include "mm/mm.h"
@@ -14,8 +14,11 @@
 #include "guiapp.h"
 #include "net.h"
 #include "core/ke.h"
+#include "core/invoke.h"
 #include "core/version.h"
 #include "core/bugcheck.h"
+#include "cpu.h"
+#include "input.h"
 
 typedef int (*GuiAppInitFn)(const GUI_APP_API *api);
 typedef GUI_HANDLE (*GuiAppCreateMainWindowFn)(void);
@@ -625,8 +628,6 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app);
 static void csrss_gui_thread_main(void *arg) {
     GUI_APP_THREAD_CTX *ctx = (GUI_APP_THREAD_CTX*)arg;
     uint8_t *exe_stack;
-    uint32_t exe_esp;
-    uint32_t saved_esp;
     int ret = 0;
 
     if (!ctx || !ctx->app || !ctx->entry) {
@@ -651,42 +652,12 @@ static void csrss_gui_thread_main(void *arg) {
     g_current_gui_pid = ctx->app->pid;
     if (g_user32_set_process_id) g_user32_set_process_id(ctx->app->pid);
     if (g_kernel32_set_process_image_base) g_kernel32_set_process_image_base(ctx->app->image);
-    exe_esp = (uint32_t)(exe_stack + 65536 - 256);
     if (ctx->kind == GUI_APP_KIND_WINMAIN) {
-        GuiWinMainFn fn = (GuiWinMainFn)ctx->entry;
         SerialPutString("[CSRSS] GUI thread dispatch WinMain\r\n");
-        __asm__ volatile(
-            "movl %%esp, %[oldsp]\n"
-            "movl %[newsp], %%esp\n"
-            "push $1\n"
-            "push $0\n"
-            "push $0\n"
-            "push %[hinst]\n"
-            "call *%[fn]\n"
-            "movl %%eax, %[retval]\n"
-            "movl %[oldsp], %%esp\n"
-            : [oldsp] "=&r"(saved_esp),
-              [retval] "=m"(ret)
-            : [newsp] "r"(exe_esp),
-              [hinst] "g"(ctx->app->image),
-              [fn] "r"(fn)
-            : "eax", "ecx", "edx", "memory"
-        );
+        ret = KeInvokeWinMain(ctx->entry, ctx->app->image, exe_stack, 65536);
     } else {
-        GuiMainFn fn = (GuiMainFn)ctx->entry;
         SerialPutString("[CSRSS] GUI thread dispatch main\r\n");
-        __asm__ volatile(
-            "movl %%esp, %[oldsp]\n"
-            "movl %[newsp], %%esp\n"
-            "call *%[fn]\n"
-            "movl %%eax, %[retval]\n"
-            "movl %[oldsp], %%esp\n"
-            : [oldsp] "=&r"(saved_esp),
-              [retval] "=r"(ret)
-            : [newsp] "r"(exe_esp),
-              [fn] "r"(fn)
-            : "eax", "ecx", "edx", "memory"
-        );
+        ret = KeInvokeMain(ctx->entry, exe_stack, 65536);
     }
     g_current_gui_pid = 0;
     if (g_user32_set_process_id) g_user32_set_process_id(1);
@@ -723,8 +694,6 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
 
     {
         uint8_t *exe_stack = (uint8_t*)kmalloc(65536);
-        uint32_t exe_esp;
-        uint32_t saved_esp;
         typedef int (*EntryFunc)(void);
         EntryFunc func = (EntryFunc)PeGetEntryPoint(image);
 
@@ -735,20 +704,7 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
             return -4;
         }
 
-        exe_esp = (uint32_t)(exe_stack + 65536 - 256);
-        __asm__ volatile(
-            "movl %%esp, %[oldsp]\n"
-            "movl %[newsp], %%esp\n"
-            "call *%[fn]\n"
-            "movl %%eax, %[retval]\n"
-            "movl %[oldsp], %%esp\n"
-            :
-              [oldsp] "=&r"(saved_esp),
-              [retval] "=r"(ret)
-            : [newsp] "r"(exe_esp),
-              [fn] "r"(func)
-            : "eax", "ecx", "edx", "memory"
-        );
+        ret = KeInvokeMain((void*)func, exe_stack, 65536);
         kfree(exe_stack);
     }
 
@@ -894,18 +850,11 @@ static int csrss_set_screen_mode(int width, int height, int bpp) {
 }
 
 static void csrss_reboot(void) {
-    uint8_t status;
-    do { status = inb(0x64); } while (status & 0x02);
-    outb(0x64, 0xFE);
-    __asm__ volatile("int $0");
+    CpuReboot();
 }
 
 static void csrss_shutdown(void) {
-    outw(0x604, 0x2000);
-    outw(0xB004, 0x2000);
-    outw(0x4004, 0x3400);
-    __asm__ volatile("cli");
-    for (;;) __asm__ volatile("hlt");
+    CpuPowerOff();
 }
 
 static void csrss_bugcheck(uint32_t code, uint32_t p1, uint32_t p2,
@@ -1121,6 +1070,7 @@ void CsrssSessionRun(void *mb_info) {
     int running = 1;
     HANDLE active_hwnd;
 
+    if (!CsrssInitialize(mb_info)) return;
     SerialPutString("[CSRSS] Starting Win32 subsystem session\r\n");
 
     g_gui_app_count = 0;
@@ -1187,11 +1137,12 @@ void CsrssSessionRun(void *mb_info) {
                 g_shell_started = 1;
             }
         }
-        while (inb(0x64) & 1) {
-            uint8_t status = inb(0x64);
-            uint8_t data = inb(0x60);
+        {
+          int controller_mouse;
+          uint8_t data;
+          while (InputReadControllerByte(&controller_mouse, &data)) {
 
-            if (status & 0x20) {
+            if (controller_mouse) {
                 MouseHandleByte(data);
                 MouseGetState(&mouse_state);
 
@@ -1433,6 +1384,7 @@ void CsrssSessionRun(void *mb_info) {
                     }
                 }
             }
+          }
         }
 
         for (int i = 0; i < g_gui_app_count; ) {

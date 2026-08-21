@@ -6,6 +6,7 @@
 #include "cdfs.h"
 #include "mm/mm.h"
 #include "loader/peloader.h"
+#include "core/invoke.h"
 
 #define CSRSS_RETURN_MAGIC 0x43535253
 
@@ -43,8 +44,6 @@ static int smss_execute_bootstrap(const char *path) {
 
     {
         uint8_t *exe_stack = (uint8_t*)kmalloc(65536);
-        uint32_t exe_esp;
-        uint32_t saved_esp;
         typedef int (*EntryFunc)(void);
         EntryFunc func = (EntryFunc)PeGetEntryPoint(image);
 
@@ -55,20 +54,7 @@ static int smss_execute_bootstrap(const char *path) {
             return -5;
         }
 
-        exe_esp = (uint32_t)(exe_stack + 65536 - 256);
-        __asm__ volatile(
-            "movl %%esp, %[oldsp]\n"
-            "movl %[newsp], %%esp\n"
-            "call *%[fn]\n"
-            "movl %%eax, %[retval]\n"
-            "movl %[oldsp], %%esp\n"
-            :
-              [oldsp] "=&r"(saved_esp),
-              [retval] "=r"(ret)
-            : [newsp] "r"(exe_esp),
-              [fn] "r"(func)
-            : "eax", "ecx", "edx", "memory"
-        );
+        ret = KeInvokeMain((void*)func, exe_stack, 65536);
         kfree(exe_stack);
     }
 

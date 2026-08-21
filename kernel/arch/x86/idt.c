@@ -1,7 +1,7 @@
 // kernel/arch/x86/idt.c
 #include <stdint.h>
 #include "arch/x86/idt.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 
 struct IDTEntry {
     uint16_t offset_lo;

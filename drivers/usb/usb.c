@@ -1,29 +1,26 @@
 #include <stdint.h>
 #include "usb.h"
 #include "usb_internal.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
+#include "io/pci.h"
+#include "cpu.h"
 #include "serial.h"
 #include "io/io.h"
 #include "usb_msc.h"
 #include "mm/vmm.h"
-#define PCI_ADDRESS 0xCF8
-#define PCI_DATA 0xCFC
 #define MAX_CONTROLLERS 8
 static USB_CONTROLLER controllers[MAX_CONTROLLERS];
 static int controller_count;
 static uint32_t pci_read(uint8_t bus, uint8_t slot, uint8_t fn, uint8_t reg) {
-    outl(PCI_ADDRESS, 0x80000000U | ((uint32_t)bus << 16) |
-         ((uint32_t)slot << 11) | ((uint32_t)fn << 8) | (reg & 0xFC));
-    return inl(PCI_DATA);
+    return PciConfigRead32(bus, slot, fn, reg);
 }
 uint32_t UsbPciRead(const USB_CONTROLLER *c, uint8_t r) { return pci_read(c->bus,c->slot,c->function,r); }
 void UsbPciWrite(const USB_CONTROLLER *c, uint8_t r, uint32_t v) {
-    outl(PCI_ADDRESS, 0x80000000U | ((uint32_t)c->bus << 16) |
-         ((uint32_t)c->slot << 11) | ((uint32_t)c->function << 8) | (r & 0xFC)); outl(PCI_DATA,v);
+    PciConfigWrite32(c->bus, c->slot, c->function, r, v);
 }
 uint32_t UsbMmioRead32(uintptr_t b,uint32_t o){return *(volatile uint32_t*)(b+o);}
 void UsbMmioWrite32(uintptr_t b,uint32_t o,uint32_t v){*(volatile uint32_t*)(b+o)=v;}
-void UsbWait(uint32_t n){while(n--)__asm__ volatile("pause");}
+void UsbWait(uint32_t n){while(n--)CpuRelax();}
 static const char *type_name(USB_HC_TYPE t){static const char*n[]={"UHCI","OHCI","EHCI","xHCI"};return n[t];}
 void UsbLogPort(const USB_CONTROLLER*c,uint8_t p,int on){SerialPutString("[USB] ");SerialPutString(type_name(c->type));SerialPutString(" port ");SerialPrintDec(p+1);SerialPutString(on?" connected\r\n":" disconnected\r\n");}
 static uintptr_t mmio_bar(USB_CONTROLLER*c){uint32_t l=UsbPciRead(c,0x10);uint64_t a=l&0xFFFFFFF0U;

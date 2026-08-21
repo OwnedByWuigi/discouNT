@@ -26,6 +26,7 @@ CPPFLAGS := \
 	-Idrivers/usb \
 	-Idrivers/ide \
 	-Idrivers/fat32 \
+	-Idrivers/input \
 	-Idrivers/serial \
 	-Idrivers/vga \
 	-Iwin32/w32k \
@@ -46,6 +47,7 @@ LDFLAGS := -m elf_i386 -T kernel/arch/x86/linker.ld -nostdlib -no-pie
 
 KERNEL_CORE_SRCS := \
 	kernel/core/util.c \
+	kernel/core/invoke.c \
 	kernel/rtl/rtlpath.c \
 	kernel/mm/mm.c \
 	kernel/mm/pmm.c \
@@ -65,6 +67,7 @@ KERNEL_CORE_SRCS := \
 	kernel/arch/x86/idt.c \
 	kernel/arch/x86/isr.c \
 	drivers/fat32/fat32.c \
+	drivers/input/input.c \
 	drivers/ide/ide.c \
 	drivers/usb/usb.c \
 	drivers/usb/usb_msc.c \
@@ -72,6 +75,7 @@ KERNEL_CORE_SRCS := \
 	drivers/usb/ohci.c \
 	drivers/usb/ehci.c \
 	drivers/usb/xhci.c \
+	win32/csrss/csrss_init.c \
 	win32/csrss/csrss.c \
 	win32/smss/smss_init.c \
 	win32/smss/smss.c \

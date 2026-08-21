@@ -12,7 +12,7 @@ static void SerialWriteRegister(uint32_t offset, uint8_t value) {
     SerialUart()[offset] = value;
 }
 #else
-#include "arch/x86/portio.h"
+#include "io/port.h"
 static uint8_t SerialReadRegister(uint32_t offset) {
     return inb(COM1_PORT + (uint16_t)offset);
 }

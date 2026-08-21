@@ -9,7 +9,10 @@ QEMU ?= qemu-system-loongarch64
 FIRMWARE ?= tools/QEMU_EFI.fd
 
 TARGET := loongarch64-unknown-elf
-CPPFLAGS := -Ikernel -Idrivers/serial -Iwin32/smss
+CPPFLAGS := -Ikernel -Idrivers/input -Idrivers/serial -Idrivers/cdfs \
+	-Idrivers/fb -Idrivers/keyboard -Idrivers/mouse -Idrivers/net \
+	-Idrivers/vga -Idrivers/usb \
+	-Iwin32 -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := --target=$(TARGET) -ffreestanding -fno-stack-protector \
 	-fno-builtin -fno-pic -Wall -Wextra -O0
 LDFLAGS := -m elf64loongarch -nostdlib -static \
@@ -19,6 +22,7 @@ C_SRCS := kernel/arch/loongarch64/boot.c \
 	kernel/arch/loongarch64/hal.c \
 	drivers/serial/serial.c \
 	kernel/core/util.c \
+	kernel/core/invoke.c \
 	kernel/core/ke.c \
 	kernel/core/subsystem.c \
 	kernel/mm/mm.c \
@@ -26,14 +30,28 @@ C_SRCS := kernel/arch/loongarch64/boot.c \
 	kernel/mm/vmm.c \
 	kernel/ob/object.c \
 	kernel/io/io.c \
-	win32/smss/smss_init.c
+	win32/smss/smss_init.c \
+	win32/csrss/csrss_init.c
 ASM_SRCS := kernel/arch/loongarch64/entry.S
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) \
 	$(patsubst %.S,$(BUILD_DIR)/%.o,$(ASM_SRCS))
 
-.PHONY: all run run-gui run-headless run-uefi clean check-tools
+.PHONY: all portable-check run run-gui run-headless run-uefi clean check-tools
 
 all: $(KERNEL) $(BOOT_ROM)
+
+# Compile the complete user-facing session process even before all of its
+# device/runtime dependencies are linked into the LA64 image.  This keeps
+# architecture-specific C and inline assembly from creeping back into CSRSS.
+portable-check: $(BUILD_DIR)/portable/win32/csrss/csrss.o \
+	$(BUILD_DIR)/portable/kernel/core/nativecmd.o \
+	$(BUILD_DIR)/portable/drivers/fb/fb.o \
+	$(BUILD_DIR)/portable/drivers/net/net.o \
+	$(BUILD_DIR)/portable/drivers/usb/usb.o
+
+$(BUILD_DIR)/portable/%.o: %.c
+	@mkdir -p $(@D)
+	$(CLANG) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 check-tools:
 	@command -v $(CLANG) >/dev/null || { echo "error: clang not found"; exit 1; }

@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "ide.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
+#include "cpu.h"
 #include "serial.h"
 #include "core/util.h"
 
@@ -55,7 +56,7 @@ static int ide_wait(const IDE_DISK *disk, int need_data) {
             if (status & (ATA_SR_ERR | ATA_SR_DF)) return 0;
             if (!need_data || (status & ATA_SR_DRQ)) return 1;
         }
-        __asm__ volatile("pause");
+        CpuRelax();
     }
     return 0;
 }

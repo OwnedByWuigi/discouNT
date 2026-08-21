@@ -2,7 +2,8 @@
 #include "fb.h"
 #include "vga.h"
 #include "serial.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
+#include "io/pci.h"
 #include "mm/mm.h"
 #include "core/util.h"
 #include "cdfs.h"
@@ -25,8 +26,6 @@
 #define BGA_LFB_ENABLED       0x40
 #define BGA_NOCLEARMEM        0x80
 
-#define PCI_CONFIG_ADDR       0x0CF8
-#define PCI_CONFIG_DATA       0x0CFC
 #define QEMU_VGA_VENDOR_ID    0x1234
 #define QEMU_VGA_DEVICE_ID    0x1111
 #define VMWARE_VENDOR_ID      0x15AD
@@ -493,34 +492,11 @@ static void fb_mark_dirty(int x, int y, int w, int h) {
     }
 }
 
-static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address =
-        0x80000000U |
-        ((uint32_t)bus << 16) |
-        ((uint32_t)slot << 11) |
-        ((uint32_t)func << 8) |
-        (offset & 0xFC);
-    outl(PCI_CONFIG_ADDR, address);
-    return inl(PCI_CONFIG_DATA);
-}
-
-static void pci_config_write32(uint8_t bus, uint8_t slot, uint8_t func,
-                               uint8_t offset, uint32_t value) {
-    uint32_t address =
-        0x80000000U |
-        ((uint32_t)bus << 16) |
-        ((uint32_t)slot << 11) |
-        ((uint32_t)func << 8) |
-        (offset & 0xFC);
-    outl(PCI_CONFIG_ADDR, address);
-    outl(PCI_CONFIG_DATA, value);
-}
-
 static uint32_t fb_find_lfb_phys(void) {
     for (uint16_t bus = 0; bus < 256; bus++) {
         for (uint8_t slot = 0; slot < 32; slot++) {
             for (uint8_t func = 0; func < 8; func++) {
-                uint32_t id = pci_config_read32((uint8_t)bus, slot, func, 0x00);
+                uint32_t id = PciConfigRead32((uint8_t)bus, slot, func, 0x00);
                 if (id == 0xFFFFFFFFU) {
                     if (func == 0) break;
                     continue;
@@ -528,7 +504,7 @@ static uint32_t fb_find_lfb_phys(void) {
 
                 if ((id & 0xFFFFU) == QEMU_VGA_VENDOR_ID &&
                     ((id >> 16) & 0xFFFFU) == QEMU_VGA_DEVICE_ID) {
-                    uint32_t bar0 = pci_config_read32((uint8_t)bus, slot, func, 0x10);
+                    uint32_t bar0 = PciConfigRead32((uint8_t)bus, slot, func, 0x10);
                     if ((bar0 & 0xFFFFFFF0U) != 0) {
                         SerialPutString("[FB] QEMU VGA PCI BAR0=0x");
                         SerialPrintHex(bar0 & 0xFFFFFFF0U);
@@ -645,7 +621,7 @@ static int fb_find_vmware(uint16_t *io_port, uint32_t *fb_phys) {
     for (uint16_t bus = 0; bus < 256; bus++) {
         for (uint8_t slot = 0; slot < 32; slot++) {
             for (uint8_t func = 0; func < 8; func++) {
-                uint32_t id = pci_config_read32((uint8_t)bus, slot, func, 0x00);
+                uint32_t id = PciConfigRead32((uint8_t)bus, slot, func, 0x00);
                 uint16_t vendor;
                 uint16_t device;
                 uint32_t bar0;
@@ -662,10 +638,10 @@ static int fb_find_vmware(uint16_t *io_port, uint32_t *fb_phys) {
                      device != VMWARE_SVGA2_DEVICE_ID)) continue;
 
                 /* Enable I/O and memory decoding plus bus mastering. */
-                pci_config_write32((uint8_t)bus, slot, func, 0x04,
-                                   pci_config_read32((uint8_t)bus, slot, func, 0x04) | 0x7U);
-                bar0 = pci_config_read32((uint8_t)bus, slot, func, 0x10);
-                bar1 = pci_config_read32((uint8_t)bus, slot, func, 0x14);
+                PciConfigWrite32((uint8_t)bus, slot, func, 0x04,
+                                 PciConfigRead32((uint8_t)bus, slot, func, 0x04) | 0x7U);
+                bar0 = PciConfigRead32((uint8_t)bus, slot, func, 0x10);
+                bar1 = PciConfigRead32((uint8_t)bus, slot, func, 0x14);
 
                 /* 0405 uses BAR0 for the index/value I/O pair and BAR1 for
                  * the framebuffer.  The older 0710 keeps the legacy I/O

@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "cdfs.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 #include "serial.h"
 #include "mm/mm.h"
 #include "core/util.h"

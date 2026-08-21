@@ -1,4 +1,5 @@
 #include "usb_internal.h"
+#include "cpu.h"
 #include "usb_msc.h"
 #include "mm/vmm.h"
 #include "core/util.h"
@@ -83,7 +84,7 @@ static void *dma_page(void) {
 static int wait_bits(uintptr_t base, uint32_t offset, uint32_t mask, int set) {
     for (uint32_t timeout = 0; timeout < 2000000; ++timeout) {
         if (!!(UsbMmioRead32(base, offset) & mask) == !!set) return 1;
-        __asm__ volatile("pause");
+        CpuRelax();
     }
     return 0;
 }
@@ -150,7 +151,7 @@ static int wait_event(XHCI_STATE *state, const XHCI_TRB *submitted,
             UsbMmioWrite32(interrupter, 0x1C, (uint32_t)(dequeue >> 32));
             if (match) return completion == XHCI_COMPLETION_SUCCESS;
         }
-        __asm__ volatile("pause");
+        CpuRelax();
     }
     SerialPutString("[xHCI] Event timeout\r\n");
     return 0;

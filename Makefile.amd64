@@ -8,18 +8,18 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
- -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/ide -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+ -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/input -Idrivers/ide -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
  -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
-SRCS := kernel/core/util.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/core/ke.c \
+SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/core/ke.c \
  kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/core/setup.c \
  kernel/core/subsystem.c kernel/core/nativecmd.c kernel/core/bugcheck.c kernel/arch/x86/idt.c \
- kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/ide/ide.c drivers/usb/usb.c drivers/usb/usb_msc.c \
+ kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/input/input.c drivers/ide/ide.c drivers/usb/usb.c drivers/usb/usb_msc.c \
  drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
- win32/csrss/csrss.c win32/smss/smss_init.c win32/smss/smss.c kernel/core/entry.c
+ win32/csrss/csrss_init.c win32/csrss/csrss.c win32/smss/smss_init.c win32/smss/smss.c kernel/core/entry.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 BOOT := $(BUILD_DIR)/boot/boot64.o
 ISR := $(BUILD_DIR)/kernel/isr_stubs64.o

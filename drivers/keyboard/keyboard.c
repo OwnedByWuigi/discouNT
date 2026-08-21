@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "keyboard.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 #include "core/util.h"
 #include "serial.h"
 

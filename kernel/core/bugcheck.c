@@ -3,6 +3,7 @@
 #include "hal.h"
 #include "fb.h"
 #include "serial.h"
+#include "cpu.h"
 
 static void bugcheck_hex(char *out, uint32_t value) {
     static const char digits[] = "0123456789ABCDEF";
@@ -16,9 +17,9 @@ void KeBugCheckEx(uint32_t code, uint32_t p1, uint32_t p2,
                   uint32_t p3, uint32_t p4) {
     static volatile int entered = 0;
     char code_text[11], p1_text[11], p2_text[11], p3_text[11], p4_text[11];
-    if (entered) for (;;) __asm__ volatile("cli; hlt");
+    if (entered) CpuHalt();
     entered = 1;
-    __asm__ volatile("cli");
+    CpuDisableInterrupts();
 
     bugcheck_hex(code_text, code); bugcheck_hex(p1_text, p1);
     bugcheck_hex(p2_text, p2); bugcheck_hex(p3_text, p3); bugcheck_hex(p4_text, p4);
@@ -48,7 +49,7 @@ void KeBugCheckEx(uint32_t code, uint32_t p1, uint32_t p2,
         HalPutString(" ", 0x1F); HalPutString(p4_text, 0x1F); HalPutString("\n\n", 0x1F);
         HalPutString("The system has been halted to prevent damage.\n", 0x1F);
     }
-    for (;;) __asm__ volatile("hlt");
+    CpuHalt();
 }
 
 void KeBugCheck(uint32_t code) { KeBugCheckEx(code, 0, 0, 0, 0); }

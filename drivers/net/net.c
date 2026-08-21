@@ -1,12 +1,11 @@
 #include <stdint.h>
 #include "net.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
+#include "io/pci.h"
 #include "mm/mm.h"
 #include "serial.h"
 #include "core/util.h"
 
-#define PCI_CONFIG_ADDR 0x0CF8
-#define PCI_CONFIG_DATA 0x0CFC
 
 #define RTL8139_VENDOR_ID 0x10EC
 #define RTL8139_DEVICE_ID 0x8139
@@ -137,13 +136,7 @@ static uint32_t bswap32(uint32_t v) {
 }
 
 static uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = 0x80000000U |
-                       ((uint32_t)bus << 16) |
-                       ((uint32_t)slot << 11) |
-                       ((uint32_t)func << 8) |
-                       (offset & 0xFC);
-    outl(PCI_CONFIG_ADDR, address);
-    return inl(PCI_CONFIG_DATA);
+    return PciConfigRead32(bus, slot, func, offset);
 }
 
 static uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
@@ -157,13 +150,7 @@ static uint8_t pci_read8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset
 }
 
 static void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
-    uint32_t address = 0x80000000U |
-                       ((uint32_t)bus << 16) |
-                       ((uint32_t)slot << 11) |
-                       ((uint32_t)func << 8) |
-                       (offset & 0xFC);
-    outl(PCI_CONFIG_ADDR, address);
-    outl(PCI_CONFIG_DATA, value);
+    PciConfigWrite32(bus, slot, func, offset, value);
 }
 
 static void pci_enable_busmaster(const PCI_DEVICE_INFO *pci) {

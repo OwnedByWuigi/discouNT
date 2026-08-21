@@ -2,7 +2,7 @@
 #include "core/nativecmd.h"
 #include "hal.h"
 #include "mm/mm.h"
-#include "arch/x86/portio.h"
+#include "io/port.h"
 #include "core/util.h"
 #include "rtl/rtlpath.h"
 #include "serial.h"
@@ -10,6 +10,8 @@
 #include "loader/peloader.h"
 #include "core/subsystem.h"
 #include "core/version.h"
+#include "core/invoke.h"
+#include "cpu.h"
 
 static char cmd_buffer[256];
 static int cmd_pos = 0;
@@ -22,11 +24,7 @@ static char exec_path[256] = "/SYSTEM32";
 #define SMSS_RETURN_MAGIC 0x534D5353
 
 static void system_shutdown(void) {
-    outw(0x604, 0x2000);
-    outw(0xB004, 0x2000);
-    outw(0x4004, 0x3400);
-    __asm__ volatile("cli");
-    for (;;) __asm__ volatile("hlt");
+    CpuPowerOff();
 }
 
 static void show_prompt(void) {
@@ -472,8 +470,6 @@ static void cmd_cd(char *args) {
 
 static int run_loaded_image(void *image, const char *display_name) {
     uint8_t *exe_stack;
-    uint32_t exe_esp;
-    uint32_t saved_esp;
     char buf[16];
     int ret = 0;
     typedef int (*EntryFunc)(void);
@@ -502,21 +498,7 @@ static int run_loaded_image(void *image, const char *display_name) {
         return -1;
     }
 
-    exe_esp = (uint32_t)(exe_stack + 65536 - 256);
-
-    __asm__ volatile(
-        "movl %%esp, %[oldsp]\n"
-        "movl %[newsp], %%esp\n"
-        "call *%[fn]\n"
-        "movl %%eax, %[retval]\n"
-        "movl %[oldsp], %%esp\n"
-        :
-          [oldsp] "=&r"(saved_esp),
-          [retval] "=r"(ret)
-        : [newsp] "r"(exe_esp),
-          [fn] "r"(func)
-        : "eax", "ecx", "edx", "memory"
-    );
+    ret = KeInvokeMain((void *)func, exe_stack, 65536);
 
     kfree(exe_stack);
 
@@ -606,12 +588,7 @@ static void cmd_exec(char *args) {
 
 static void cmd_reboot(void) {
     HalPutString("\nRebooting...\n", 0x0C);
-    {
-        uint8_t status;
-        do { status = inb(0x64); } while (status & 0x02);
-        outb(0x64, 0xFE);
-        __asm__ volatile("int $0");
-    }
+    CpuReboot();
 }
 
 static void cmd_shutdown(void) {

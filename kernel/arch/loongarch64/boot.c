@@ -8,6 +8,7 @@
 #include "ob/object.h"
 #include "serial.h"
 #include "smss.h"
+#include "csrss.h"
 
 /* QEMU LoongArch virt machine's 16550-compatible debug UART. */
 #define UART_BASE 0x1fe001e0UL
@@ -75,6 +76,9 @@ __attribute__((noreturn)) void boot_main(void) {
     SubsystemInit(0);
     if (SmssIsInitialized())
         HalPutString("SMSS SESSION MANAGER INITIALIZED\n", 0x0a);
+    SubsystemLaunchSmss();
+    if (CsrssIsInitialized())
+        HalPutString("CSRSS RUNTIME PROCESS INITIALIZED\n", 0x0a);
 
     for (;;) {
         __asm__ volatile("idle 0");

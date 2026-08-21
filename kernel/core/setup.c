@@ -7,6 +7,7 @@
 #include "io/io.h"
 #include "ob/object.h"
 #include "core/util.h"
+#include "cpu.h"
 
 #define SETUP_COLOR 0x1F
 #define SETUP_STATUS 0x70
@@ -36,7 +37,7 @@ static KEYBOARD_EVENT wait_key(void) {
     for (;;) {
         while (KeyboardHandleControllerEvent()) {}
         if (KeyboardPollEvent(&event) && event.pressed) return event;
-        __asm__ volatile("pause");
+        CpuRelax();
     }
 }
 
@@ -150,5 +151,5 @@ exit_setup:
     title("Setup is no longer running");
     line(8, "You may now restart the computer.");
     status("Setup stopped");
-    for (;;) __asm__ volatile("hlt");
+    CpuHalt();
 }
