@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "core/setup.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "keyboard.h"
 #include "cdfs.h"
 #include "ide.h"

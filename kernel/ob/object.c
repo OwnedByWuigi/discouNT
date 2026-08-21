@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "ob/object.h"
 #include "mm/mm.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "core/util.h"
 #include "serial.h"
 

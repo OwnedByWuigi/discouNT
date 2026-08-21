@@ -4,28 +4,41 @@ BOOT_ROM := $(BUILD_DIR)/boot.bin
 
 CLANG ?= clang
 LD := ld.lld
+OBJCOPY ?= llvm-objcopy-19
 QEMU ?= qemu-system-loongarch64
 FIRMWARE ?= tools/QEMU_EFI.fd
 
 TARGET := loongarch64-unknown-elf
-CPPFLAGS := -Ikernel
+CPPFLAGS := -Ikernel -Idrivers/serial -Iwin32/smss
 CFLAGS := --target=$(TARGET) -ffreestanding -fno-stack-protector \
 	-fno-builtin -fno-pic -Wall -Wextra -O0
 LDFLAGS := -m elf64loongarch -nostdlib -static \
 	-T kernel/arch/loongarch64/linker.ld
 
-C_SRCS := kernel/arch/loongarch64/boot.c
+C_SRCS := kernel/arch/loongarch64/boot.c \
+	kernel/arch/loongarch64/hal.c \
+	drivers/serial/serial.c \
+	kernel/core/util.c \
+	kernel/core/ke.c \
+	kernel/core/subsystem.c \
+	kernel/mm/mm.c \
+	kernel/mm/pmm.c \
+	kernel/mm/vmm.c \
+	kernel/ob/object.c \
+	kernel/io/io.c \
+	win32/smss/smss_init.c
 ASM_SRCS := kernel/arch/loongarch64/entry.S
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) \
 	$(patsubst %.S,$(BUILD_DIR)/%.o,$(ASM_SRCS))
 
-.PHONY: all run run-uefi clean check-tools
+.PHONY: all run run-gui run-headless run-uefi clean check-tools
 
 all: $(KERNEL) $(BOOT_ROM)
 
 check-tools:
 	@command -v $(CLANG) >/dev/null || { echo "error: clang not found"; exit 1; }
 	@command -v $(LD) >/dev/null || { echo "error: ld.lld not found"; exit 1; }
+	@command -v $(OBJCOPY) >/dev/null || { echo "error: llvm-objcopy not found"; exit 1; }
 	@command -v $(QEMU) >/dev/null || { echo "error: qemu-system-loongarch64 not found"; exit 1; }
 	@test -f $(FIRMWARE) || { echo "error: $(FIRMWARE) not found"; exit 1; }
 
@@ -41,12 +54,19 @@ $(KERNEL): $(OBJS) kernel/arch/loongarch64/linker.ld
 	@mkdir -p $(@D)
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 
-$(BOOT_ROM): $(OBJS) kernel/arch/loongarch64/linker.ld
-	$(LD) $(LDFLAGS) --oformat=binary $(OBJS) -o $@
+$(BOOT_ROM): $(KERNEL)
+	$(OBJCOPY) -O binary $< $@
 
 run: check-tools $(BOOT_ROM)
 	$(QEMU) -machine virt -cpu la464 -m 512M \
-		-bios $(BOOT_ROM) \
+		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
+		-serial stdio
+
+run-gui: run
+
+run-headless: check-tools $(BOOT_ROM)
+	$(QEMU) -machine virt -cpu la464 -m 512M \
+		-bios $(BOOT_ROM) -device bochs-display,addr=2,romfile= \
 		-nographic -serial mon:stdio
 
 run-uefi: check-tools $(KERNEL)

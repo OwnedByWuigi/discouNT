@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "core/ke.h"
 #include "mm/mm.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "core/util.h"
 
 static THREAD *current_thread = 0;
@@ -25,6 +25,7 @@ static void KeDeleteThreadObject(void *body) {
 
 // Note: kmalloc and kfree are now in mm.c - include mm.h instead
 
+#if !defined(__loongarch64)
 static void KeThreadBootstrap(void) {
     if (current_thread) {
         void (*entry)(void*) = (void (*)(void*))current_thread->entry_point;
@@ -34,6 +35,7 @@ static void KeThreadBootstrap(void) {
     }
     for (;;) KeYield();
 }
+#endif
 
 static void KeAppendReadyThread(THREAD *thread) {
     THREAD *tail;
@@ -114,7 +116,10 @@ HANDLE KeCreateThread(void (*entry)(void *), void *arg, uint32_t stack_size) {
     thread->context_ebp = 0;
     
     // Cooperative switch: after KeYield restores ESP and returns, execution enters bootstrap.
-#if defined(__x86_64__)
+#if defined(__loongarch64)
+    /* LA64 context construction is added with the scheduler switch frame. */
+    thread->context_esp = ((uintptr_t)thread->stack + thread->stack_size) & ~(uintptr_t)15;
+#elif defined(__x86_64__)
     /* ret enters a SysV AMD64 function with RSP % 16 == 8. */
     uintptr_t stack_top = ((uintptr_t)thread->stack + thread->stack_size) & ~(uintptr_t)15;
     uintptr_t *stack = (uintptr_t*)(stack_top - 16);
@@ -189,6 +194,12 @@ static THREAD *KeSelectNextThread(void) {
     return current_thread;
 }
 
+#if defined(__loongarch64)
+void KeYield(void) {
+    /* Initialization is single-threaded until LA64 context switching lands. */
+    (void)KeSelectNextThread();
+}
+#else
 __attribute__((naked)) void KeYield(void) {
 #if defined(__x86_64__)
     __asm__ volatile(
@@ -246,6 +257,7 @@ __attribute__((naked)) void KeYield(void) {
     );
 #endif
 }
+#endif
 
 void KeStartScheduler(void) {
     if (!ready_queue) {
@@ -257,11 +269,15 @@ void KeStartScheduler(void) {
     current_thread->state = THREAD_RUNNING;
     
     // Jump to first thread
+#if defined(__loongarch64)
+    HalPutString("[Ke] LA64 context switching is not enabled yet.\n", 0x0E);
+#else
     __asm__ volatile(
         "movl %0, %%esp\n\t"
         "iret\n\t"
         : : "m"(current_thread->context_esp)
     );
+#endif
 }
 
 HANDLE KeCreateMutex(void) {

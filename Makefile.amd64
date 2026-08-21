@@ -19,7 +19,7 @@ SRCS := kernel/core/util.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c k
  kernel/core/subsystem.c kernel/core/nativecmd.c kernel/core/bugcheck.c kernel/arch/x86/idt.c \
  kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/ide/ide.c drivers/usb/usb.c drivers/usb/usb_msc.c \
  drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
- win32/csrss/csrss.c win32/smss/smss.c kernel/core/entry.c
+ win32/csrss/csrss.c win32/smss/smss_init.c win32/smss/smss.c kernel/core/entry.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 BOOT := $(BUILD_DIR)/boot/boot64.o
 ISR := $(BUILD_DIR)/kernel/isr_stubs64.o
@@ -194,7 +194,7 @@ $(ISR): kernel/arch/x86/isr_stubs64.asm
 
 $(BOOT_SERIAL): drivers/serial/serial.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialSetScreenDebugEnabled=BootSerialSetScreenDebugEnabled -DSerialIsScreenDebugEnabled=BootSerialIsScreenDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
 
 $(BOOT_CDFS): drivers/cdfs/cdfs.c
 	@mkdir -p $(@D)

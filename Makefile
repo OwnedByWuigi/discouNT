@@ -73,6 +73,7 @@ KERNEL_CORE_SRCS := \
 	drivers/usb/ehci.c \
 	drivers/usb/xhci.c \
 	win32/csrss/csrss.c \
+	win32/smss/smss_init.c \
 	win32/smss/smss.c \
 	kernel/core/entry.c
 
@@ -170,7 +171,7 @@ $(BUILD_DIR)/%.o: %.c
 
 $(BOOT_SERIAL_OBJ): drivers/serial/serial.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSerialInit=BootSerialInit -DSerialSetDebugEnabled=BootSerialSetDebugEnabled -DSerialIsDebugEnabled=BootSerialIsDebugEnabled -DSerialSetScreenDebugEnabled=BootSerialSetScreenDebugEnabled -DSerialIsScreenDebugEnabled=BootSerialIsScreenDebugEnabled -DSerialPutChar=BootSerialPutChar -DSerialPutString=BootSerialPutString -DSerialPrintHex=BootSerialPrintHex -DSerialPrintDec=BootSerialPrintDec -c $< -o $@
 
 $(BOOT_CDFS_OBJ): drivers/cdfs/cdfs.c
 	@mkdir -p $(@D)

@@ -4,7 +4,7 @@
 
 _start:
     /* The virt machine exposes low RAM below its 256 MiB I/O hole. */
-    li.d    $sp, 0x00100000
+    li.d    $sp, 0x001f0000
     bl      boot_main
 
 1:

@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "core/nativecmd.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "mm/mm.h"
 #include "arch/x86/portio.h"
 #include "core/util.h"

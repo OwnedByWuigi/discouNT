@@ -1,44 +1,78 @@
 #include <stdint.h>
 #include "serial.h"
+#if defined(__loongarch64)
+#define LA64_UART_BASE 0x1fe001e0UL
+static volatile uint8_t *SerialUart(void) {
+    return (volatile uint8_t *)LA64_UART_BASE;
+}
+static uint8_t SerialReadRegister(uint32_t offset) {
+    return SerialUart()[offset];
+}
+static void SerialWriteRegister(uint32_t offset, uint8_t value) {
+    SerialUart()[offset] = value;
+}
+#else
 #include "arch/x86/portio.h"
+static uint8_t SerialReadRegister(uint32_t offset) {
+    return inb(COM1_PORT + (uint16_t)offset);
+}
+static void SerialWriteRegister(uint32_t offset, uint8_t value) {
+    outb(COM1_PORT + (uint16_t)offset, value);
+}
+#endif
 
 static int serial_ready = 0;
+static int serial_debug_enabled = 1;
+static int serial_screen_debug_enabled;
 
 // Check if transmit buffer is empty
 static int serial_is_transmit_empty(void) {
-    return inb(COM1_PORT + 5) & 0x20;
+    return SerialReadRegister(5) & 0x20;
 }
 
 void SerialInit(void) {
+#if defined(__loongarch64)
+    /* QEMU firmware/reset code configures its 16550-compatible UART. */
+    serial_ready = 1;
+#else
     // Disable interrupts
-    outb(COM1_PORT + 1, 0x00);
+    SerialWriteRegister(1, 0x00);
     
     // Set baud rate to 115200
-    outb(COM1_PORT + 3, 0x80);    // Enable DLAB
-    outb(COM1_PORT + 0, 0x01);    // Divisor low byte (115200)
-    outb(COM1_PORT + 1, 0x00);    // Divisor high byte
+    SerialWriteRegister(3, 0x80); // Enable DLAB
+    SerialWriteRegister(0, 0x01); // Divisor low byte (115200)
+    SerialWriteRegister(1, 0x00); // Divisor high byte
     
     // 8 bits, no parity, one stop bit
-    outb(COM1_PORT + 3, 0x03);
+    SerialWriteRegister(3, 0x03);
     
     // Enable FIFO, clear them, 14-byte threshold
-    outb(COM1_PORT + 2, 0xC7);
+    SerialWriteRegister(2, 0xC7);
     
     // IRQs enabled, RTS/DSR set
-    outb(COM1_PORT + 4, 0x0B);
+    SerialWriteRegister(4, 0x0B);
     
     serial_ready = 1;
+#endif
     
     // Test output
     SerialPutString("\r\n[Serial] COM1 initialized at 115200 baud\r\n");
 }
 
 void SerialSetDebugEnabled(int enabled) {
-    (void)enabled;
+    serial_debug_enabled = enabled != 0;
 }
 
 int SerialIsDebugEnabled(void) {
-    return 1;
+    return serial_debug_enabled;
+}
+
+void SerialSetScreenDebugEnabled(int enabled) {
+    serial_screen_debug_enabled = enabled != 0;
+}
+
+int SerialIsScreenDebugEnabled(void) {
+    return serial_screen_debug_enabled;
 }
 
 void SerialPutChar(char c) {
@@ -49,11 +83,11 @@ void SerialPutChar(char c) {
     
     // Handle newline
     if (c == '\n') {
-        outb(COM1_PORT, '\r');
+        SerialWriteRegister(0, '\r');
         while (!serial_is_transmit_empty());
-        outb(COM1_PORT, '\n');
+        SerialWriteRegister(0, '\n');
     } else {
-        outb(COM1_PORT, c);
+        SerialWriteRegister(0, (uint8_t)c);
     }
 }
 

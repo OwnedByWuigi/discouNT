@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "mm/mm.h"
 #include "ob/object.h"
 #include "io/io.h"

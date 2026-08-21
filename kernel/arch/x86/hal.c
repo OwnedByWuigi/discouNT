@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "serial.h"
 #include "arch/x86/multiboot.h"
 

@@ -2,7 +2,7 @@
 #include "smss.h"
 #include "csrss.h"
 #include "serial.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "cdfs.h"
 #include "mm/mm.h"
 #include "loader/peloader.h"
@@ -79,6 +79,8 @@ static int smss_execute_bootstrap(const char *path) {
 
 void SmssSessionRun(void *mb_info) {
     int ret;
+
+    if (!SmssInitialize()) return;
 
     SerialPutString("[SMSS] Starting Session Manager Subsystem\r\n");
     ret = smss_execute_bootstrap("/SYSTEM32/CSRSS.EXE");

@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include "mm/pmm.h"
+#if !defined(__loongarch64)
 #include "arch/x86/multiboot.h"
+#endif
 #include "core/util.h"
 
 #define PMM_MAX_PAGES 1048576U /* Physical addresses below 4 GiB. */
@@ -41,7 +43,18 @@ static void PmmMarkRange(uint64_t base, uint64_t length, int used) {
     for (page = first; page < last; page++) PmmSetPage((uint32_t)page, used);
 }
 
-static void PmmReserveBootData(MULTIBOOT_INFO *info) {
+static void PmmReserveBootData(
+#if defined(__loongarch64)
+    void *info
+#else
+    MULTIBOOT_INFO *info
+#endif
+) {
+#if defined(__loongarch64)
+    (void)info;
+    /* Low boot data, stack, and static kernel state precede the heap. */
+    PmmMarkRange(0, 0x200000, 1);
+#else
     uint32_t i;
     uintptr_t kernel_end = (uintptr_t)&__kernel_end;
     PmmMarkRange(0, kernel_end, 1);
@@ -56,9 +69,21 @@ static void PmmReserveBootData(MULTIBOOT_INFO *info) {
             if (modules[i].end > modules[i].start)
                 PmmMarkRange(modules[i].start, modules[i].end - modules[i].start, 1);
     }
+#endif
 }
 
 void PmmInitialize(void *boot_info) {
+#if defined(__loongarch64)
+    void *info = boot_info;
+    uint64_t highest = 256ULL * 1024 * 1024;
+    memset(page_bitmap, 0xFF, sizeof(page_bitmap));
+    free_pages = 0;
+    page_limit = (uint32_t)(highest / PMM_PAGE_SIZE);
+    PmmMarkRange(0x100000, highest - 0x100000, 0);
+    managed_pages = free_pages;
+    PmmReserveBootData(info);
+    search_hint = 0x200000 / PMM_PAGE_SIZE;
+#else
     MULTIBOOT_INFO *info = (MULTIBOOT_INFO*)boot_info;
     uint64_t highest = 16ULL * 1024 * 1024;
     memset(page_bitmap, 0xFF, sizeof(page_bitmap));
@@ -97,6 +122,7 @@ void PmmInitialize(void *boot_info) {
     managed_pages = free_pages;
     PmmReserveBootData(info);
     search_hint = ((uintptr_t)&__kernel_end + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE;
+#endif
 }
 
 uintptr_t PmmAllocatePages(uint32_t count) {

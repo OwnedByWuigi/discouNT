@@ -19,8 +19,15 @@ make loongarch64
 make run-loongarch64
 ```
 
+The normal run target opens the 640x480 LA64 framebuffer console. Use
+`make -f Makefile.loongarch64 run-headless` for a serial-only terminal.
+
 `make run-loongarch64` uses the generated reset ROM. The separate
 `make -f Makefile.loongarch64 run-uefi` target exercises `tools/QEMU_EFI.fd`
 with the ELF payload; it is retained for the UEFI handoff work.
+
+The LA64 kernel currently initializes the shared memory, object, I/O, and
+executive layers and creates the Session Manager process. CSRSS image loading
+and LA64 context switching are the next user-mode bring-up milestones.
 
 discouNT now supports IDE hard drives as well as USB flash drives (still WIP), for installation.

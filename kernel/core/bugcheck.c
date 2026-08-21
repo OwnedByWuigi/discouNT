@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "core/bugcheck.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "fb.h"
 #include "serial.h"
 

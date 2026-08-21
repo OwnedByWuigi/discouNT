@@ -3,7 +3,7 @@
 #include "core/util.h"
 #include "serial.h"
 #include "arch/x86/portio.h"
-#include "arch/x86/hal.h"
+#include "hal.h"
 #include "cdfs.h"
 #include "mm/mm.h"
 #include "loader/peloader.h"
