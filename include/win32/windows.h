@@ -107,6 +107,7 @@ DWORD WINAPI GetLastError(void);
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
 #define STD_ERROR_HANDLE   ((DWORD)-12)
 #define ERROR_MORE_DATA 234
+#define ERROR_INVALID_COMMAND_LINE 1639
 BOOL WINAPI WriteConsoleW(HANDLE handle, LPCVOID buffer, DWORD length, PDWORD written, LPVOID reserved);
 UINT WINAPI GetOEMCP(void);
 HANDLE WINAPI GetStdHandle(DWORD handle);

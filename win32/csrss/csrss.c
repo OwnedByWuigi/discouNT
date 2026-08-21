@@ -130,6 +130,7 @@ typedef enum _GUI_APP_KIND {
     GUI_APP_KIND_CUSTOM = 0,
     GUI_APP_KIND_WINMAIN,
     GUI_APP_KIND_WWINMAIN,
+    GUI_APP_KIND_WMAIN,
     GUI_APP_KIND_MAIN
 } GUI_APP_KIND;
 
@@ -673,6 +674,10 @@ static void csrss_gui_thread_main(void *arg) {
         SerialPutString("[CSRSS] GUI thread dispatch wWinMain\r\n");
         ret = KeInvokeWWinMain(ctx->entry, ctx->app->image, ctx->wide_command_line,
                               exe_stack, 65536);
+    } else if (ctx->kind == GUI_APP_KIND_WMAIN) {
+        SerialPutString("[CSRSS] GUI thread dispatch wmain\r\n");
+        ret = KeInvokeWMain(ctx->entry, ctx->app->path, ctx->wide_command_line,
+                            exe_stack, 65536);
     } else {
         SerialPutString("[CSRSS] GUI thread dispatch main\r\n");
         ret = KeInvokeMainArgs(ctx->entry, ctx->app->path, ctx->command_line,
@@ -949,6 +954,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     GuiAppCreateMainWindowFn create_window_fn;
     GuiWinMainFn winmain_fn;
     GuiWWinMainFn wwinmain_fn;
+    void *wmain_fn;
     GuiMainFn main_fn;
     GUI_APP_THREAD_CTX *thread_ctx;
 
@@ -988,10 +994,11 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
     app->reset_exit = (GuiAppResetExitFn)PeGetProcAddress(app->image, "CmdAppResetExit");
     winmain_fn = (GuiWinMainFn)PeGetProcAddress(app->image, "WinMain");
     wwinmain_fn = (GuiWWinMainFn)PeGetProcAddress(app->image, "wWinMain");
+    wmain_fn = PeGetProcAddress(app->image, "wmain");
     main_fn = (GuiMainFn)PeGetProcAddress(app->image, "main");
 
     if (!init_fn || !create_window_fn || !app->handle_key || !app->should_exit || !app->reset_exit) {
-        if (!winmain_fn && !wwinmain_fn && !main_fn) {
+        if (!winmain_fn && !wwinmain_fn && !wmain_fn && !main_fn) {
             SerialPutString("[CSRSS] GUI app missing required exports\r\n");
             csrss_show_launch_error(path, "The application is not a valid Win32 program.");
             PeFreeImage(app->image);
@@ -1002,7 +1009,7 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         SerialPutString("[CSRSS] Standard app path selected pid=");
         SerialPrintDec(app->pid);
         SerialPutString(" mode=");
-        SerialPutString(winmain_fn ? "WinMain" : (wwinmain_fn ? "wWinMain" : "main"));
+        SerialPutString(winmain_fn ? "WinMain" : (wwinmain_fn ? "wWinMain" : (wmain_fn ? "wmain" : "main")));
         SerialPutString("\r\n");
 
         thread_ctx = (GUI_APP_THREAD_CTX*)kmalloc(sizeof(GUI_APP_THREAD_CTX));
@@ -1014,9 +1021,11 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
         memset(thread_ctx, 0, sizeof(*thread_ctx));
         thread_ctx->app = app;
         thread_ctx->kind = winmain_fn ? GUI_APP_KIND_WINMAIN :
-                           (wwinmain_fn ? GUI_APP_KIND_WWINMAIN : GUI_APP_KIND_MAIN);
+                           (wwinmain_fn ? GUI_APP_KIND_WWINMAIN :
+                            (wmain_fn ? GUI_APP_KIND_WMAIN : GUI_APP_KIND_MAIN));
         thread_ctx->entry = winmain_fn ? (void*)winmain_fn :
-                            (wwinmain_fn ? (void*)wwinmain_fn : (void*)main_fn);
+                            (wwinmain_fn ? (void*)wwinmain_fn :
+                             (wmain_fn ? wmain_fn : (void*)main_fn));
         /* lpCmdLine excludes the executable name.  The current spawn API
            receives only an image path, so its correct command line is empty;
            keeping it in the thread context makes ownership valid for the

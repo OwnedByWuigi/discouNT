@@ -39,6 +39,39 @@ int KeInvokeMainArgs(void *entry, const char *image_path, const char *command_li
     return ((ENTRY)entry)(argc, argv);
 }
 
+int KeInvokeWMain(void *entry, const char *image_path, const uint32_t *command_line,
+                  void *stack, uint32_t stack_size) {
+    typedef int (*ENTRY)(int, uint32_t **);
+    uint32_t buffer[256];
+    uint32_t *argv[32];
+    uint32_t image[256];
+    int argc = 1, i = 0, j;
+    (void)stack;
+    (void)stack_size;
+    if (!entry) return -1;
+    for (j = 0; j < 255 && image_path && image_path[j]; j++) image[j] = (uint8_t)image_path[j];
+    image[j] = 0;
+    argv[0] = image;
+    while (command_line && command_line[i] && i < 255) { buffer[i] = command_line[i]; i++; }
+    buffer[i] = 0;
+    i = 0;
+    while (buffer[i] && argc < 31) {
+        while (buffer[i] == ' ' || buffer[i] == '\t') i++;
+        if (!buffer[i]) break;
+        if (buffer[i] == '"' || buffer[i] == '\'') {
+            uint32_t quote = buffer[i++];
+            argv[argc++] = &buffer[i];
+            while (buffer[i] && buffer[i] != quote) i++;
+        } else {
+            argv[argc++] = &buffer[i];
+            while (buffer[i] && buffer[i] != ' ' && buffer[i] != '\t') i++;
+        }
+        if (buffer[i]) buffer[i++] = 0;
+    }
+    argv[argc] = 0;
+    return ((ENTRY)entry)(argc, argv);
+}
+
 int KeInvokeWinMain(void *entry, void *image, const char *command_line,
                     void *stack, uint32_t stack_size) {
     typedef int (*ENTRY)(void *, void *, char *, int);

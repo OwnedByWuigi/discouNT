@@ -256,6 +256,41 @@ void ExitProcess(uint32_t code) {
     for (;;) KeYield();
 }
 
+void exit(int status) { ExitProcess((uint32_t)status); }
+
+int _wcsicmp(LPCWSTR a, LPCWSTR b) {
+    int i = 0;
+    while (a && b && a[i] && b[i]) {
+        WCHAR ca = a[i], cb = b[i];
+        if (ca >= L'A' && ca <= L'Z') ca += L'a' - L'A';
+        if (cb >= L'A' && cb <= L'Z') cb += L'a' - L'A';
+        if (ca != cb) return ca < cb ? -1 : 1;
+        i++;
+    }
+    if (!a || !b) return a == b ? 0 : (a ? 1 : -1);
+    return a[i] == b[i] ? 0 : (a[i] ? 1 : -1);
+}
+
+WCHAR *wcsdup(LPCWSTR source) {
+    int length = k32_wstrlen(source) + 1;
+    WCHAR *copy = (WCHAR*)kmalloc((uint32_t)length * sizeof(WCHAR));
+    int i;
+    if (!copy) return 0;
+    for (i = 0; i < length; i++) copy[i] = source[i];
+    return copy;
+}
+
+long wcstol(LPCWSTR source, LPWSTR *end, int radix) {
+    long value = 0;
+    int sign = 1;
+    (void)radix;
+    while (*source == L' ' || *source == L'\t') source++;
+    if (*source == L'-') { sign = -1; source++; }
+    while (*source >= L'0' && *source <= L'9') value = value * 10 + (*source++ - L'0');
+    if (end) *end = (LPWSTR)source;
+    return value * sign;
+}
+
 void *HeapAlloc(void *heap, uint32_t flags, SIZE_T size) {
     (void)heap;
     (void)flags;
@@ -1134,6 +1169,18 @@ int sprintf(char *buffer, const char *format, ...) {
     va_start(args, format);
     result = vsnprintf(buffer, 0xffffffffu, format, args);
     va_end(args);
+    return result;
+}
+
+int printf(const char *format, ...) {
+    char buffer[512];
+    uint32_t written;
+    va_list args;
+    int result;
+    va_start(args, format);
+    result = vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    WriteConsoleA(GetStdHandle((uint32_t)-11), buffer, (uint32_t)result, &written, 0);
     return result;
 }
 

@@ -1,4 +1,95 @@
 #include <stdint.h>
+typedef uint16_t WCHAR;
+typedef const WCHAR *LPCWSTR;
+typedef WCHAR *LPWSTR;
+typedef uint32_t DWORD;
+typedef int BOOL;
+typedef void *SC_HANDLE;
+typedef struct _SERVICE_STATUS {
+    DWORD dwServiceType, dwCurrentState, dwControlsAccepted, dwWin32ExitCode;
+    DWORD dwServiceSpecificExitCode, dwCheckPoint, dwWaitHint;
+} SERVICE_STATUS, *LPSERVICE_STATUS;
+#define SERVICE_STOPPED 1
+#define SERVICE_RUNNING 4
+#define SERVICE_DISABLED 4
+#define SERVICE_CONTROL_STOP 1
+
+typedef struct _SC_SERVICE_RECORD {
+    WCHAR name[64];
+    SERVICE_STATUS status;
+    int used;
+} SC_SERVICE_RECORD;
+
+static SC_SERVICE_RECORD service_records[32];
+static int service_count;
+
+static SC_SERVICE_RECORD *find_service(LPCWSTR name) {
+    int i, j;
+    for (i = 0; i < service_count; i++) {
+        for (j = 0; j < 63 && service_records[i].name[j] && name && service_records[i].name[j] == name[j]; j++);
+        if (name && service_records[i].name[j] == name[j]) return &service_records[i];
+    }
+    return 0;
+}
+
+SC_HANDLE OpenSCManagerW(LPCWSTR machine, LPCWSTR database, DWORD access) {
+    (void)machine; (void)database; (void)access;
+    return (SC_HANDLE)(uintptr_t)0x53434D01;
+}
+
+SC_HANDLE OpenServiceW(SC_HANDLE manager, LPCWSTR name, DWORD access) {
+    (void)manager; (void)access;
+    return (SC_HANDLE)find_service(name);
+}
+
+SC_HANDLE CreateServiceW(SC_HANDLE manager, LPCWSTR name, LPCWSTR display, DWORD access,
+                         DWORD type, DWORD start, DWORD error, LPCWSTR binary, LPCWSTR group,
+                         DWORD *tag, LPCWSTR depend, LPCWSTR object, LPCWSTR password) {
+    SC_SERVICE_RECORD *record;
+    int i;
+    (void)manager; (void)display; (void)access; (void)binary; (void)group;
+    (void)tag; (void)depend; (void)object; (void)password;
+    if (!name || service_count >= 32 || find_service(name)) return 0;
+    record = &service_records[service_count++];
+    for (i = 0; i < 63 && name[i]; i++) record->name[i] = name[i];
+    record->name[i] = 0;
+    record->used = 1;
+    record->status.dwServiceType = type;
+    record->status.dwCurrentState = start == SERVICE_DISABLED ? SERVICE_STOPPED : SERVICE_STOPPED;
+    record->status.dwWin32ExitCode = error;
+    return (SC_HANDLE)record;
+}
+
+BOOL CloseServiceHandle(SC_HANDLE service) { (void)service; return 1; }
+BOOL DeleteService(SC_HANDLE service) {
+    SC_SERVICE_RECORD *record = (SC_SERVICE_RECORD*)service;
+    if (!record || !record->used) return 0;
+    record->used = 0;
+    return 1;
+}
+BOOL StartServiceW(SC_HANDLE service, DWORD argc, LPCWSTR *argv) {
+    SC_SERVICE_RECORD *record = (SC_SERVICE_RECORD*)service;
+    (void)argc; (void)argv;
+    if (!record || !record->used) return 0;
+    record->status.dwCurrentState = SERVICE_RUNNING;
+    return 1;
+}
+BOOL ControlService(SC_HANDLE service, DWORD control, LPSERVICE_STATUS status) {
+    SC_SERVICE_RECORD *record = (SC_SERVICE_RECORD*)service;
+    if (!record || !record->used) return 0;
+    if (control == SERVICE_CONTROL_STOP) record->status.dwCurrentState = SERVICE_STOPPED;
+    if (status) *status = record->status;
+    return 1;
+}
+BOOL QueryServiceStatus(SC_HANDLE service, LPSERVICE_STATUS status) {
+    SC_SERVICE_RECORD *record = (SC_SERVICE_RECORD*)service;
+    if (!record || !record->used || !status) return 0;
+    *status = record->status;
+    return 1;
+}
+BOOL ChangeServiceConfig2W(SC_HANDLE service, DWORD level, void *info) {
+    (void)service; (void)level; (void)info; return 1;
+}
 
 int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
     (void)hModule;

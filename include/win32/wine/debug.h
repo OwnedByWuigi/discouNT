@@ -35,6 +35,10 @@ enum {
 #define WINE_DEFAULT_DEBUG_CHANNEL(name) static const char *wine_debug_channel = #name
 #define TRACE(...) ((void)0)
 #define FIXME(...) ((void)0)
+#define WINE_FIXME(...) FIXME(__VA_ARGS__)
+#define WINE_MESSAGE(...) MESSAGE(__VA_ARGS__)
+#define WINE_ERR(...) ERR(__VA_ARGS__)
+#define WINE_WARN(...) WARN(__VA_ARGS__)
 #define WARN(...) ((void)0)
 #define ERR(...) ((void)0)
 #define MESSAGE(...) ((void)0)
