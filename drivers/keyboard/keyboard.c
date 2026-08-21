@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "keyboard.h"
-#include "portio.h"
-#include "util.h"
+#include "arch/x86/portio.h"
+#include "core/util.h"
 #include "serial.h"
 
 #define KBD_QUEUE_SIZE 32

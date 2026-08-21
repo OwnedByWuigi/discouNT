@@ -1,7 +1,7 @@
 #include "usb_internal.h"
 #include "usb_msc.h"
-#include "vmm.h"
-#include "util.h"
+#include "mm/vmm.h"
+#include "core/util.h"
 #include "serial.h"
 
 #define XHCI_PAGE_SIZE 4096U

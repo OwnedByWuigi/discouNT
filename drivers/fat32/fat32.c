@@ -1,8 +1,8 @@
 #include "fat32.h"
-#include "io.h"
-#include "object.h"
-#include "mm.h"
-#include "util.h"
+#include "io/io.h"
+#include "ob/object.h"
+#include "mm/mm.h"
+#include "core/util.h"
 #include "serial.h"
 
 typedef struct __attribute__((packed)) {

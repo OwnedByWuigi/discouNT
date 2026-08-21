@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include "w32k.h"
 #include "fb.h"
-#include "mm.h"
-#include "util.h"
+#include "mm/mm.h"
+#include "core/util.h"
 #include "mouse.h"
 #include "serial.h"
 #include "icon.h"

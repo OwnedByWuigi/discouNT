@@ -1,6 +1,6 @@
 #include <stdint.h>
-#include "driver.h"
-#include "peloader.h"
+#include "io/driver.h"
+#include "loader/peloader.h"
 #include "serial.h"
 #include "vga.h"
 #include "cdfs.h"
@@ -10,7 +10,7 @@
 #include "net.h"
 #include "fb.h"
 #include "w32k.h"
-#include "object.h"
+#include "ob/object.h"
 
 void BootSerialInit(void);
 void BootSerialSetDebugEnabled(int enabled);

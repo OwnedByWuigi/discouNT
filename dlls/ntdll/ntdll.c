@@ -1,6 +1,6 @@
 // ntdll.c - NT Native API for NT-like OS
 #include <stdint.h>
-#include "version.h"
+#include "core/version.h"
 
 // DLL entry
 __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpReserved) {

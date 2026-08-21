@@ -1,12 +1,12 @@
 #include <stdint.h>
 #include "cdfs.h"
-#include "portio.h"
+#include "arch/x86/portio.h"
 #include "serial.h"
-#include "mm.h"
-#include "util.h"
-#include "rtlpath.h"
+#include "mm/mm.h"
+#include "core/util.h"
+#include "rtl/rtlpath.h"
 #include "fat32.h"
-#include "io.h"
+#include "io/io.h"
 
 static int cdrom_present = 0;
 static int cdrom_ready = 0;

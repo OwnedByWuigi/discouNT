@@ -1,7 +1,7 @@
 #ifndef IDE_H
 #define IDE_H
 
-#include "io.h"
+#include "io/io.h"
 
 /* Probe the two legacy IDE channels and publish ATA disks as Harddisk0..3. */
 int IdeBootInitialize(void);

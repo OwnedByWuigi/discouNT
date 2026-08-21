@@ -1,11 +1,11 @@
 #include <stdint.h>
 #include "usb.h"
 #include "usb_internal.h"
-#include "portio.h"
+#include "arch/x86/portio.h"
 #include "serial.h"
-#include "io.h"
+#include "io/io.h"
 #include "usb_msc.h"
-#include "vmm.h"
+#include "mm/vmm.h"
 #define PCI_ADDRESS 0xCF8
 #define PCI_DATA 0xCFC
 #define MAX_CONTROLLERS 8

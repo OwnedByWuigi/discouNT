@@ -1,4 +1,4 @@
-// kernel/mm.h
+// kernel/mm/mm.h
 #ifndef MM_H
 #define MM_H
 #include <stdint.h>

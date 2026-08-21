@@ -2,10 +2,10 @@
 #include "smss.h"
 #include "csrss.h"
 #include "serial.h"
-#include "hal.h"
+#include "arch/x86/hal.h"
 #include "cdfs.h"
-#include "mm.h"
-#include "peloader.h"
+#include "mm/mm.h"
+#include "loader/peloader.h"
 
 #define CSRSS_RETURN_MAGIC 0x43535253
 

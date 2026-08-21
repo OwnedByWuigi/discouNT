@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "rtlpath.h"
+#include "rtl/rtlpath.h"
 
 static int RtlIsPathSeparator(char ch) { return ch == '/' || ch == '\\'; }
 

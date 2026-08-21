@@ -1,5 +1,5 @@
 #include "usb_msc.h"
-#include "util.h"
+#include "core/util.h"
 #include "serial.h"
 
 #define MSC_CBW_SIGNATURE 0x43425355U

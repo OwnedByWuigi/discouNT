@@ -1,7 +1,7 @@
 #include <stdint.h>
-#include "hal.h"
+#include "arch/x86/hal.h"
 #include "serial.h"
-#include "multiboot.h"
+#include "arch/x86/multiboot.h"
 
 #define VGA_WIDTH  80
 #define VGA_HEIGHT 25

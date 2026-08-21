@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include "windows.h"
-#include "version.h"
+#include "core/version.h"
 
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);

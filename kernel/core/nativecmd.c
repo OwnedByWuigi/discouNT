@@ -1,15 +1,15 @@
 #include <stdint.h>
-#include "nativecmd.h"
-#include "hal.h"
-#include "mm.h"
-#include "portio.h"
-#include "util.h"
-#include "rtlpath.h"
+#include "core/nativecmd.h"
+#include "arch/x86/hal.h"
+#include "mm/mm.h"
+#include "arch/x86/portio.h"
+#include "core/util.h"
+#include "rtl/rtlpath.h"
 #include "serial.h"
 #include "cdfs.h"
-#include "peloader.h"
-#include "subsystem.h"
-#include "version.h"
+#include "loader/peloader.h"
+#include "core/subsystem.h"
+#include "core/version.h"
 
 static char cmd_buffer[256];
 static int cmd_pos = 0;

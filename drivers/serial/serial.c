@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "serial.h"
-#include "portio.h"
+#include "arch/x86/portio.h"
 
 static int serial_ready = 0;
 

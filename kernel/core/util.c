@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "util.h"
+#include "core/util.h"
 
 static uint64_t util_udivmod64(uint64_t num, uint64_t den, uint64_t *rem_out) {
     uint64_t q = 0;

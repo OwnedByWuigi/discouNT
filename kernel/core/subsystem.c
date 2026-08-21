@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "subsystem.h"
+#include "core/subsystem.h"
 #include "smss.h"
 
 static void *subsystem_mb_info = 0;

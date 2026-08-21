@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "ttf.h"
 #include "cdfs.h"
-#include "mm.h"
+#include "mm/mm.h"
 
 typedef struct {
     uint8_t *data;

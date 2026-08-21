@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include "ide.h"
-#include "portio.h"
+#include "arch/x86/portio.h"
 #include "serial.h"
-#include "util.h"
+#include "core/util.h"
 
 #define ATA_DATA       0
 #define ATA_ERROR      1

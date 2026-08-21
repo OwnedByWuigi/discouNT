@@ -1,9 +1,9 @@
 #include <stdint.h>
 #include "net.h"
-#include "portio.h"
-#include "mm.h"
+#include "arch/x86/portio.h"
+#include "mm/mm.h"
 #include "serial.h"
-#include "util.h"
+#include "core/util.h"
 
 #define PCI_CONFIG_ADDR 0x0CF8
 #define PCI_CONFIG_DATA 0x0CFC

@@ -1,11 +1,11 @@
 #include <stdint.h>
-#include "driver.h"
-#include "io.h"
+#include "io/driver.h"
+#include "io/io.h"
 #include "cdfs.h"
-#include "mm.h"
-#include "util.h"
+#include "mm/mm.h"
+#include "core/util.h"
 #include "serial.h"
-#include "peloader.h"
+#include "loader/peloader.h"
 
 typedef struct _LOADED_DRIVER {
     char path[64];

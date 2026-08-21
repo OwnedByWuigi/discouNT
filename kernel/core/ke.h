@@ -1,8 +1,8 @@
-// kernel/ke.h
+// kernel/core/ke.h
 #ifndef KE_H
 #define KE_H
 #include <stdint.h>
-#include "object.h"
+#include "ob/object.h"
 
 typedef enum {
     THREAD_READY = 0,

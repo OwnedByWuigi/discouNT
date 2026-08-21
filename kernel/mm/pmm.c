@@ -1,7 +1,7 @@
 #include <stdint.h>
-#include "pmm.h"
-#include "multiboot.h"
-#include "util.h"
+#include "mm/pmm.h"
+#include "arch/x86/multiboot.h"
+#include "core/util.h"
 
 #define PMM_MAX_PAGES 1048576U /* Physical addresses below 4 GiB. */
 #define PMM_BITMAP_BYTES (PMM_MAX_PAGES / 8)

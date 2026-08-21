@@ -1,7 +1,7 @@
 #ifndef WIN32K_H
 #define WIN32K_H
 #include <stdint.h>
-#include "object.h"
+#include "ob/object.h"
 
 #define WM_CREATE   0x0001
 #define WM_PAINT    0x000F

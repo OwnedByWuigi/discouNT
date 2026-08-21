@@ -1,6 +1,6 @@
 #include <stdint.h>
-#include "vmm.h"
-#include "pmm.h"
+#include "mm/vmm.h"
+#include "mm/pmm.h"
 
 /* The boot environment maintains an identity-mapped kernel address space.
  * This layer owns virtual allocations separately from the physical bitmap;

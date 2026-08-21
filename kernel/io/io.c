@@ -1,7 +1,7 @@
 #include <stdint.h>
-#include "io.h"
-#include "mm.h"
-#include "util.h"
+#include "io/io.h"
+#include "mm/mm.h"
+#include "core/util.h"
 #include "serial.h"
 
 static uint32_t driver_object_type;

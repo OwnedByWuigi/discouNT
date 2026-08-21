@@ -1,8 +1,8 @@
 #include <stdint.h>
-#include "object.h"
-#include "mm.h"
-#include "hal.h"
-#include "util.h"
+#include "ob/object.h"
+#include "mm/mm.h"
+#include "arch/x86/hal.h"
+#include "core/util.h"
 #include "serial.h"
 
 static HANDLE_TABLE global_table;

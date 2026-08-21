@@ -1,7 +1,7 @@
 #include <stdint.h>
-#include "mm.h"
-#include "pmm.h"
-#include "vmm.h"
+#include "mm/mm.h"
+#include "mm/pmm.h"
+#include "mm/vmm.h"
 
 #define MM_ALIGN 8U
 #define MM_SPLIT_MIN 16U

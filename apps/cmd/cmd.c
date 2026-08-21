@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "guiapp.h"
-#include "version.h"
+#include "core/version.h"
 
 #define CMD_COLS 72
 #define CMD_ROWS 128

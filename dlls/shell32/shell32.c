@@ -2,7 +2,7 @@
 #include "windows.h"
 #include "wingdi.h"
 #include "string.h"
-#include "version.h"
+#include "core/version.h"
 
 static WCHAR g_about_caption[128];
 static WCHAR g_about_other[256];

@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "vga.h"
-#include "portio.h"
+#include "arch/x86/portio.h"
 
 static uint8_t *vga_mem = (uint8_t*)0xA0000;
 

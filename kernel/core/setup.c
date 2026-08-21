@@ -1,12 +1,12 @@
 #include <stdint.h>
-#include "setup.h"
-#include "hal.h"
+#include "core/setup.h"
+#include "arch/x86/hal.h"
 #include "keyboard.h"
 #include "cdfs.h"
 #include "ide.h"
-#include "io.h"
-#include "object.h"
-#include "util.h"
+#include "io/io.h"
+#include "ob/object.h"
+#include "core/util.h"
 
 #define SETUP_COLOR 0x1F
 #define SETUP_STATUS 0x70

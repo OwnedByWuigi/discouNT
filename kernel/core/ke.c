@@ -1,9 +1,9 @@
-// kernel/ke.c
+// kernel/core/ke.c
 #include <stdint.h>
-#include "ke.h"
-#include "mm.h"
-#include "hal.h"
-#include "util.h"
+#include "core/ke.h"
+#include "mm/mm.h"
+#include "arch/x86/hal.h"
+#include "core/util.h"
 
 static THREAD *current_thread = 0;
 static THREAD *ready_queue = 0;

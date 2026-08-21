@@ -42,28 +42,28 @@ CFLAGS := \
 	-fno-pic \
 	-O0
 
-LDFLAGS := -m elf_i386 -T kernel/linker.ld -nostdlib -no-pie
+LDFLAGS := -m elf_i386 -T kernel/arch/x86/linker.ld -nostdlib -no-pie
 
 KERNEL_CORE_SRCS := \
-	kernel/util.c \
-	kernel/rtlpath.c \
-	kernel/mm.c \
-	kernel/pmm.c \
-	kernel/vmm.c \
-	kernel/hal.c \
-	kernel/object.c \
-	kernel/io.c \
-	kernel/ke.c \
-	kernel/peloader.c \
-	kernel/kexports.c \
-	kernel/driver.c \
-	kernel/driver_stubs.c \
-	kernel/setup.c \
-	kernel/subsystem.c \
-	kernel/nativecmd.c \
-	kernel/bugcheck.c \
-	kernel/idt.c \
-	kernel/isr.c \
+	kernel/core/util.c \
+	kernel/rtl/rtlpath.c \
+	kernel/mm/mm.c \
+	kernel/mm/pmm.c \
+	kernel/mm/vmm.c \
+	kernel/arch/x86/hal.c \
+	kernel/ob/object.c \
+	kernel/io/io.c \
+	kernel/core/ke.c \
+	kernel/loader/peloader.c \
+	kernel/core/kexports.c \
+	kernel/io/driver.c \
+	kernel/io/driver_stubs.c \
+	kernel/core/setup.c \
+	kernel/core/subsystem.c \
+	kernel/core/nativecmd.c \
+	kernel/core/bugcheck.c \
+	kernel/arch/x86/idt.c \
+	kernel/arch/x86/isr.c \
 	drivers/fat32/fat32.c \
 	drivers/ide/ide.c \
 	drivers/usb/usb.c \
@@ -74,7 +74,7 @@ KERNEL_CORE_SRCS := \
 	drivers/usb/xhci.c \
 	win32/csrss/csrss.c \
 	win32/smss/smss.c \
-	kernel/entry.c
+	kernel/core/entry.c
 
 KERNEL_SRCS := $(KERNEL_CORE_SRCS)
 KERNEL_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(KERNEL_SRCS))
@@ -150,7 +150,7 @@ $(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
 $(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS)
 	$(LD) $(LDFLAGS) $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS) -o $@
 
-$(ISR_STUBS_OBJ): kernel/isr_stubs.asm
+$(ISR_STUBS_OBJ): kernel/arch/x86/isr_stubs.asm
 	@mkdir -p $(@D)
 	$(NASM) -f elf32 $< -o $@
 
@@ -237,60 +237,60 @@ $(BUILD_DIR)/apps/%.exe: apps/%.c
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
-$(CMD_APP): apps/cmd/cmd.c kernel/version.h
+$(CMD_APP): apps/cmd/cmd.c kernel/core/version.h
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 -Ikernel \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
 $(CONTROL_APP): apps/control/control.c
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
 $(DESK_CPL): apps/control/desk/desk.c
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
-$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/util.c $(TASKMGR_MENU_RES) apps/taskmgr/taskmgr.ico include/win32/commctrl.h include/win32/windows.h
+$(TASKMGR_APP): $(TASKMGR_SRCS) kernel/core/util.c $(TASKMGR_MENU_RES) apps/taskmgr/taskmgr.ico include/win32/commctrl.h include/win32/windows.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
-		$(TASKMGR_SRCS) kernel/util.c
+		$(TASKMGR_SRCS) kernel/core/util.c
 	@objcopy --add-section .disres=$(TASKMGR_MENU_RES) --set-section-flags .disres=readonly,data $@
 	@objcopy --add-section .disicon=apps/taskmgr/taskmgr.ico --set-section-flags .disicon=readonly,data $@
 
-$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/util.c $(NOTEPAD_MENU_RES) $(NOTEPAD_ICON)
+$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/core/util.c $(NOTEPAD_MENU_RES) $(NOTEPAD_ICON)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
-		$(NOTEPAD_SRCS) kernel/util.c
+		$(NOTEPAD_SRCS) kernel/core/util.c
 	@objcopy --add-section .disres=$(NOTEPAD_MENU_RES) --set-section-flags .disres=readonly,data $@
 	@objcopy --add-section .disicon=$(NOTEPAD_ICON) --set-section-flags .disicon=readonly,data $@
 
-$(WINVER_APP): $(WINVER_SRCS) kernel/util.c $(WINVER_MENU_RES)
+$(WINVER_APP): $(WINVER_SRCS) kernel/core/util.c $(WINVER_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
-		$(WINVER_SRCS) kernel/util.c
+		$(WINVER_SRCS) kernel/core/util.c
 	@objcopy --add-section .disres=$(WINVER_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(WHOAMI_APP): apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/util.c include/win32/security.h include/win32/sddl.h
+$(WHOAMI_APP): apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c include/win32/security.h include/win32/sddl.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,main -o $@ \
-		apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/util.c
+		apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c
 
 $(TASKMGR_MENU_RES): apps/taskmgr/taskmgr.rc tools/rc_menu_gen.py
 	@mkdir -p $(@D)
@@ -309,14 +309,14 @@ $(SMSS_APP): win32/smss/smss_app.c
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
 $(CSRSS_APP): win32/csrss/csrss_app.c
 	@mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie -Iinclude/win32 -Iwin32 \
 		-Wl,-e,main \
 		-o $@ \
-		$< kernel/util.c
+		$< kernel/core/util.c
 
 $(SERIAL_SYS): drivers/serial/serial.c drivers/module_entry.c
 	@mkdir -p $(@D)

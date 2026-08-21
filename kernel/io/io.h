@@ -2,7 +2,7 @@
 #define IO_H
 
 #include <stdint.h>
-#include "object.h"
+#include "ob/object.h"
 
 #define IO_MAX_MAJOR_FUNCTION 8
 #define IO_TYPE_DRIVER 0x44525652U

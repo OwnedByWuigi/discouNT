@@ -1,10 +1,10 @@
 #include <stdint.h>
-#include "peloader.h"
-#include "mm.h"
-#include "util.h"
+#include "loader/peloader.h"
+#include "mm/mm.h"
+#include "core/util.h"
 #include "serial.h"
 #include "cdfs.h"
-#include "kexports.h"
+#include "core/kexports.h"
 
 // DLL list
 static LOADED_DLL *dll_list = 0;
