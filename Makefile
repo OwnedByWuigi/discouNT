@@ -126,13 +126,19 @@ USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 IDE_SYS := $(BUILD_DIR)/drivers/ide/ide.sys
 DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS) $(IDE_SYS)
 
-.PHONY: all clean iso usb-image kernel dlls apps run-x86 run-amd64 x86 amd64
+.PHONY: all clean iso usb-image kernel dlls apps run-x86 run-amd64 x86 amd64 loongarch64 run-loongarch64
 
 x86:
 	$(MAKE) BUILD_DIR=build/x86 ISO_NAME=ntos-x86.iso all
 
 amd64:
 	$(MAKE) -f Makefile.amd64
+
+loongarch64:
+	$(MAKE) -f Makefile.loongarch64
+
+run-loongarch64:
+	$(MAKE) -f Makefile.loongarch64 run
 
 all: $(ISO_NAME)
 
