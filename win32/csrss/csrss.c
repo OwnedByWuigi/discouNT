@@ -1220,8 +1220,8 @@ void CsrssSessionRun(void *mb_info) {
     while (running) {
         UsbPoll();
         if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
-            if (csrss_spawn_gui_instance("/SYSTEM32/EXPLORER.EXE", "/DESKTOP") < 0) {
-                csrss_queue_launch_error("/SYSTEM32/EXPLORER.EXE", "The logon shell could not be started.");
+            if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE", "") < 0) {
+                csrss_queue_launch_error("/SYSTEM32/CMD.EXE", "The logon shell could not be started.");
                 g_session_state = CSRSS_SESSION_LOGGING_OFF;
             } else {
                 g_shell_started = 1;

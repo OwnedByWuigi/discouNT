@@ -62,6 +62,75 @@ static void cmd_redraw(void) {
     if (g_api && g_api->UpdateWindow && cmd_window != 0xFFFFFFFFU) g_api->UpdateWindow(cmd_window);
 }
 
+/* Repaint only the console scrollbar column. Dragging the thumb must not
+ * tear the whole console down to black and re-render every glyph on each
+ * pointer move: the text does not move relative to the window during a
+ * drag, only the thumb does, so a full repaint is pure flicker. */
+static void cmd_draw_scrollbar(int client_x, int client_y, int client_w, int client_h,
+                               int visible_rows, int total_rows) {
+    int sx;
+    int sh;
+    int track;
+    int max;
+    int thumb;
+    int travel;
+    int thumb_y;
+
+    if (!g_api) return;
+    if (client_w < CMD_SCROLL_SIZE + 24) return;
+
+    sx = client_x + client_w - CMD_SCROLL_SIZE;
+    sh = client_h;
+    track = sh - CMD_SCROLL_SIZE * 2;
+    if (track <= 0) return;
+    max = cmd_scroll_max(client_h);
+    thumb = max > 0 ? (visible_rows * track) / total_rows : track;
+    if (thumb < 8) thumb = 8;
+    if (thumb > track) thumb = track;
+    travel = track - thumb;
+    thumb_y = CMD_SCROLL_SIZE + (max > 0 ? (max - cmd_scroll) * travel / max : 0);
+    g_api->FillRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_LIGHT_GRAY);
+    g_api->DrawRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_BLACK);
+    g_api->DrawString(sx + 3, client_y + 2, "^", COLOR_BLACK, COLOR_LIGHT_GRAY);
+    g_api->DrawString(sx + 3, client_y + sh - 11, "v", COLOR_BLACK, COLOR_LIGHT_GRAY);
+    g_api->FillRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_WHITE);
+    g_api->DrawRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_BLACK);
+}
+
+/* Derive the client screen origin (border offset) and redraw only the
+ * scrollbar column of the console window. */
+static void cmd_redraw_scrollbar(void) {
+    GUI_RECT client;
+    GUI_RECT win;
+    int win_w;
+    int win_h;
+    int client_w;
+    int client_h;
+    int border_x;
+    int border_y;
+    int client_x;
+    int client_y;
+
+    if (!g_api || !g_api->GetClientRect || !g_api->GetWindowRect) return;
+    if (cmd_window == 0xFFFFFFFFU) return;
+    g_api->GetClientRect(cmd_window, &client);
+    g_api->GetWindowRect(cmd_window, &win);
+
+    win_w = win.right - win.left;
+    win_h = win.bottom - win.top;
+    client_w = client.right - client.left;
+    client_h = client.bottom - client.top;
+
+    border_x = (win_w > client_w) ? ((win_w - client_w) / 2) : 0;
+    border_y = (win_h > client_h) ? (win_h - client_h - border_x) : 0;
+
+    client_x = win.left + border_x;
+    client_y = win.top + border_y;
+
+    cmd_draw_scrollbar(client_x, client_y, client_w, client_h,
+                       cmd_visible_rows(client_h), line_count + 1);
+}
+
 static void uppercase_copy(char *dst, const char *src, int max_len) {
     int i = 0;
     while (src[i] && i < max_len - 1) {
@@ -585,13 +654,17 @@ static void cmd_handle_scroll_mouse(int x, int y, uint8_t event_type) {
         cmd_clamp_scroll(rc.bottom);
         cmd_redraw();
     } else if (event_type == GUI_MOUSE_MOVE && cmd_scroll_drag) {
+        int prev_scroll = cmd_scroll;
         if (travel > 0) cmd_scroll = cmd_scroll_drag_start -
             ((y - cmd_scroll_drag_origin) * max) / travel;
         cmd_clamp_scroll(rc.bottom);
-        cmd_redraw();
+        /* Only the thumb moves while dragging; never rebuild the whole
+         * console per pointer event or the window flickers. */
+        if (cmd_scroll != prev_scroll) cmd_redraw_scrollbar();
     } else if (event_type == GUI_MOUSE_LUP && cmd_scroll_drag) {
         cmd_scroll_drag = 0;
-        cmd_redraw();
+        /* The text is unchanged since the last drag-move repaint. */
+        cmd_redraw_scrollbar();
     }
 }
 
@@ -667,25 +740,7 @@ static void cmd_wndproc(GUI_HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t
         }
 
         /* Console scroll bar: the live prompt is the bottom of the range. */
-        if (client_w >= CMD_SCROLL_SIZE + 24) {
-            int sx = client_x + client_w - CMD_SCROLL_SIZE;
-            int sh = client_h;
-            int track = sh - CMD_SCROLL_SIZE * 2;
-            int max = cmd_scroll_max(client_h);
-            int thumb = max > 0 ? (visible_rows * track) / total_rows : track;
-            int travel;
-            int thumb_y;
-            if (thumb < 8) thumb = 8;
-            if (thumb > track) thumb = track;
-            travel = track - thumb;
-            thumb_y = CMD_SCROLL_SIZE + (max > 0 ? (max - cmd_scroll) * travel / max : 0);
-            g_api->FillRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_LIGHT_GRAY);
-            g_api->DrawRect(sx, client_y, CMD_SCROLL_SIZE, sh, COLOR_BLACK);
-            g_api->DrawString(sx + 3, client_y + 2, "^", COLOR_BLACK, COLOR_LIGHT_GRAY);
-            g_api->DrawString(sx + 3, client_y + sh - 11, "v", COLOR_BLACK, COLOR_LIGHT_GRAY);
-            g_api->FillRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_WHITE);
-            g_api->DrawRect(sx + 2, client_y + thumb_y, CMD_SCROLL_SIZE - 4, thumb, COLOR_BLACK);
-        }
+        cmd_draw_scrollbar(client_x, client_y, client_w, client_h, visible_rows, total_rows);
     }
 }
 
