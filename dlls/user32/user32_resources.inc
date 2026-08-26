@@ -119,6 +119,13 @@ int LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax)
     WCHAR temp[128];
     int i, len;
     (void)hInstance;
+    if (uID == 2) {
+        const char *caption = "Program Manager";
+        if (!lpBuffer || cchBufferMax <= 0) return 0;
+        for (i = 0; caption[i] && i < cchBufferMax - 1; i++) lpBuffer[i] = caption[i];
+        lpBuffer[i] = 0;
+        return i;
+    }
     len = LoadStringW(hInstance, uID, temp, 128);
     if (!lpBuffer || cchBufferMax <= 0) return 0;
     if (len >= cchBufferMax) len = cchBufferMax - 1;

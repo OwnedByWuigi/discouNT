@@ -18,6 +18,7 @@ extern void *PeGetLoadedModuleHandle(const char *name);
 extern uint32_t strlen(const char *s);
 extern void *memset(void *dest, int c, uint32_t n);
 extern void *memcpy(void *dest, const void *src, uint32_t n);
+extern void *realloc(void *memory, SIZE_T size);
 extern void SerialPutString(const char *str);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 extern int CsrssExecuteImage(const char *path);
@@ -312,6 +313,54 @@ HLOCAL LocalAlloc(UINT flags, SIZE_T bytes) {
 HLOCAL LocalFree(HLOCAL memory) {
     if (memory) kfree(memory);
     return (HLOCAL)0;
+}
+
+HLOCAL LocalLock(HLOCAL memory) {
+    return memory;
+}
+
+HLOCAL LocalReAlloc(HLOCAL memory, SIZE_T bytes, UINT flags) {
+    (void)flags;
+    return (HLOCAL)realloc(memory, bytes);
+}
+
+LPSTR lstrcpyA(LPSTR dst, LPCSTR src) {
+    int i = 0;
+    if (!dst) return dst;
+    if (!src) { dst[0] = 0; return dst; }
+    do { dst[i] = src[i]; } while (src[i++]);
+    return dst;
+}
+
+LPSTR lstrcpynA(LPSTR dst, LPCSTR src, int count) {
+    int i = 0;
+    if (!dst || count <= 0) return dst;
+    if (src) while (src[i] && i < count - 1) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
+    return dst;
+}
+
+int lstrcmpA(LPCSTR a, LPCSTR b) {
+    int i = 0;
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    while (a[i] && a[i] == b[i]) i++;
+    return (unsigned char)a[i] == (unsigned char)b[i] ? 0 :
+           ((unsigned char)a[i] < (unsigned char)b[i] ? -1 : 1);
+}
+
+int lstrcmpiA(LPCSTR a, LPCSTR b) {
+    int i = 0;
+    char ca, cb;
+    if (!a || !b) return a == b ? 0 : (a ? 1 : -1);
+    do {
+        ca = a[i]; cb = b[i++];
+        if (ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+        if (ca != cb) return ca < cb ? -1 : 1;
+    } while (ca);
+    return 0;
 }
 
 int HeapFree(void *heap, uint32_t flags, void *ptr) {
@@ -1198,6 +1247,118 @@ int printf(const char *format, ...) {
     WriteConsoleA(GetStdHandle((uint32_t)-11), buffer, (uint32_t)result, &written, 0);
     return result;
 }
+
+DWORD GetCurrentDirectoryA(DWORD size, LPSTR buffer) {
+    const char *directory = "/";
+    if (!buffer || size == 0) return 1;
+    if (size < 2) { buffer[0] = 0; return 1; }
+    buffer[0] = directory[0];
+    buffer[1] = 0;
+    return 1;
+}
+
+DWORD GetPrivateProfileStringA(LPCSTR app, LPCSTR key, LPCSTR def,
+                               LPSTR buffer, DWORD size, LPCSTR file) {
+    (void)app; (void)key; (void)file;
+    if (!buffer || !size) return 0;
+    lstrcpynA(buffer, def ? def : "", (int)size);
+    return strlen(buffer);
+}
+
+int GetPrivateProfileIntA(LPCSTR app, LPCSTR key, int def, LPCSTR file) {
+    char value[32];
+    int result = 0, sign = 1, i = 0;
+    (void)GetPrivateProfileStringA(app, key, "", value, sizeof(value), file);
+    if (!value[0]) return def;
+    if (value[0] == '-') { sign = -1; i++; }
+    while (value[i] >= '0' && value[i] <= '9') result = result * 10 + value[i++] - '0';
+    return sign * result;
+}
+
+BOOL WritePrivateProfileStringA(LPCSTR app, LPCSTR key, LPCSTR value, LPCSTR file) {
+    (void)app; (void)key; (void)value; (void)file;
+    return TRUE;
+}
+
+UINT WinExec(LPCSTR command, UINT show) {
+    (void)show;
+    return command && CsrssExecuteImage(command) >= 0 ? 33 : 0;
+}
+
+static HFILE k32_open_legacy_file(LPCSTR path, int write) {
+    WCHAR wide[260];
+    int i = 0;
+    HANDLE handle;
+    if (!path) return HFILE_ERROR;
+    while (path[i] && i < (int)(sizeof(wide) / sizeof(wide[0])) - 1) { wide[i] = (WCHAR)(unsigned char)path[i]; i++; }
+    wide[i] = 0;
+    handle = CreateFileW(wide, write ? GENERIC_WRITE : GENERIC_READ, FILE_SHARE_READ,
+                         0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    return handle == INVALID_HANDLE_VALUE ? HFILE_ERROR : (HFILE)(LONG_PTR)handle;
+}
+
+HFILE OpenFile(LPCSTR path, LPOFSTRUCT result, UINT style) {
+    HFILE file;
+    (void)style;
+    file = k32_open_legacy_file(path, 0);
+    if (result) { result->cBytes = sizeof(*result); result->fFixedDisk = 1; }
+    return file;
+}
+HFILE _lopen(LPCSTR path, int read_write) { return k32_open_legacy_file(path, read_write != 0); }
+UINT _lread(HFILE file, LPVOID buffer, UINT bytes) { DWORD done = 0; return ReadFile((HANDLE)(LONG_PTR)file, buffer, bytes, &done, 0) ? done : (UINT)-1; }
+UINT _lwrite(HFILE file, LPCVOID buffer, UINT bytes) { DWORD done = 0; return WriteFile((HANDLE)(LONG_PTR)file, (LPVOID)buffer, bytes, &done, 0) ? done : (UINT)-1; }
+HFILE _lcreat(LPCSTR path, int attributes) { (void)attributes; return k32_open_legacy_file(path, 1); }
+HFILE _lclose(HFILE file) { return CloseHandle((HANDLE)(LONG_PTR)file) ? 0 : HFILE_ERROR; }
+LONG _llseek(HFILE file, LONG offset, int origin) {
+    K32_FILE_HANDLE *handle = k32_file_from_handle((HANDLE)(LONG_PTR)file);
+    uint32_t position;
+    if (!handle) return HFILE_ERROR;
+    if (origin == 0) position = (uint32_t)offset;
+    else if (origin == 1) position = handle->pos + (uint32_t)offset;
+    else position = handle->size + (uint32_t)offset;
+    if (position > handle->size) position = handle->size;
+    handle->pos = position;
+    return (LONG)position;
+}
+
+int sscanf(const char *buffer, const char *format, ...) {
+    va_list args;
+    int assigned = 0, consumed = 0;
+    va_start(args, format);
+    while (buffer && format && *format) {
+        if (*format != '%') { if (*format == ' ' || *format == '\t') { while (*buffer == ' ' || *buffer == '\t') { buffer++; consumed++; } format++; continue; } if (*buffer++ != *format++) break; consumed++; continue; }
+        format++;
+        if (*format == 'n') { *va_arg(args, int *) = consumed; format++; continue; }
+        if (*format == 'd') { int sign = 1, value = 0, digits = 0; int *out = va_arg(args, int *); format++; while (*buffer == ' ' || *buffer == '\t') { buffer++; consumed++; } if (*buffer == '-') { sign = -1; buffer++; consumed++; } while (*buffer >= '0' && *buffer <= '9') { value = value * 10 + (*buffer++ - '0'); consumed++; digits++; } if (!digits) break; *out = sign * value; assigned++; continue; }
+        break;
+    }
+    va_end(args);
+    return assigned;
+}
+
+void *memcpy(void *dest, const void *src, uint32_t bytes) {
+    uint8_t *d = (uint8_t *)dest;
+    const uint8_t *s = (const uint8_t *)src;
+    uint32_t i;
+    for (i = 0; i < bytes; i++) d[i] = s[i];
+    return dest;
+}
+
+void *memset(void *dest, int value, uint32_t bytes) {
+    uint8_t *d = (uint8_t *)dest;
+    uint32_t i;
+    for (i = 0; i < bytes; i++) d[i] = (uint8_t)value;
+    return dest;
+}
+
+uint32_t strlen(const char *text) {
+    uint32_t length = 0;
+    while (text && text[length]) length++;
+    return length;
+}
+
+int strcmp(const char *a, const char *b) { return lstrcmpA(a, b); }
+char *strcpy(char *dst, const char *src) { return lstrcpyA(dst, src); }
 
 HRESULT SetThreadDescription(HANDLE thread, LPCWSTR description) {
     (void)thread; (void)description;

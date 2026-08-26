@@ -899,6 +899,14 @@ BOOL GdiDestroyIcon(HICON hIcon) {
     return TRUE;
 }
 
+BOOL GetIconInfo(HICON hIcon, PICONINFO info) {
+    DISCOUNT_ICON *icon = (DISCOUNT_ICON *)hIcon;
+    if (!icon || icon->magic != DISCOUNT_ICON_MAGIC || !info) return FALSE;
+    memset(info, 0, sizeof(*info));
+    info->fIcon = TRUE;
+    return TRUE;
+}
+
 BOOL Rectangle(HDC hdc, int left, int top, int right, int bottom) {
     GDIDC *dc = (GDIDC*)hdc;
     GDIPEN *pen;

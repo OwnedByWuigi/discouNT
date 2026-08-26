@@ -31,6 +31,32 @@ typedef struct tagOFNW {
     DWORD        FlagsEx;
 } OPENFILENAMEW, *LPOPENFILENAMEW;
 
+typedef struct tagOFNA {
+    DWORD        lStructSize;
+    HWND         hwndOwner;
+    HINSTANCE    hInstance;
+    LPCSTR       lpstrFilter;
+    LPSTR        lpstrCustomFilter;
+    DWORD        nMaxCustFilter;
+    DWORD        nFilterIndex;
+    LPSTR        lpstrFile;
+    DWORD        nMaxFile;
+    LPSTR        lpstrFileTitle;
+    DWORD        nMaxFileTitle;
+    LPCSTR       lpstrInitialDir;
+    LPCSTR       lpstrTitle;
+    DWORD        Flags;
+    WORD         nFileOffset;
+    WORD         nFileExtension;
+    LPCSTR       lpstrDefExt;
+    LPARAM       lCustData;
+    LPOFNHOOKPROC lpfnHook;
+    LPCSTR       lpTemplateName;
+    void        *pvReserved;
+    DWORD        dwReserved;
+    DWORD        FlagsEx;
+} OPENFILENAMEA, *LPOPENFILENAMEA;
+
 typedef struct tagCHOOSEFONTW {
     DWORD        lStructSize;
     HWND         hwndOwner;
@@ -134,6 +160,7 @@ typedef struct tagPDW {
 #define PD_USEDEVMODECOPIES     0x00040000
 
 BOOL WINAPI GetOpenFileNameW(LPOPENFILENAMEW ofn);
+BOOL WINAPI GetOpenFileNameA(LPOPENFILENAMEA ofn);
 BOOL WINAPI GetSaveFileNameW(LPOPENFILENAMEW ofn);
 BOOL WINAPI ChooseFontW(LPCHOOSEFONTW cf);
 HWND WINAPI FindTextW(LPFINDREPLACEW fr);

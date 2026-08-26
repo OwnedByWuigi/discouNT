@@ -2330,6 +2330,10 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         hdc = BeginPaint(hWnd, &ps);
         GetClientRect(hWnd, &rc);
         switch (win->ctrl_type) {
+        case U32_CTRL_GENERIC:
+            FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+            if (win->top_level && win->menu) u32_draw_menu_bar(hdc, win, &rc);
+            break;
         case U32_CTRL_DIALOG:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             if (win->top_level && win->menu) {
@@ -3458,6 +3462,44 @@ BOOL WINAPI AdjustWindowRectEx(RECT *rect, DWORD style, BOOL menu, DWORD exstyle
 
 BOOL WINAPI AdjustWindowRect(RECT*r,DWORD style,BOOL menu){return AdjustWindowRectEx(r,style,menu,0);}
 BOOL WINAPI DrawIconEx(HDC dc,int x,int y,HICON icon,int cx,int cy,UINT step,HBRUSH brush,UINT flags){(void)dc;(void)x;(void)y;(void)icon;(void)cx;(void)cy;(void)step;(void)brush;(void)flags;return TRUE;}
+BOOL WINAPI DrawIcon(HDC dc,int x,int y,HICON icon){return DrawIconEx(dc,x,y,icon,0,0,0,NULL,DI_NORMAL);}
+BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text) { WCHAR wide[256]; u32_ansi_to_wide(text ? text : "", wide, 256); return SetWindowTextW(hwnd, wide); }
+BOOL WINAPI SetDlgItemTextA(HWND dlg, int id, LPCSTR text) { WCHAR wide[256]; u32_ansi_to_wide(text ? text : "", wide, 256); return SetDlgItemTextW(dlg, id, wide); }
+UINT WINAPI GetDlgItemTextA(HWND dlg, int id, LPSTR text, int count) { WCHAR wide[256]; UINT result; if (!text || count <= 0) return 0; result = GetDlgItemTextW(dlg, id, wide, (int)(sizeof(wide) / sizeof(wide[0]))); u32_wide_to_ansi(wide, text, count); return result; }
+LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) { return SendMessageW(hwnd, msg, wparam, lparam); }
+LRESULT WINAPI SendDlgItemMessageA(HWND dlg, int id, UINT msg, WPARAM wparam, LPARAM lparam) { return SendMessageA(GetDlgItem(dlg, id), msg, wparam, lparam); }
+LRESULT WINAPI DefFrameProcW(HWND hwnd, HWND mdi, UINT msg, WPARAM wparam, LPARAM lparam) { (void)mdi; return DefWindowProcW(hwnd, msg, wparam, lparam); }
+LRESULT WINAPI DefMDIChildProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) { return DefWindowProcW(hwnd, msg, wparam, lparam); }
+BOOL WINAPI CloseWindow(HWND hwnd) { return ShowWindow(hwnd, SW_MINIMIZE); }
+BOOL WINAPI IsZoomed(HWND hwnd) { (void)hwnd; return FALSE; }
+UINT WINAPI ArrangeIconicWindows(HWND hwnd) { (void)hwnd; return 0; }
+int WINAPI wsprintfA(LPSTR out, LPCSTR format, ...) {
+    va_list ap;
+    int pos = 0;
+    if (!out || !format) return 0;
+    va_start(ap, format);
+    while (*format && pos < 1023) {
+        if (*format != '%') { out[pos++] = *format++; continue; }
+        format++;
+        if (*format == '%') { out[pos++] = *format++; continue; }
+        if (*format == 's') {
+            LPCSTR text = va_arg(ap, LPCSTR);
+            if (!text) text = "";
+            while (*text && pos < 1023) out[pos++] = *text++;
+            format++;
+        } else if (*format == 'd' || *format == 'i') {
+            int value = va_arg(ap, int), n = value < 0 ? -value : value;
+            char digits[12]; int count = 0;
+            if (value < 0 && pos < 1023) out[pos++] = '-';
+            do { digits[count++] = (char)('0' + n % 10); n /= 10; } while (n && count < (int)sizeof(digits));
+            while (count && pos < 1023) out[pos++] = digits[--count];
+            format++;
+        } else { out[pos++] = '%'; if (*format) out[pos++] = *format++; }
+    }
+    va_end(ap);
+    out[pos] = 0;
+    return pos;
+}
 BOOL WINAPI UpdateLayeredWindow(HWND hwnd,HDC dst,const POINT*dp,const SIZE*s,HDC src,const POINT*sp,COLORREF key,const BLENDFUNCTION*b,DWORD flags){(void)dst;(void)dp;(void)s;(void)src;(void)sp;(void)key;(void)b;(void)flags;InvalidateRect(hwnd,0,TRUE);return TRUE;}
 BOOL WINAPI SendNotifyMessageW(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){PostMessageW(hwnd,msg,wp,lp);return TRUE;}
 HWND WINAPI SetParent(HWND child,HWND parent){(void)child;return parent;}
@@ -3574,6 +3616,7 @@ BOOL PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     return u32_enqueue_message(hWnd, Msg, wParam, lParam);
 }
 BOOL WinHelpW(HWND hWndMain, LPCWSTR lpszHelp, UINT uCommand, ULONG_PTR dwData) { (void)hWndMain; (void)lpszHelp; (void)uCommand; (void)dwData; return TRUE; }
+BOOL WinHelpA(HWND hWndMain, LPCSTR lpszHelp, UINT uCommand, ULONG_PTR dwData) { (void)hWndMain; (void)lpszHelp; (void)uCommand; (void)dwData; return TRUE; }
 BOOL GetCursorPos(LPPOINT lpPoint) { if (!lpPoint) return FALSE; lpPoint->x = 0; lpPoint->y = 0; return TRUE; }
 LONG_PTR GetWindowLongW(HWND hWnd, int nIndex) {
     U32_WINDOW *win = u32_lookup_window(hWnd);

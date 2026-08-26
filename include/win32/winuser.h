@@ -61,13 +61,15 @@ typedef struct tagMINMAXINFO {
     POINT ptMaxTrackSize;
 } MINMAXINFO, *PMINMAXINFO, *LPMINMAXINFO;
 typedef struct tagCREATESTRUCTW { LPVOID lpCreateParams; HINSTANCE hInstance; HMENU hMenu; HWND hwndParent; int cy,cx,y,x; LONG style; LPCWSTR lpszName,lpszClass; DWORD dwExStyle; } CREATESTRUCTW,*LPCREATESTRUCTW;
+typedef struct tagMDICREATESTRUCTW { LPCWSTR szClass; LPCWSTR szTitle; HINSTANCE hOwner; int x,y,cx,cy; DWORD style; LPARAM lParam; } MDICREATESTRUCTW,*LPMDICREATESTRUCTW;
+typedef struct tagCLIENTCREATESTRUCT { HMENU hWindowMenu; UINT idFirstChild; } CLIENTCREATESTRUCT,*LPCLIENTCREATESTRUCT;
 typedef struct tagWINDOWPOS { HWND hwnd,hwndInsertAfter; int x,y,cx,cy; UINT flags; } WINDOWPOS,*LPWINDOWPOS;
 typedef struct tagDRAWITEMSTRUCT { UINT CtlType; UINT CtlID; UINT itemID; UINT itemAction; UINT itemState; HWND hwndItem; HDC hDC; RECT rcItem; ULONG_PTR itemData; } DRAWITEMSTRUCT, *PDRAWITEMSTRUCT, *LPDRAWITEMSTRUCT;
 typedef struct tagCOPYDATASTRUCT { ULONG_PTR dwData; DWORD cbData; LPVOID lpData; } COPYDATASTRUCT, *PCOPYDATASTRUCT;
 typedef struct tagTPMPARAMS { UINT cbSize; RECT rcExclude; } TPMPARAMS,*LPTPMPARAMS;
 typedef struct tagMENUITEMINFOW { UINT cbSize,fMask,fType,fState,wID; HMENU hSubMenu; HBITMAP hbmpChecked,hbmpUnchecked; ULONG_PTR dwItemData; LPWSTR dwTypeData; UINT cch; HBITMAP hbmpItem; } MENUITEMINFOW,*LPMENUITEMINFOW;
 typedef struct tagMENUINFO { DWORD cbSize,fMask,dwStyle; UINT cyMax; HBRUSH hbrBack; DWORD dwContextHelpID; ULONG_PTR dwMenuData; } MENUINFO,*LPMENUINFO;
-typedef struct tagMEASUREITEMSTRUCT { UINT CtlType,CtlID,itemID,itemWidth,itemHeight; ULONG_PTR itemData; } MEASUREITEMSTRUCT,*LPMEASUREITEMSTRUCT;
+typedef struct tagMEASUREITEMSTRUCT { UINT CtlType,CtlID,itemID,itemWidth,itemHeight; ULONG_PTR itemData; } MEASUREITEMSTRUCT,*LPMEASUREITEMSTRUCT,*PMEASUREITEMSTRUCT;
 
 #define CW_USEDEFAULT ((int)0x80000000)
 #define MAKEINTATOM(i) ((LPCWSTR)(ULONG_PTR)(WORD)(i))
@@ -189,12 +191,23 @@ typedef struct tagSCROLLINFO {
 #define WM_DROPFILES        0x0233
 #define DM_SETDEFID         (WM_USER + 1)
 #define WM_SETICON          0x0080
+#define STM_SETICON         0x0170
 #define WM_NCPAINT          0x0085
 #define WM_NCCREATE         0x0081
 #define WM_NCCALCSIZE       0x0083
 #define WM_ENTERMENULOOP    0x0211
 #define WM_EXITMENULOOP     0x0212
 #define WM_INITMENUPOPUP    0x0117
+#define WM_INITMENU         0x0116
+#define WM_CHILDACTIVATE    0x0022
+#define WM_PAINTICON        0x0026
+#define WM_MDICREATE        0x0220
+#define WM_MDIDESTROY       0x0221
+#define WM_MDITILE          0x0226
+#define WM_MDICASCADE       0x0227
+#define WM_MDIICONARRANGE   0x0228
+#define WM_MDIGETACTIVE     0x0229
+#define WM_MDISETMENU       0x0230
 #define WM_MENUSELECT       0x011F
 #define WM_SIZING           0x0214
 #define WM_RBUTTONDOWN      0x0204
@@ -492,6 +505,11 @@ BOOL WINAPI SetMenuInfo(HMENU menu,const MENUINFO *info);
 
 #define HELP_FINDER        0x000b
 #define HELP_INDEX         0x0003
+#define HELP_CONTENTS      0x0003
+
+#define WHITE_BRUSH        0
+#define NULL_BRUSH         5
+#define MB_DEFBUTTON2      0x00000100
 
 #define TPM_LEFTBUTTON     0x0000L
 #define TPM_LEFTALIGN      0x0000L
@@ -504,6 +522,9 @@ BOOL WINAPI SetMenuInfo(HMENU menu,const MENUINFO *info);
 #define CB_ERR             (-1)
 #define CB_ADDSTRING       0x0143
 #define CB_GETCURSEL       0x0147
+#define CB_GETLBTEXT       0x0148
+#define CB_GETLBTEXTLEN    0x0149
+#define CB_SETITEMHEIGHT   0x0153
 #define CB_SETCURSEL       0x014E
 
 #define MF_BYCOMMAND       0x00000000L

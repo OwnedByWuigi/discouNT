@@ -32,6 +32,23 @@ BOOL GetOpenFileNameW(LPOPENFILENAMEW ofn) {
     return TRUE;
 }
 
+BOOL GetOpenFileNameA(LPOPENFILENAMEA ofn) {
+    g_commdlg_error = 0;
+    if (!ofn || !ofn->lpstrFile || !ofn->nMaxFile) return FALSE;
+    if (!ofn->lpstrFile[0]) {
+        const char *path = "/UNTITLED.TXT";
+        DWORD i = 0;
+        while (path[i] && i < ofn->nMaxFile - 1) { ofn->lpstrFile[i] = path[i]; i++; }
+        ofn->lpstrFile[i] = 0;
+    }
+    if (ofn->lpstrFileTitle && ofn->nMaxFileTitle) {
+        DWORD i = 0;
+        while (ofn->lpstrFile[i] && i < ofn->nMaxFileTitle - 1) { ofn->lpstrFileTitle[i] = ofn->lpstrFile[i]; i++; }
+        ofn->lpstrFileTitle[i] = 0;
+    }
+    return TRUE;
+}
+
 BOOL GetSaveFileNameW(LPOPENFILENAMEW ofn) {
     return GetOpenFileNameW(ofn);
 }

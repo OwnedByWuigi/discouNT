@@ -359,4 +359,56 @@ BOOL WINAPI DrawStateW(HDC dc, HBRUSH brush, void *draw, LPARAM data,
 int WINAPI GetWindowTextLength(HWND hwnd);
 BOOL WINAPI PostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
+/* Legacy ANSI and 16-bit-compatible interfaces used by imported Win32 apps. */
+DWORD WINAPI GetCurrentDirectoryA(DWORD size, LPSTR buffer);
+LPSTR WINAPI lstrcpyA(LPSTR dst, LPCSTR src);
+LPSTR WINAPI lstrcpynA(LPSTR dst, LPCSTR src, int count);
+int WINAPI lstrcmpA(LPCSTR first, LPCSTR second);
+int WINAPI lstrcmpiA(LPCSTR first, LPCSTR second);
+LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT WINAPI SendDlgItemMessageA(HWND dlg, int id, UINT msg, WPARAM wparam, LPARAM lparam);
+BOOL WINAPI SetDlgItemTextA(HWND dlg, int id, LPCSTR text);
+UINT WINAPI GetDlgItemTextA(HWND dlg, int id, LPSTR text, int count);
+BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text);
+HLOCAL WINAPI LocalLock(HLOCAL mem);
+HLOCAL WINAPI LocalReAlloc(HLOCAL mem, SIZE_T bytes, UINT flags);
+BOOL WINAPI DrawIcon(HDC dc, int x, int y, HICON icon);
+UINT WINAPI WinExec(LPCSTR command, UINT show);
+BOOL WINAPI CloseWindow(HWND hwnd);
+LRESULT WINAPI DefMDIChildProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT WINAPI DefFrameProcW(HWND hwnd, HWND mdi, UINT msg, WPARAM wparam, LPARAM lparam);
+BOOL WINAPI IsZoomed(HWND hwnd);
+UINT WINAPI ArrangeIconicWindows(HWND hwnd);
+BOOL WINAPI WinHelpA(HWND hwnd, LPCSTR help, UINT command, ULONG_PTR data);
+int WINAPI wsprintfA(LPSTR buffer, LPCSTR format, ...);
+HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index);
+BOOL WINAPI GetIconInfo(HICON icon, PICONINFO info);
+int WINAPI GetPrivateProfileIntA(LPCSTR app, LPCSTR key, int def, LPCSTR file);
+DWORD WINAPI GetPrivateProfileStringA(LPCSTR app, LPCSTR key, LPCSTR def, LPSTR buffer, DWORD size, LPCSTR file);
+BOOL WINAPI WritePrivateProfileStringA(LPCSTR app, LPCSTR key, LPCSTR value, LPCSTR file);
+
+typedef struct tagOFSTRUCT {
+    BYTE cBytes;
+    BYTE fFixedDisk;
+    WORD nErrCode;
+    BYTE reserved[4];
+    char szPathName[128];
+} OFSTRUCT, *LPOFSTRUCT;
+
+#define HFILE_ERROR ((HFILE)-1)
+#define OF_READ     0x0000
+#define OF_WRITE    0x0001
+#define OF_READWRITE 0x0002
+#define OF_CREATE   0x1000
+#define OF_EXIST    0x4000
+#define LMEM_MOVEABLE 0x0002
+
+HFILE WINAPI OpenFile(LPCSTR path, LPOFSTRUCT result, UINT style);
+HFILE WINAPI _lopen(LPCSTR path, int read_write);
+UINT WINAPI _lread(HFILE file, LPVOID buffer, UINT bytes);
+UINT WINAPI _lwrite(HFILE file, LPCVOID buffer, UINT bytes);
+HFILE WINAPI _lcreat(LPCSTR path, int attributes);
+HFILE WINAPI _lclose(HFILE file);
+LONG WINAPI _llseek(HFILE file, LONG offset, int origin);
+
 #endif

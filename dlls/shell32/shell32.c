@@ -266,6 +266,11 @@ int WINAPI ShellAboutW(HWND hWnd, LPCWSTR szApp, LPCWSTR szOtherStuff, HICON hIc
     return sh_run_about_window(szApp, szOtherStuff);
 }
 
+HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index) {
+    (void)instance; (void)file; (void)index;
+    return LoadIconW(0, IDI_WINLOGO);
+}
+
 HINSTANCE WINAPI ShellExecuteW(HWND hwnd,LPCWSTR operation,LPCWSTR file,LPCWSTR parameters,LPCWSTR directory,INT show) {
     STARTUPINFOW startup;
     PROCESS_INFORMATION process;
