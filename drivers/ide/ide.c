@@ -146,11 +146,17 @@ static int ide_probe(uint16_t io_base, uint16_t control_base, uint8_t slave) {
     outb(io_base + ATA_LBA_LOW, 0);
     outb(io_base + ATA_LBA_MID, 0);
     outb(io_base + ATA_LBA_HIGH, 0);
-    outb(io_base + ATA_COMMAND, ATA_CMD_IDENTIFY);
-    if (inb(io_base + ATA_STATUS) == 0) return 0;
-    if (!ide_wait(&probe, 1)) return 0;
-    /* Non-zero signature bytes identify ATAPI/SATA packet devices, not disks. */
+    uint8_t status = inb(io_base + ATA_STATUS);
+    if (status == 0 || status == 0xFF) return 0;
+    /* An error immediately after selection is commonly an ATAPI device.
+       Leave it for the CD driver; ATA IDENTIFY can disturb its state. */
+    if (status & ATA_SR_ERR) return 0;
+    /* Non-zero signature bytes identify ATAPI/SATA packet devices, not disks.
+       Reject them before IDENTIFY; virtual IDE controllers can otherwise
+       leave us in the long polling timeout. */
     if (inb(io_base + ATA_LBA_MID) || inb(io_base + ATA_LBA_HIGH)) return 0;
+    outb(io_base + ATA_COMMAND, ATA_CMD_IDENTIFY);
+    if (!ide_wait(&probe, 1)) return 0;
     for (uint32_t i = 0; i < 256; ++i) identify[i] = inw(io_base + ATA_DATA);
     probe.sectors = (uint32_t)identify[60] | ((uint32_t)identify[61] << 16);
     if (identify[83] & (1U << 10)) {

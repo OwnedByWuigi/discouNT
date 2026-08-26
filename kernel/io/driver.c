@@ -127,7 +127,10 @@ void DriverLoadAll(void *mb_info) {
     static const SERVICE_DESCRIPTOR services[] = {
         {"Storage", 0, SERVICE_KERNEL_DRIVER, SERVICE_BOOT_START, "Boot Bus Extender", 0, 0},
         {"Serial", "/SYSTEM32/DRIVERS/SERIAL.SYS", SERVICE_KERNEL_DRIVER, SERVICE_BOOT_START, "System Bus Extender", 0, 0},
-        {"Cdfs", "/SYSTEM32/DRIVERS/CDFS.SYS", SERVICE_FILE_SYSTEM_DRIVER, SERVICE_SYSTEM_START, "File System", cdfs_deps, 1},
+        /* CDFS is initialized from the boot-linked copy before service
+           startup.  Loading CDFS.SYS again would re-probe/reinitialize the
+           optical drive and causes long idle gaps on VirtualBox media. */
+        {"Cdfs", 0, SERVICE_FILE_SYSTEM_DRIVER, SERVICE_SYSTEM_START, "File System", cdfs_deps, 1},
         {"Vga", "/SYSTEM32/DRIVERS/VGA.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},
         {"Keyboard", "/SYSTEM32/DRIVERS/KEYBOARD.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Input", input_deps, 1},
         {"Framebuffer", "/SYSTEM32/DRIVERS/FB.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},

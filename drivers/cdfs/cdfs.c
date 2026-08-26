@@ -7,12 +7,16 @@
 #include "rtl/rtlpath.h"
 #include "fat32.h"
 #include "io/io.h"
+#include "cpu.h"
 
 static int cdrom_present = 0;
 static int cdrom_ready = 0;
 static IO_DEVICE_OBJECT *usb_iso_device = 0;
 static int ide_base = 0;
 static int ide_slave = 0;
+static uint8_t iso_cache[8 * CDFS_SECTOR_SIZE];
+static uint32_t iso_cache_lba;
+static uint8_t iso_cache_valid;
 
 static int usb_read_iso_sector(uint32_t lba, uint8_t *buffer) {
     IO_REQUEST request;
@@ -26,7 +30,7 @@ static int usb_read_iso_sector(uint32_t lba, uint8_t *buffer) {
 }
 
 static void ata_delay(void) {
-    for (volatile int i = 0; i < 100; i++);
+    CpuRelax();
 }
 
 static int ata_wait_not_busy(int base) {
@@ -46,7 +50,8 @@ static int ata_wait_drq(int base) {
     return 0;
 }
 
-static int atapi_read_sector_internal(int base, int slave, uint32_t lba, uint8_t *buffer) {
+static int atapi_read_sectors_internal(int base, int slave, uint32_t lba,
+                                       uint8_t *buffer, uint8_t sectors) {
     // Select drive with LBA mode
     outb(base + 6, slave ? 0xB0 : 0xA0);
     
@@ -94,11 +99,8 @@ static int atapi_read_sector_internal(int base, int slave, uint32_t lba, uint8_t
         return 0;
     }
     
-    // Check interrupt reason (should be 0 = command)
-    uint8_t reason = inb(base + 2);
-    SerialPutString("[ATAPI] Reason: 0x");
-    SerialPrintHex(reason);
-    SerialPutString("\r\n");
+    // Check interrupt reason (should be 0 = command).
+    (void)inb(base + 2);
     
     // Send READ(12) command packet
     uint8_t packet[12];
@@ -108,10 +110,10 @@ static int atapi_read_sector_internal(int base, int slave, uint32_t lba, uint8_t
     packet[3] = (lba >> 16) & 0xFF;
     packet[4] = (lba >> 8) & 0xFF;
     packet[5] = lba & 0xFF;
-    packet[6] = 0x00;  // Reserved
-    packet[7] = 0x00;  // Reserved
-    packet[8] = 0x00;  // Reserved
-    packet[9] = 0x01;  // Transfer length (1 sector)
+    packet[6] = 0x00;
+    packet[7] = 0x00;
+    packet[8] = 0x00;
+    packet[9] = sectors; // Transfer length in 2048-byte sectors
     packet[10] = 0x00; // Reserved
     packet[11] = 0x00; // Reserved
     
@@ -121,40 +123,39 @@ static int atapi_read_sector_internal(int base, int slave, uint32_t lba, uint8_t
         outw(base, pkt16[i]);
     }
     
-    // Wait for data
-    timeout = 100000;
-    while (timeout--) {
-        uint8_t status = inb(base + 7);
-        if (status & 0x01) {  // Error
-            uint8_t err = inb(base + 1);
-            SerialPutString("[ATAPI] Read error 0x");
-            SerialPrintHex(err);
-            SerialPutString("\r\n");
+    /* ATAPI may split a multi-sector request into several DRQ phases. */
+    uint32_t transferred = 0;
+    uint32_t wanted = (uint32_t)sectors * CDFS_SECTOR_SIZE;
+    while (transferred < wanted) {
+        timeout = 100000;
+        while (timeout--) {
+            uint8_t status = inb(base + 7);
+            if (status & 0x01) {
+                SerialPutString("[ATAPI] Read error\r\n");
+                return 0;
+            }
+            if (status & 0x08) break;
+            if (!(status & 0x80)) break;
+            ata_delay();
+        }
+        if (timeout == 0) {
+            SerialPutString("[ATAPI] Data timeout\r\n");
             return 0;
         }
-        if (status & 0x08) break;  // DRQ
-        ata_delay();
+        if (!(inb(base + 7) & 0x08)) break;
+        uint32_t phase = (uint32_t)inb(base + 5) << 8 | inb(base + 4);
+        if (!phase) phase = CDFS_SECTOR_SIZE;
+        if (phase > wanted - transferred) phase = wanted - transferred;
+        for (uint32_t i = 0; i < phase / 2; ++i)
+            ((uint16_t *)(buffer + transferred))[i] = inw(base);
+        transferred += phase;
     }
-    if (timeout == 0) {
-        SerialPutString("[ATAPI] Data timeout\r\n");
-        return 0;
-    }
-    
-    // Get transfer size
-    int byte_count = inb(base + 5) << 8 | inb(base + 4);
-    if (byte_count == 0) byte_count = 2048;
-    
-    SerialPutString("[ATAPI] Transferring ");
-    SerialPrintDec(byte_count);
-    SerialPutString(" bytes\r\n");
-    
-    // Read data
-    uint16_t *buf16 = (uint16_t*)buffer;
-    for (int i = 0; i < byte_count / 2 && i < 1024; i++) {
-        buf16[i] = inw(base);
-    }
-    
-    return 1;
+    return transferred == wanted;
+}
+
+static int atapi_read_sector_internal(int base, int slave, uint32_t lba,
+                                      uint8_t *buffer) {
+    return atapi_read_sectors_internal(base, slave, lba, buffer, 1);
 }
 
 static int probe_ide_device(int base, int slave) {
@@ -214,62 +215,24 @@ static int probe_ide_device(int base, int slave) {
         SerialPutString("[ATA] ATA hard disk (not CD-ROM)\r\n");
         return 0;
     }
-    
-    // Try IDENTIFY command
-    outb(base + 6, drive_sel);
-    ata_delay();
-    outb(base + 7, 0xEC);  // IDENTIFY
-    
-    ata_delay();
-    
-    status = inb(base + 7);
-    SerialPutString("[ATA] IDENTIFY status: 0x");
-    SerialPrintHex(status);
-    SerialPutString("\r\n");
-    
-    if (status == 0 || status == 0xFF) {
-        return 0;
-    }
-    
-    // Wait for data
-    if (ata_wait_drq(base)) {
-        uint16_t buf[256];
-        for (int i = 0; i < 256; i++) buf[i] = inw(base);
-        
-        SerialPutString("[ATA] IDENTIFY word 0: 0x");
-        SerialPrintHex(buf[0]);
-        SerialPutString("\r\n");
-        
-        // ATAPI device has bit 15 set, bit 7 set
-        if ((buf[0] & 0x8000) && (buf[0] & 0x0080)) {
-            SerialPutString("[ATA] ATAPI from IDENTIFY!\r\n");
-            return 1;
+
+    /* QEMU's emulated ATAPI drive can report 0x41 with zero signature bytes.
+       Use IDENTIFY PACKET for that case, but avoid the old long reset path. */
+    {
+        uint16_t identify[256];
+        outb(base + 6, drive_sel);
+        outb(base + 7, 0xA1); // IDENTIFY PACKET DEVICE
+        if (ata_wait_drq(base)) {
+            for (int i = 0; i < 256; ++i) identify[i] = inw(base);
+            if ((identify[0] & 0x8000) && (identify[0] & 0x0080)) {
+                SerialPutString("[ATA] ATAPI from IDENTIFY PACKET\r\n");
+                return 1;
+            }
         }
     }
-    
-    // Try ATAPI soft reset
-    outb(base + 6, drive_sel);
-    ata_delay();
-    outb(base + 7, 0x08);  // DEVICE RESET
-    
-    // Wait 5ms
-    for (volatile int i = 0; i < 50000; i++) ata_delay();
-    
-    // Check signature again after reset
-    cl = inb(base + 4);
-    ch = inb(base + 5);
-    
-    SerialPutString("[ATA] After reset: CL=0x");
-    SerialPrintHex(cl);
-    SerialPutString(" CH=0x");
-    SerialPrintHex(ch);
-    SerialPutString("\r\n");
-    
-    if (cl == 0x14 && ch == 0xEB) {
-        SerialPutString("[ATA] ATAPI after reset!\r\n");
-        return 1;
-    }
-    
+
+    /* Do not issue a software reset here: it is particularly expensive on
+       VirtualBox's empty IDE slots. */
     return 0;
 }
 
@@ -279,6 +242,7 @@ void CdfsInit(void) {
     
     cdrom_present = 0;
     cdrom_ready = 0;
+    iso_cache_valid = 0;
     /* Hybrid ISO images retain ISO-9660 when installed to USB or ATA disk. */
     {
         const char *devices[] = {"UsbDisk0", "Harddisk0"};
@@ -364,7 +328,18 @@ void CdfsInit(void) {
 int CdfsReadSector(uint32_t lba, uint8_t *buffer) {
     if (!cdrom_present || !cdrom_ready) return 0;
     if (usb_iso_device) return usb_read_iso_sector(lba, buffer);
-    return atapi_read_sector_internal(ide_base, ide_slave, lba, buffer);
+    if (iso_cache_valid && lba >= iso_cache_lba &&
+        lba < iso_cache_lba + 8) {
+        memcpy(buffer, iso_cache + (lba - iso_cache_lba) * CDFS_SECTOR_SIZE,
+               CDFS_SECTOR_SIZE);
+        return 1;
+    }
+    iso_cache_lba = lba;
+    iso_cache_valid = atapi_read_sectors_internal(ide_base, ide_slave, lba,
+                                                   iso_cache, 8);
+    if (!iso_cache_valid) return 0;
+    memcpy(buffer, iso_cache, CDFS_SECTOR_SIZE);
+    return 1;
 }
 
 int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
