@@ -155,7 +155,8 @@ typedef struct _GUI_APP_THREAD_CTX {
     void *entry;
     GUI_APP_KIND kind;
     char command_line[256];
-    uint32_t wide_command_line[256];
+    uint16_t wmain_command_line[256];
+    uint32_t wwin_command_line[256];
 } GUI_APP_THREAD_CTX;
 
 #define MAX_GUI_APPS 8
@@ -174,6 +175,7 @@ static char g_pending_error_app[96];
 static char g_pending_error_text[256];
 static int g_pending_launch = 0;
 static char g_pending_launch_path[256];
+static char g_pending_launch_command_line[256];
 static User32PostMessageWFn g_user32_post_message = 0;
 static User32FindTopLevelWindowForProcessIdFn g_user32_find_top_level_window = 0;
 static User32InjectKeyboardFn g_user32_inject_keyboard = 0;
@@ -672,11 +674,11 @@ static void csrss_gui_thread_main(void *arg) {
                               exe_stack, 65536);
     } else if (ctx->kind == GUI_APP_KIND_WWINMAIN) {
         SerialPutString("[CSRSS] GUI thread dispatch wWinMain\r\n");
-        ret = KeInvokeWWinMain(ctx->entry, ctx->app->image, ctx->wide_command_line,
+        ret = KeInvokeWWinMain(ctx->entry, ctx->app->image, ctx->wwin_command_line,
                               exe_stack, 65536);
     } else if (ctx->kind == GUI_APP_KIND_WMAIN) {
         SerialPutString("[CSRSS] GUI thread dispatch wmain\r\n");
-        ret = KeInvokeWMain(ctx->entry, ctx->app->path, ctx->wide_command_line,
+        ret = KeInvokeWMain(ctx->entry, ctx->app->path, ctx->wmain_command_line,
                             exe_stack, 65536);
     } else {
         SerialPutString("[CSRSS] GUI thread dispatch main\r\n");
@@ -697,9 +699,20 @@ static void csrss_gui_thread_main(void *arg) {
     kfree(ctx);
 }
 
-static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_t file_size) {
+static int csrss_execute_image_sync(const char *path, const char *command_line,
+                                    uint8_t *file_buf, uint32_t file_size) {
     void *image;
     int ret;
+    void *wmain;
+    void *main_fn;
+    uint16_t wide_command_line[256];
+    int wide_length = 0;
+
+    while (command_line && command_line[wide_length] && wide_length < 255) {
+        wide_command_line[wide_length] = (uint8_t)command_line[wide_length];
+        wide_length++;
+    }
+    wide_command_line[wide_length] = 0;
 
     image = PeLoadImage(file_buf, file_size);
     if (!image) {
@@ -720,6 +733,8 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
         uint8_t *exe_stack = (uint8_t*)kmalloc(65536);
         typedef int (*EntryFunc)(void);
         EntryFunc func = (EntryFunc)PeGetEntryPoint(image);
+        wmain = PeGetProcAddress(image, "wmain");
+        main_fn = PeGetProcAddress(image, "main");
 
         if (!func || !exe_stack) {
             if (exe_stack) kfree(exe_stack);
@@ -728,7 +743,14 @@ static int csrss_execute_image_sync(const char *path, uint8_t *file_buf, uint32_
             return -4;
         }
 
-        ret = KeInvokeMain((void*)func, exe_stack, 65536);
+        if (wmain)
+            ret = KeInvokeWMain(wmain, path, wide_command_line,
+                                exe_stack, 65536);
+        else if (main_fn)
+            ret = KeInvokeMainArgs(main_fn, path, command_line,
+                                   exe_stack, 65536);
+        else
+            ret = KeInvokeMain((void*)func, exe_stack, 65536);
         kfree(exe_stack);
     }
 
@@ -836,6 +858,8 @@ static int csrss_execute_image(const char *path) {
     }
 
     strcpy(g_pending_launch_path, upper_path);
+    bounded_copy(g_pending_launch_command_line, args,
+                 sizeof(g_pending_launch_command_line));
     g_pending_launch = 1;
     return 0;
 }
@@ -1034,11 +1058,12 @@ static int csrss_load_gui_instance(const char *path, GUI_APP_INSTANCE *app) {
                      sizeof(thread_ctx->command_line));
         {
             int i;
-            for (i = 0; thread_ctx->command_line[i] &&
-                        i < (int)(sizeof(thread_ctx->wide_command_line) /
-                                  sizeof(thread_ctx->wide_command_line[0])) - 1; i++)
-                thread_ctx->wide_command_line[i] = (uint8_t)thread_ctx->command_line[i];
-            thread_ctx->wide_command_line[i] = 0;
+            for (i = 0; thread_ctx->command_line[i] && i < 255; i++) {
+                thread_ctx->wmain_command_line[i] = (uint8_t)thread_ctx->command_line[i];
+                thread_ctx->wwin_command_line[i] = (uint8_t)thread_ctx->command_line[i];
+            }
+            thread_ctx->wmain_command_line[i] = 0;
+            thread_ctx->wwin_command_line[i] = 0;
         }
 
         app->kind = thread_ctx->kind;
@@ -1552,8 +1577,10 @@ void CsrssSessionRun(void *mb_info) {
             uint8_t *file_buf = 0;
             uint32_t file_size = 0;
             char launch_path[256];
+            char launch_command_line[256];
             g_pending_launch = 0;
             strcpy(launch_path, g_pending_launch_path);
+            strcpy(launch_command_line, g_pending_launch_command_line);
 
             if (!CdfsReadFile(launch_path, &file_buf, &file_size)) {
                 csrss_queue_launch_error(launch_path, "The system cannot find the file specified.");
@@ -1562,7 +1589,8 @@ void CsrssSessionRun(void *mb_info) {
                 csrss_queue_launch_error(launch_path, "The application is not a valid Win32 program.");
                 kfree(file_buf);
             } else {
-                csrss_execute_image_sync(launch_path, file_buf, file_size);
+                csrss_execute_image_sync(launch_path, launch_command_line,
+                                         file_buf, file_size);
                 kfree(file_buf);
             }
         }
