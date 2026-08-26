@@ -13,6 +13,20 @@ typedef struct {
 
 static TTF ttf;
 
+/* Per-pixel sub-sample coverage grid for even-odd fill.  A glyph with a
+ * counter (O, B, R, 8, %) has a separate inner contour; TrueType uses the
+ * even-odd rule, so a sample is filled only when it lies inside an ODD
+ * number of contours.  Toggling a sub-sample each time a contour contains
+ * the point (instead of OR-ing the contours together) keeps the inside of a
+ * letter hollow. */
+static uint16_t sub_cover[8][12];
+
+static int popcount16(uint16_t v) {
+    int n = 0;
+    while (v) { v &= (uint16_t)(v - 1); n++; }
+    return n;
+}
+
 static uint16_t u16(const uint8_t *p) { return ((uint16_t)p[0] << 8) | p[1]; }
 static int16_t s16(const uint8_t *p) { return (int16_t)u16(p); }
 static uint32_t u32(const uint8_t *p) {
@@ -144,6 +158,8 @@ static int render(uint16_t glyph, uint8_t out[12]) {
     uint16_t ends[64], points, i, c;
     uint8_t flags[256];
     int32_t xmin, ymin, xmax, ymax;
+    int sx, sy;
+    for (sy = 0; sy < 12; sy++) for (sx = 0; sx < 8; sx++) sub_cover[sx][sy] = 0;
     if (!off || !next || next <= off || next > ttf.size - ttf.glyf) return 0;
     p = ttf.data + ttf.glyf + off; limit = ttf.data + ttf.glyf + next;
     if (p + 10 > limit || (contours = s16(p)) <= 0 || contours > 64) return 0;
@@ -156,11 +172,38 @@ static int render(uint16_t glyph, uint8_t out[12]) {
     x[0]=y[0]=0;
     for(i=0;i<points;i++){int16_t d=0;if(flags[i]&2)d=(flags[i]&16)?*p++:-(int16_t)*p++;else if(!(flags[i]&16)){if(p+2>limit)return 0;d=s16(p);p+=2;}x[i]=(i?x[i-1]:0)+d;}
     for(i=0;i<points;i++){int16_t d=0;if(flags[i]&4)d=(flags[i]&32)?*p++:-(int16_t)*p++;else if(!(flags[i]&32)){if(p+2>limit)return 0;d=s16(p);p+=2;}y[i]=(i?y[i-1]:0)+d;}
-    for(c=0,i=0;c<(uint16_t)contours;c++){uint16_t end=ends[c],begin=i;int n=flatten(x,y,flags,begin,end,px,py);int q;
-        for(q=0;q<8*12;q++){int sx=q%8,sy=q/8, a,b;int covered=0;
-            for(a=0;a<4;a++)for(b=0;b<4;b++){int32_t xx=xmin+(((sx*4+b)*2+1)*(xmax-xmin))/64;int32_t yy=ymax-(((sy*4+a)*2+1)*(ymax-ymin))/96;int z;if(inside(xx,yy,px,py,n))covered++;}
-            if(covered>=6)out[sy]|=(uint8_t)(0x80>>sx);
-        } i=end+1;
+    for (c = 0, i = 0; c < (uint16_t)contours; c++) {
+        uint16_t end = ends[c], begin = i;
+        int n = flatten(x, y, flags, begin, end, px, py);
+        int sx, sy, a, b;
+        if (n < 3) { i = end + 1; continue; }
+        for (sx = 0; sx < 8; sx++) {
+            for (sy = 0; sy < 12; sy++) {
+                uint16_t inside_mask = 0;
+                for (a = 0; a < 4; a++) {
+                    for (b = 0; b < 4; b++) {
+                        int32_t xx = xmin + (((sx * 4 + b) * 2 + 1) * (xmax - xmin)) / 64;
+                        int32_t yy = ymax - (((sy * 4 + a) * 2 + 1) * (ymax - ymin)) / 96;
+                        if (inside(xx, yy, px, py, n))
+                            inside_mask |= (uint16_t)(1u << (a * 4 + b));
+                    }
+                }
+                /* even-odd: a sub-sample flips each time a contour contains
+                 * it, so inner (hole) contours hollow out the outer one */
+                sub_cover[sx][sy] ^= inside_mask;
+            }
+        }
+        i = end + 1;
+    }
+
+    /* composite the accumulated sub-samples into the 8-bit row */
+    {
+        int sx, sy;
+        for (sy = 0; sy < 12; sy++) {
+            for (sx = 0; sx < 8; sx++)
+                if (popcount16(sub_cover[sx][sy]) >= 6)
+                    out[sy] |= (uint8_t)(0x80 >> sx);
+        }
     }
     return 1;
 }

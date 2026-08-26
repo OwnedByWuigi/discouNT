@@ -166,8 +166,7 @@ static const uint8_t *fb_get_font(char c) {
     return font[0];
 }
 
-/* Runtime TTF rendering is disabled until the outline backend is reliable.
- * Keep the original built-in framebuffer font as the active renderer. */
+/* The TrueType renderer in drivers/fb/ttf.c is NOT the active font backend ATM. */
 static int fb_use_ttf_glyphs = 0;
 
 #if 0

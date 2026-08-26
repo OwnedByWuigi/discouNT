@@ -82,6 +82,13 @@ typedef enum _CAPTION_BUTTON_HIT {
     CAPBTN_CLOSE
 } CAPTION_BUTTON_HIT;
 
+/* A caption button that has been pushed down but not yet released.  Like
+ * WINE's track_min_max_box, the window only triggers after the button is
+ * released over it, so a click that is dragged elsewhere is cancelled. */
+static int caption_press_hit = CAPBTN_NONE;
+static WINDOW *caption_press_win = 0;
+static HANDLE caption_press_hwnd = INVALID_HANDLE;
+
 enum {
     RESIZE_NONE  = 0,
     RESIZE_LEFT  = 1 << 0,
@@ -99,6 +106,7 @@ static void layout_minimized_window(HANDLE hwnd, WINDOW *win);
 static int hit_resize_edge(WINDOW *win, int x, int y);
 static void update_cursor_for_point(int x, int y);
 static HANDLE find_window_at(int x, int y);
+static void set_window_active(HANDLE hwnd);
 
 static void raise_owned_windows(HANDLE owner) {
     for (int i = 0; i < window_count; i++) {
@@ -198,49 +206,69 @@ static void draw_bevel(int x, int y, int w, int h, uint8_t light, uint8_t dark) 
     draw_vline(x + w - 1, y + 1, h - 1, dark);
 }
 
+/* The classic Windows caption symbols are Marlett font glyphs (0x30..0x32,
+ * 0x72).  The OS uses a fixed 16-color palette with no such font, so the
+ * glyphs are hand rasterized here to match those symbols rather than the
+ * literal ASCII letters used before.  Each glyph is drawn inside a button of
+ * the given size, centered on the face between its bevel and edge. */
+static void draw_caption_glyph_min(int x, int y, int size, int o) {
+    int w = size - 6; /* ~8 px wide underline bar */
+    FbFillRect(x + (size - w) / 2 + o, y + size - 6 + o, w, 1, FRAME_COLOR);
+}
+
+static void draw_caption_glyph_max(int x, int y, int size, int o) {
+    int l = x + 3 + o;
+    int t = y + 3 + o;
+    int w = size - 6;
+    draw_hline(l, t, w, FRAME_COLOR);
+    draw_vline(l, t, w, FRAME_COLOR);
+    draw_hline(l, t + w, w, FRAME_COLOR);
+    draw_vline(l + w, t, w, FRAME_COLOR);
+}
+
+static void draw_caption_glyph_restore(int x, int y, int size, int o) {
+    int w = size - 6;        /* 8 px wide back window */
+    /* Back window, upper-left */
+    draw_hline(x + 1 + o, y + 1 + o, w, FRAME_COLOR);
+    draw_vline(x + 1 + o, y + 1 + o, w, FRAME_COLOR);
+    draw_hline(x + 1 + o, y + 1 + w + o, w, FRAME_COLOR);
+    draw_vline(x + 1 + w + o, y + 1 + o, w, FRAME_COLOR);
+    /* Front window, lower-right overlapping */
+    draw_hline(x + 3 + o, y + 3 + o, w - 2, FRAME_COLOR);
+    draw_vline(x + 3 + o, y + 3 + o, w - 2, FRAME_COLOR);
+    draw_hline(x + 3 + o, y + 3 + w - 2 + o, w - 2, FRAME_COLOR);
+    draw_vline(x + 3 + w - 2 + o, y + 3 + o, w - 2, FRAME_COLOR);
+}
+
+static void draw_caption_glyph_close(int x, int y, int size, int o) {
+    /* A thick X: the Marlett close glyph is two crossing strokes. */
+    for (int i = 0; i + 3 < size; i++) {
+        FbFillRect(x + 3 + i + o, y + 2 + i + o, 2, 1, FRAME_COLOR);
+        FbFillRect(x + size - 3 - i + o, y + 2 + i + o, 2, 1, FRAME_COLOR);
+    }
+}
+
 static void draw_caption_button(int x, int y, int size, char glyph, int pressed) {
-    int ox = pressed ? 1 : 0;
-    int oy = pressed ? 1 : 0;
+    int o = pressed ? 1 : 0;
     FbFillRect(x, y, size, size, FRAME_COLOR);
     if (pressed) draw_bevel(x + 1, y + 1, size - 2, size - 2, SHADOW_COLOR, HILIGHT_COLOR);
     else draw_bevel(x + 1, y + 1, size - 2, size - 2, HILIGHT_COLOR, SHADOW_COLOR);
     FbFillRect(x + 2, y + 2, size - 4, size - 4, FACE_COLOR);
 
-    if (glyph == '_') {
-        FbFillRect(x + 3 + ox, y + size - 4 + oy, size - 6, 2, FRAME_COLOR);
-        return;
+    switch (glyph) {
+    case '_': draw_caption_glyph_min(x, y, size, o);      break;
+    case 'O': draw_caption_glyph_max(x, y, size, o);      break;
+    case 'R': draw_caption_glyph_restore(x, y, size, o);  break;
+    case 'X': draw_caption_glyph_close(x, y, size, o);    break;
+    default: FbDrawChar(x + 3 + o, y + 3 + o, glyph, FRAME_COLOR, FACE_COLOR); break;
     }
+}
 
-    if (glyph == 'O') {
-        draw_hline(x + 3 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-        draw_hline(x + 3 + ox, y + size - 5 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + 3 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + size - 5 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-        return;
-    }
-
-    if (glyph == 'R') {
-        draw_hline(x + 4 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + 4 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-        draw_hline(x + 4 + ox, y + size - 5 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + size - 4 + ox, y + 3 + oy, size - 7, FRAME_COLOR);
-
-        draw_hline(x + 2 + ox, y + 5 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + 2 + ox, y + 5 + oy, size - 7, FRAME_COLOR);
-        draw_hline(x + 2 + ox, y + size - 3 + oy, size - 7, FRAME_COLOR);
-        draw_vline(x + size - 6 + ox, y + 5 + oy, size - 7, FRAME_COLOR);
-        return;
-    }
-
-    if (glyph == 'X') {
-        for (int i = 0; i < size - 6; i++) {
-            FbFillRect(x + 3 + i + ox, y + 3 + i + oy, 1, 1, FRAME_COLOR);
-            FbFillRect(x + 3 + i + ox, y + size - 4 - i + oy, 1, 1, FRAME_COLOR);
-        }
-        return;
-    }
-
-    FbDrawChar(x + 3 + ox, y + 3 + oy, glyph, FRAME_COLOR, FACE_COLOR);
+/* True when the caption button is currently shown depressed (mouse is held
+ * down on it).  Mirrors the depressed state WINE tracks while a caption
+ * button is captured. */
+static int caption_button_pressed(WINDOW *win, int hit) {
+    return caption_press_win == win && caption_press_hit == hit;
 }
 
 static int get_caption_button_count(const WINDOW *win) {
@@ -269,6 +297,44 @@ static CAPTION_BUTTON_HIT hit_caption_button(WINDOW *win, int x, int y) {
         x >= get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1) &&
         x < get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1) + BUTTON_SIZE) return CAPBTN_MINIMIZE;
     return CAPBTN_NONE;
+}
+
+/* Execute the action of a caption button after it has been pressed and
+ * released.  Mirrors the SC_CLOSE/SC_MINIMIZE/SC_MAXIMIZE handling WINE
+ * performs for HTCLOSE/HTMINBUTTON/HTMAXBUTTON in its DefWindowProc. */
+static void do_caption_button_action(HANDLE hwnd, WINDOW *win, int hit) {
+    switch (hit) {
+    case CAPBTN_CLOSE:
+        /* Give the application a normal WM_CLOSE first; destroying the kernel
+         * window directly would leave the app's message loop alive. */
+        if (win->wndProc) win->wndProc(hwnd, WM_CLOSE, 0, 0);
+        if (ObReferenceObject(hwnd)) {
+            ObDereferenceObject(hwnd);
+            Win32kDestroyWindow(hwnd);
+        }
+        break;
+    case CAPBTN_MAXIMIZE:
+        if (win->minimized) {
+            restore_window_if_needed(hwnd, win);
+            maximize_window(win);
+        } else if (win->maximized) {
+            restore_window(win);
+        } else {
+            maximize_window(win);
+        }
+        break;
+    case CAPBTN_MINIMIZE:
+        if (win->minimized) {
+            restore_window_if_needed(hwnd, win);
+            set_window_active(hwnd);
+        } else {
+            minimize_window(hwnd, win);
+            set_window_active(find_topmost_visible_window());
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 static void draw_sys_icon(WINDOW *win, int x, int y) {
@@ -366,10 +432,13 @@ static void draw_window_frame(WINDOW *win) {
             int max_x = get_caption_button_x(win, 1);
             int min_x = get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1);
             if (win->style & WS_MINIMIZEBOX)
-                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_', 0);
+                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_',
+                                    caption_button_pressed(win, CAPBTN_MINIMIZE));
             if (win->style & WS_MAXIMIZEBOX)
-                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O', 0);
-            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X', 0);
+                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O',
+                                  caption_button_pressed(win, CAPBTN_MAXIMIZE));
+            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X',
+                              caption_button_pressed(win, CAPBTN_CLOSE));
         }
 
         {
@@ -426,10 +495,13 @@ static void draw_window_caption(WINDOW *win) {
             int max_x = get_caption_button_x(win, 1);
             int min_x = get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1);
             if (win->style & WS_MINIMIZEBOX)
-                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_', 0);
+                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_',
+                                    caption_button_pressed(win, CAPBTN_MINIMIZE));
             if (win->style & WS_MAXIMIZEBOX)
-                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O', 0);
-            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X', 0);
+                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O',
+                                    caption_button_pressed(win, CAPBTN_MAXIMIZE));
+            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X',
+                              caption_button_pressed(win, CAPBTN_CLOSE));
         }
     }
 
@@ -1054,50 +1126,20 @@ void Win32kHandleMouseDown(int x, int y, int button) {
         set_window_active(hwnd);
     }
     
-    switch (hit_caption_button(win, x, y)) {
-    case CAPBTN_CLOSE:
-        SerialPutString("[Win32k] Close window\r\n");
-        ObDereferenceObject(hwnd);
-        /* Give USER32/the application the normal WM_CLOSE first.  Destroying
-         * the kernel window directly left USER32's HWND and the app's message
-         * loop alive, so closed programs could never really exit. */
-        win = (WINDOW*)ObReferenceObject(hwnd);
-        if (win && win->wndProc) win->wndProc(hwnd, WM_CLOSE, 0, 0);
-        if (win) ObDereferenceObject(hwnd);
-        if (ObReferenceObject(hwnd)) {
+    {
+        int caption_hit = hit_caption_button(win, x, y);
+        if (caption_hit != CAPBTN_NONE) {
+            /* Register the press and act only once the button is released over
+             * itself.  This gives the button a depressed visual state and
+             * aborts the click when the pointer is dragged off, matching the
+             * press/release tracking WINE does with track_min_max_box. */
+            caption_press_hit = caption_hit;
+            caption_press_win = win;
+            caption_press_hwnd = hwnd;
             ObDereferenceObject(hwnd);
-            Win32kDestroyWindow(hwnd);
-        }
-        Win32kRedrawAll();
-        return;
-    case CAPBTN_MAXIMIZE:
-        if (win->minimized) {
-            restore_window_if_needed(hwnd, win);
-            maximize_window(win);
-        } else if (win->maximized) {
-            restore_window(win);
-        } else {
-            maximize_window(win);
-        }
-        ObDereferenceObject(hwnd);
-        /* The application repaint is already reflected by the normal
-           invalidation path; do not repaint the desktop for a click. */
-        return;
-    case CAPBTN_MINIMIZE:
-        if (win->minimized) {
-            restore_window_if_needed(hwnd, win);
-            ObDereferenceObject(hwnd);
-            set_window_active(hwnd);
             Win32kRedrawAll();
             return;
         }
-        minimize_window(hwnd, win);
-        ObDereferenceObject(hwnd);
-        set_window_active(find_topmost_visible_window());
-        Win32kRedrawAll();
-        return;
-    default:
-        break;
     }
 
     {
@@ -1144,7 +1186,26 @@ void Win32kHandleMouseDown(int x, int y, int button) {
 
 void Win32kHandleMouseUp(int x, int y, int button) {
     if (button != 1) return;
-    
+
+    /* Resolve a caption button press.  It fires only if the pointer is
+     * released over the same button, mirroring WINE's track_min_max_box. */
+    if (caption_press_hwnd != INVALID_HANDLE) {
+        HANDLE hw = caption_press_hwnd;
+        int hit = caption_press_hit;
+        WINDOW *win = (WINDOW*)ObReferenceObject(hw);
+        int fire = win && win->visible && hit_caption_button(win, x, y) == hit;
+
+        caption_press_hit = CAPBTN_NONE;
+        caption_press_win = 0;
+        caption_press_hwnd = INVALID_HANDLE;
+
+        if (fire) do_caption_button_action(hw, win, hit);
+        if (win) ObDereferenceObject(hw);
+
+        Win32kRedrawAll();
+        return;
+    }
+
     if (dragging) {
         SerialPutString("[Win32k] Drag end\r\n");
         dragging = 0;
