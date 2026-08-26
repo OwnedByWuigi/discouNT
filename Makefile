@@ -321,7 +321,7 @@ $(RUNDLL32_APP): apps/rundll32/rundll32.c include/win32/windows.h include/win32/
 
 $(SC_APP): apps/sc/sc.c include/win32/winsvc.h include/win32/windows.h dlls/kernel32/kernel32.c dlls/advapi32/advapi32.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -include stdio.h -include string.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+	$(CC) $(CPPFLAGS) -include stdio.h -include string.h -include stdlib.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,wmain -o $@ apps/sc/sc.c
 
 $(TASKMGR_MENU_RES): apps/taskmgr/taskmgr.rc tools/rc_menu_gen.py

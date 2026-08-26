@@ -1119,9 +1119,18 @@ int vsnprintf(char *buffer, size_t count, const char *format, va_list args) {
         while (*format == 'l') { is_long++; format++; }
         switch (*format ? *format++ : 0) {
         case 's': {
-            const char *str = va_arg(args, const char *);
-            if (!str) str = "(null)";
-            while (*str) pos = k32_emit_char(buffer, count, pos, *str++);
+            if (is_long) {
+                const WCHAR *str = va_arg(args, const WCHAR *);
+                if (!str) str = L"(null)";
+                while (*str) {
+                    WCHAR ch = *str++;
+                    pos = k32_emit_char(buffer, count, pos, ch < 128 ? (char)ch : '?');
+                }
+            } else {
+                const char *str = va_arg(args, const char *);
+                if (!str) str = "(null)";
+                while (*str) pos = k32_emit_char(buffer, count, pos, *str++);
+            }
             break;
         }
         case 'c': pos = k32_emit_char(buffer, count, pos, (char)va_arg(args, int)); break;

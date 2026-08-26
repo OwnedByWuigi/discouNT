@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 int vsnprintf(char *buffer, size_t count, const char *format, va_list args);
+int printf(const char *format, ...);
 
 static inline const char *wine_dbg_sprintf(const char *format, ...)
 {
@@ -36,9 +37,9 @@ enum {
 #define TRACE(...) ((void)0)
 #define WINE_TRACE(...) TRACE(__VA_ARGS__)
 #define FIXME(...) ((void)0)
-#define WINE_FIXME(...) FIXME(__VA_ARGS__)
-#define WINE_MESSAGE(...) MESSAGE(__VA_ARGS__)
-#define WINE_ERR(...) ERR(__VA_ARGS__)
+#define WINE_FIXME(...) printf(__VA_ARGS__)
+#define WINE_MESSAGE(...) printf(__VA_ARGS__)
+#define WINE_ERR(...) printf(__VA_ARGS__)
 #define WINE_WARN(...) WARN(__VA_ARGS__)
 #define WARN(...) ((void)0)
 #define ERR(...) ((void)0)
