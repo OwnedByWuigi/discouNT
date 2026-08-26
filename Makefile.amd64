@@ -8,7 +8,7 @@ FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
- -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/input -Idrivers/ide -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+ -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/input -Idrivers/ide -Idrivers/ahci -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
@@ -17,7 +17,7 @@ KERNEL := $(BUILD_DIR)/kernel.elf
 SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/core/ke.c \
  kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/core/setup.c \
  kernel/core/subsystem.c kernel/core/nativecmd.c kernel/core/bugcheck.c kernel/arch/x86/idt.c \
- kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/fb/storage.c drivers/input/input.c drivers/ide/ide.c drivers/usb/usb.c drivers/usb/usb_msc.c \
+ kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/fb/storage.c drivers/input/input.c drivers/ide/ide.c drivers/ahci/ahci.c drivers/usb/usb.c drivers/usb/usb_msc.c \
  drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
  win32/csrss/csrss_init.c win32/csrss/csrss.c win32/smss/smss_init.c win32/smss/smss.c kernel/core/entry.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
@@ -42,7 +42,7 @@ NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
  $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
  $(BUILD_DIR)/win32/w32k/win32k.dll
-DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide ahci
 NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
 
 all: iso
@@ -189,6 +189,10 @@ $(BUILD_DIR)/drivers/usb.sys: $(USB_SOURCES) drivers/usb/usb.h drivers/usb/usb_i
 $(BUILD_DIR)/drivers/ide.sys: drivers/ide/ide.c drivers/ide/ide.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ drivers/ide/ide.c
+
+$(BUILD_DIR)/drivers/ahci.sys: drivers/ahci/ahci.c drivers/ahci/ahci.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ drivers/ahci/ahci.c
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)

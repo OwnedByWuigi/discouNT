@@ -15,7 +15,7 @@ TARGET := loongarch64-unknown-elf
 CPPFLAGS := -Ikernel -Idrivers/input -Idrivers/serial -Idrivers/cdfs \
 	-Idrivers/fb -Idrivers/keyboard -Idrivers/mouse -Idrivers/net \
 	-Idrivers/vga -Idrivers/usb \
-	-Idrivers/fat32 -Idrivers/ide -Iinclude/win32 \
+	-Idrivers/fat32 -Idrivers/ide -Idrivers/ahci -Iinclude/win32 \
 	-Iwin32 -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := --target=$(TARGET) -ffreestanding -fno-stack-protector \
 	-fno-builtin -fno-pic -Wall -Wextra -O0
@@ -38,6 +38,7 @@ C_SRCS := kernel/arch/loongarch64/boot.c \
 	drivers/fat32/fat32.c \
 	drivers/input/input.c \
 	drivers/ide/ide.c \
+	drivers/ahci/ahci.c \
 	drivers/keyboard/keyboard.c \
 	drivers/mouse/mouse.c \
 	drivers/net/net.c \

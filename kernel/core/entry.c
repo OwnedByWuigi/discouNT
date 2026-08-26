@@ -16,6 +16,7 @@
 #include "arch/x86/multiboot.h"
 #include "usb.h"
 #include "ide.h"
+#include "ahci.h"
 #include "fat32.h"
 #include "core/setup.h"
 
@@ -156,6 +157,8 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     KeInit();
     KeAttachCurrentThread("KernelMain");
     if (IdeBootInitialize() && !setup_mode) Fat32Initialize("Harddisk0");
+    if (!Fat32IsMounted() && AhciBootInitialize() && !setup_mode)
+        Fat32Initialize("SataDisk0");
     if (UsbBootInitialize() && !Fat32IsMounted() && !setup_mode) Fat32Initialize("UsbDisk0");
     if (!Fat32IsMounted()) CdfsInit();
     DriverLoadAll(mb_info_ptr);

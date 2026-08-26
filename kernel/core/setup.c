@@ -4,6 +4,7 @@
 #include "keyboard.h"
 #include "cdfs.h"
 #include "ide.h"
+#include "ahci.h"
 #include "io/io.h"
 #include "ob/object.h"
 #include "core/util.h"
@@ -46,11 +47,13 @@ static uint32_t le32(const uint8_t *p) {
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-static int write_target(uint32_t disk, uint64_t offset, void *data, uint32_t size) {
+static int write_target(uint32_t disk, int use_ahci, uint64_t offset,
+                        void *data, uint32_t size) {
     IO_DEVICE_OBJECT *device;
     IO_REQUEST request;
     char name[16] = "Harddisk0";
     int result;
+    if (use_ahci) strcpy(name, "SataDisk0");
     name[8] = (char)('0' + disk);
     device = IoGetDevice(name);
     if (!device) return 0;
@@ -64,9 +67,10 @@ static int write_target(uint32_t disk, uint64_t offset, void *data, uint32_t siz
     return result;
 }
 
-static int deploy(uint32_t disk) {
+static int deploy(uint32_t disk, int use_ahci) {
     uint8_t sector[ISO_SECTOR_SIZE];
-    uint32_t total, target_sectors = IdeGetDiskSectors(disk);
+    uint32_t total, target_sectors = use_ahci ? AhciGetDiskSectors(disk) :
+        IdeGetDiskSectors(disk);
     char progress[64], number[16];
     if (!CdfsReadSector(16, sector) || sector[0] != 1 ||
         sector[1] != 'C' || sector[2] != 'D' || sector[3] != '0' ||
@@ -75,7 +79,7 @@ static int deploy(uint32_t disk) {
     if (!total || (uint64_t)total * 4 > target_sectors) return 0;
     for (uint32_t current = 0; current < total; ++current) {
         if (!CdfsReadSector(current, sector) ||
-            !write_target(disk, (uint64_t)current * ISO_SECTOR_SIZE,
+            !write_target(disk, use_ahci, (uint64_t)current * ISO_SECTOR_SIZE,
                           sector, ISO_SECTOR_SIZE)) return 0;
         if (!(current & 127) || current + 1 == total) {
             strcpy(progress, "Copying installation media: ");
@@ -90,6 +94,7 @@ static int deploy(uint32_t disk) {
 
 void SetupRun(void) {
     uint32_t selected = 0, count = IdeGetDiskCount();
+    int use_ahci = 0;
     KEYBOARD_EVENT key;
     title("Welcome to Setup");
     line(6, "This portion of Setup prepares discouNT for use on your computer.");
@@ -102,17 +107,22 @@ void SetupRun(void) {
 
     title("Select the installation disk");
     if (!count) {
-        line(7, "Setup did not find a supported IDE/ATA hard disk.");
+        use_ahci = AhciBootInitialize();
+        count = AhciGetDiskCount();
+    }
+    if (!count) {
+        line(7, "Setup did not find a supported ATA/SATA hard disk.");
         status("F3=Exit");
         while (wait_key().scancode != 0x3D) {}
         goto exit_setup;
     }
     for (;;) {
         char description[64], number[16];
-        strcpy(description, "> Harddisk");
+        strcpy(description, use_ahci ? "> SataDisk" : "> Harddisk");
         itoa((int)selected, number, 10); strcat(description, number);
         strcat(description, "  (");
-        itoa((int)(IdeGetDiskSectors(selected) / 2048), number, 10);
+        itoa((int)((use_ahci ? AhciGetDiskSectors(selected) :
+                   IdeGetDiskSectors(selected)) / 2048), number, 10);
         strcat(description, number); strcat(description, " MB)");
         line(7, description);
         line(10, "UP/DOWN selects a disk. ENTER continues.");
@@ -137,7 +147,7 @@ void SetupRun(void) {
     title("Installing discouNT");
     line(6, "Setup is copying the bootable system image to the hard disk.");
     line(14, "Copying installation media: 0%");
-    if (deploy(selected)) {
+    if (deploy(selected, use_ahci)) {
         line(18, "Setup completed successfully.");
         line(20, "Remove the installation media and restart the computer.");
         status("ENTER=Restart");
