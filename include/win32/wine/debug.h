@@ -34,6 +34,7 @@ enum {
 
 #define WINE_DEFAULT_DEBUG_CHANNEL(name) static const char *wine_debug_channel = #name
 #define TRACE(...) ((void)0)
+#define WINE_TRACE(...) TRACE(__VA_ARGS__)
 #define FIXME(...) ((void)0)
 #define WINE_FIXME(...) FIXME(__VA_ARGS__)
 #define WINE_MESSAGE(...) MESSAGE(__VA_ARGS__)
@@ -43,5 +44,10 @@ enum {
 #define ERR(...) ((void)0)
 #define MESSAGE(...) ((void)0)
 #define UNIMPLEMENTED ((void)0)
+
+static inline const char *wine_dbgstr_a(const char *str) { return str ? str : "(null)"; }
+static inline const char *wine_dbgstr_w(const WCHAR *str) {
+    return str ? wine_dbg_sprintf("%ls", str) : "(null)";
+}
 
 #endif

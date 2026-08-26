@@ -48,6 +48,38 @@ static inline WCHAR *wcschr(const WCHAR *s, WCHAR ch) {
     }
     return ch == 0 ? (WCHAR*)s : 0;
 }
+
+static inline WCHAR *wcspbrk(const WCHAR *s, const WCHAR *accept) {
+    while (*s) {
+        const WCHAR *p = accept;
+        while (*p) if (*s == *p++) return (WCHAR *)s;
+        s++;
+    }
+    return 0;
+}
+
+static inline SIZE_T wcsspn(const WCHAR *s, const WCHAR *accept) {
+    const WCHAR *start = s;
+    while (*s) {
+        const WCHAR *p = accept;
+        while (*p && *p != *s) p++;
+        if (!*p) break;
+        s++;
+    }
+    return (SIZE_T)(s - start);
+}
+
+static inline SIZE_T wcscspn(const WCHAR *s, const WCHAR *reject) {
+    const WCHAR *start = s;
+    while (*s) {
+        const WCHAR *p = reject;
+        while (*p && *p != *s) p++;
+        if (*p) break;
+        s++;
+    }
+    return (SIZE_T)(s - start);
+}
+
 static inline int wcsnicmp(const WCHAR *a,const WCHAR *b,SIZE_T count) {
     while(count--){WCHAR x=*a++,y=*b++;if(x>=L'a'&&x<=L'z')x-=L'a'-L'A';if(y>=L'a'&&y<=L'z')y-=L'a'-L'A';if(x!=y)return x<y?-1:1;if(!x)return 0;}return 0;
 }

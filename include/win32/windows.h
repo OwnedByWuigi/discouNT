@@ -316,6 +316,7 @@ int WINAPI GetDateFormatW(DWORD Locale, DWORD dwFlags, const SYSTEMTIME *lpDate,
 BOOL WINAPI IsTextUnicode(const void *buf, int len, int *flags);
 WORD WINAPI RtlUshortByteSwap(WORD s);
 HMODULE WINAPI LoadLibraryW(LPCWSTR name);
+void WINAPI GetStartupInfoW(LPSTARTUPINFOW startup_info);
 HLOCAL WINAPI LocalAlloc(UINT flags, SIZE_T bytes);
 HLOCAL WINAPI LocalFree(HLOCAL mem);
 DWORD WINAPI GetWindowsDirectoryW(LPWSTR buffer, DWORD size);

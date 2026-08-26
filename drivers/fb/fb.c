@@ -167,6 +167,7 @@ static const uint8_t *fb_get_font(char c) {
 }
 
 /* The TrueType renderer in drivers/fb/ttf.c is NOT the active font backend ATM. */
+/* TrueType support is broken in discouNT, and IDK why. */
 static int fb_use_ttf_glyphs = 0;
 
 #if 0

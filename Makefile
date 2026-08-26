@@ -114,6 +114,7 @@ WINVER_APP := $(BUILD_DIR)/apps/winver/winver.exe
 WHOAMI_APP := $(BUILD_DIR)/apps/whoami/whoami.exe
 EXPLORER_APP := $(BUILD_DIR)/apps/explorer/explorer.exe
 SC_APP := $(BUILD_DIR)/apps/sc/sc.exe
+RUNDLL32_APP := $(BUILD_DIR)/apps/rundll32/rundll32.exe
 EXPLORER_SRCS := $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
 WINVER_SRCS := apps/winver/winver.c
 RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
@@ -156,7 +157,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(WIN32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -313,6 +314,11 @@ $(EXPLORER_APP): $(EXPLORER_SRCS)
 	$(CC) $(CPPFLAGS) -Iapps/explorer -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,wWinMain -o $@ $(EXPLORER_SRCS)
 
+$(RUNDLL32_APP): apps/rundll32/rundll32.c include/win32/windows.h include/win32/string.h include/win32/stdlib.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,-e,wWinMain -o $@ $<
+
 $(SC_APP): apps/sc/sc.c include/win32/winsvc.h include/win32/windows.h dlls/kernel32/kernel32.c dlls/advapi32/advapi32.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include stdio.h -include string.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
@@ -382,7 +388,7 @@ $(IDE_SYS): drivers/ide/ide.c drivers/ide/ide.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ide/ide.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
 	@mkdir -p $(SYSTEM32_DIR)
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)
@@ -431,6 +437,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 	fi
 	@if [ -f "$(SC_APP)" ]; then \
 		cp "$(SC_APP)" "$(SYSTEM32_DIR)/SC.EXE"; \
+	fi
+	@if [ -f "$(RUNDLL32_APP)" ]; then \
+		cp "$(RUNDLL32_APP)" "$(SYSTEM32_DIR)/RUNDLL32.EXE"; \
 	fi
 	@for sys in $(DRIVER_SYS_FILES); do \
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \

@@ -36,7 +36,8 @@ NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/notepad/notepad.exe \
  $(BUILD_DIR)/apps/winver/winver.exe \
  $(BUILD_DIR)/apps/whoami/whoami.exe \
- $(BUILD_DIR)/apps/explorer/explorer.exe
+ $(BUILD_DIR)/apps/explorer/explorer.exe \
+ $(BUILD_DIR)/apps/rundll32/rundll32.exe
 NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
  $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
@@ -107,6 +108,10 @@ $(BUILD_DIR)/apps/whoami/whoami.exe: apps/whoami/main.c apps/whoami/compat.c app
 $(BUILD_DIR)/apps/explorer/explorer.exe: $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Iapps/explorer $(USER_CFLAGS) -Wl,-e,wWinMain -shared -Wl,-Bsymbolic -o $@ $^
+
+$(BUILD_DIR)/apps/rundll32/rundll32.exe: apps/rundll32/rundll32.c include/win32/windows.h include/win32/string.h include/win32/stdlib.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,wWinMain -shared -Wl,-Bsymbolic -o $@ $<
 
 $(BUILD_DIR)/win32/smss/smss.exe: win32/smss/smss_app.c kernel/core/util.c
 	@mkdir -p $(@D)

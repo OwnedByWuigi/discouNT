@@ -233,6 +233,12 @@ DWORD GetLastError(void) {
     return g_last_error;
 }
 
+void GetStartupInfoW(LPSTARTUPINFOW startup_info) {
+    if (!startup_info) return;
+    memset(startup_info, 0, sizeof(*startup_info));
+    startup_info->cb = sizeof(*startup_info);
+}
+
 void SetLastError(DWORD dwErrCode) {
     g_last_error = dwErrCode;
 }
