@@ -9,8 +9,10 @@ discouNT is a from-scratch operating system designed to be compatible with Windo
 
 Although it uses some code from WINE and ReactOS, **it is not a fork of either.**
 
-discouNT now supports IDE hard drives as well as USB flash drives (still WIP), for installation.
-
-### Supported architectures
+### Supported architectures and hardware
 
 discouNT currently supports x86, AMD64 and LoongArch64.
+
+discouNT supports IDE and SATA CD and hard drives, with experimental support for USB.
+
+discouNT can theoretically be booted on real x86 and AMD64 hardware, though I do not know if it is bootable on real LA64 hardware.
