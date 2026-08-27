@@ -141,6 +141,18 @@ static void uppercase_copy(char *dst, const char *src, int max_len) {
     dst[i] = 0;
 }
 
+static int cmd_path_name_equal(const char *a, const char *b) {
+    int i = 0;
+    while (a[i] && b[i]) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'a' && ca <= 'z') ca -= 'a' - 'A';
+        if (cb >= 'a' && cb <= 'z') cb -= 'a' - 'A';
+        if (ca != cb) return 0;
+        i++;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
 static void trim_spaces(char *s) {
     int start = 0;
     int end;
@@ -204,7 +216,7 @@ static int sector_find_entry(uint32_t dir_lba, uint32_t dir_size, const char *na
                     entry[ei++] = dname[i];
                 }
                 entry[ei] = 0;
-                if (strcmp(name, entry) == 0) {
+                if (cmd_path_name_equal(name, entry)) {
                     *out_lba = *(uint32_t*)(sector + off + 2);
                     *out_size = *(uint32_t*)(sector + off + 10);
                     *is_dir = (flags & 0x02) ? 1 : 0;

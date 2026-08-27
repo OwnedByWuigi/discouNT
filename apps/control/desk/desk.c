@@ -42,6 +42,11 @@ extern void *memset(void *s, int c, uint32_t n);
 extern void strcat(char *d, const char *s);
 extern void itoa(int value, char *str, int base);
 
+static void desk_redraw(void) {
+    if (g_api && g_api->UpdateWindow && desk_window != 0xFFFFFFFFU)
+        g_api->UpdateWindow(desk_window);
+}
+
 static void mode_to_text(int index, char *buf) {
     char num[16];
     buf[0] = 0;
@@ -265,6 +270,8 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     desk_window = 0xFFFFFFFFU;
     desk_exit_requested = 0;
     color_preview = 0;
+    resolution_open = 0;
+    depth_open = 0;
 
     load_modes();
     if (g_mode_count <= 0) return 0;
@@ -337,11 +344,13 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
     if (x >= preview_x && x < preview_x + 128 && y >= btn_y && y < btn_y + 24) {
         color_preview = 1;
         if (g_api && g_api->SetColorPreview) g_api->SetColorPreview(1);
+        desk_redraw();
         return;
     }
 
     if (x >= 140 && x < 400 && y >= 20 && y < 42) {
         resolution_open = !resolution_open; depth_open = 0;
+        desk_redraw();
         return;
     }
     if (resolution_open && x >= 140 && x < 400 && y >= 42 && y < 42 + g_resolution_count * 14) {
@@ -354,10 +363,12 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
             }
         }
         resolution_open = 0;
+        desk_redraw();
         return;
     }
     if (x >= 140 && x < 400 && y >= 66 && y < 88) {
         depth_open = !depth_open; resolution_open = 0;
+        desk_redraw();
         return;
     }
     if (depth_open && x >= 140 && x < 400 && y >= 88 && y < 88 + g_depth_count * 14) {
@@ -368,17 +379,20 @@ __attribute__((visibility("default"))) void CmdAppHandleMouse(int x, int y, uint
             if (shown++ == item) { selected_depth = g_depths[i]; break; }
         }
         depth_open = 0;
+        desk_redraw();
         return;
     }
 
     if (y >= btn_y && y < btn_y + 24) {
         if (x >= apply_x && x < apply_x + 60) {
             apply_selected_mode();
+            desk_redraw();
             return;
         }
         if (x >= ok_x && x < ok_x + 60) {
             apply_selected_mode();
             desk_exit_requested = 1;
+            desk_redraw();
             return;
         }
         if (x >= cancel_x && x < cancel_x + 68) {

@@ -39,6 +39,69 @@
 int fb_width = 640;
 int fb_height = 480;
 
+typedef struct {
+    int width, height;
+    uint32_t *pixels;
+    char path[128];
+} FB_WALLPAPER;
+static FB_WALLPAPER wallpaper;
+static uint32_t *wallpaper_screen;
+static int wallpaper_screen_width, wallpaper_screen_height;
+
+int FbPaintWallpaper(int x, int y, int w, int h, const char *path) {
+    uint8_t *data = 0;
+    uint32_t size = 0, off, row_bytes;
+    int iw, ih, bpp, sx0, sy0, sw, sh, dx, dy;
+    if (!path || w <= 0 || h <= 0) return 0;
+    if (!wallpaper.pixels || strcmp(wallpaper.path, path) != 0) {
+        if (!CdfsReadFile(path, &data, &size) || size < 54 || data[0] != 'B' || data[1] != 'M') return 0;
+        off = *(uint32_t *)(data + 10);
+        iw = *(int32_t *)(data + 18); ih = *(int32_t *)(data + 22);
+        bpp = *(uint16_t *)(data + 28);
+        if (iw <= 0 || ih == 0 || (bpp != 24 && bpp != 32)) { kfree(data); return 0; }
+        if (ih < 0) ih = -ih;
+        row_bytes = (((uint32_t)iw * (uint32_t)bpp + 31u) & ~31u) / 8u;
+        if (off >= size || row_bytes * (uint32_t)ih > size - off) { kfree(data); return 0; }
+        if (wallpaper.pixels) kfree(wallpaper.pixels);
+        if (wallpaper_screen) { kfree(wallpaper_screen); wallpaper_screen = 0; }
+        wallpaper.pixels = (uint32_t *)kmalloc((uint32_t)iw * (uint32_t)ih * 4);
+        if (!wallpaper.pixels) { kfree(data); return 0; }
+        for (int py = 0; py < ih; py++) {
+            const uint8_t *src = data + off + (uint32_t)(ih - 1 - py) * row_bytes;
+            for (int px = 0; px < iw; px++) {
+                const uint8_t *q = src + px * (bpp / 8);
+                /* BMP stores B,G,R; the framebuffer surface stores
+                 * 0x00RRGGBB. */
+                wallpaper.pixels[py * iw + px] = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
+            }
+        }
+        wallpaper.width = iw; wallpaper.height = ih;
+        { int i = 0; while (path[i] && i < (int)sizeof(wallpaper.path) - 1) { wallpaper.path[i] = path[i]; i++; } wallpaper.path[i] = 0; }
+        kfree(data);
+    }
+    /* Render the filled image once at the screen size.  Redraws and window
+     * drags then copy this cache instead of decoding/scaling every pixel. */
+    if (!wallpaper_screen || wallpaper_screen_width != fb_width || wallpaper_screen_height != fb_height) {
+        if (wallpaper_screen) kfree(wallpaper_screen);
+        wallpaper_screen = (uint32_t *)kmalloc((uint32_t)fb_width * (uint32_t)fb_height * 4);
+        if (!wallpaper_screen) return 0;
+        wallpaper_screen_width = fb_width;
+        wallpaper_screen_height = fb_height;
+        /* Fill: preserve aspect ratio and crop the excess from the centre. */
+        if ((uint64_t)wallpaper.width * (uint32_t)fb_height > (uint64_t)wallpaper.height * (uint32_t)fb_width) {
+            sh = wallpaper.height; sw = wallpaper.height * fb_width / fb_height; sx0 = (wallpaper.width - sw) / 2; sy0 = 0;
+        } else {
+            sw = wallpaper.width; sh = wallpaper.width * fb_height / fb_width; sx0 = 0; sy0 = (wallpaper.height - sh) / 2;
+        }
+        for (dy = 0; dy < fb_height; dy++) for (dx = 0; dx < fb_width; dx++)
+            wallpaper_screen[dy * fb_width + dx] = wallpaper.pixels[(sy0 + dy * sh / fb_height) * wallpaper.width + sx0 + dx * sw / fb_width];
+    } else {
+        /* already scaled */
+    }
+    FbBlitRGB(x, y, w, h, wallpaper_screen + y * fb_width + x, fb_width);
+    return 1;
+}
+
 static int use_framebuffer = 0;
 static uint8_t *fb_addr = 0;
 static uint8_t *fb_present_addr = 0;

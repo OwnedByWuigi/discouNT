@@ -140,6 +140,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"FbGetPixel", FbGetPixel},
     {"FbGetPixelRGB", FbGetPixelRGB},
     {"FbPutPixelRGB", FbPutPixelRGB},
+    {"FbPaintWallpaper", FbPaintWallpaper},
     {"FbCaptureRGB", FbCaptureRGB},
     {"FbBlitRGB", FbBlitRGB},
     {"FbSetClipRect", FbSetClipRect},

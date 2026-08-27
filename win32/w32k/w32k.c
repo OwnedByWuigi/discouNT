@@ -108,6 +108,10 @@ static void update_cursor_for_point(int x, int y);
 static HANDLE find_window_at(int x, int y);
 static void set_window_active(HANDLE hwnd);
 
+static void paint_desktop_area(int x, int y, int w, int h) {
+    if (!FbPaintWallpaper(x, y, w, h, "WEB/IMG0.BMP")) FbFillRect(x, y, w, h, DESKTOP_COLOR);
+}
+
 static void raise_owned_windows(HANDLE owner) {
     for (int i = 0; i < window_count; i++) {
         WINDOW *child = (WINDOW*)ObReferenceObject(window_list[i]);
@@ -817,7 +821,7 @@ static int rects_intersect(int x1, int y1, int w1, int h1, int x2, int y2, int w
 }
 
 static void render_scene(HANDLE skip_window) {
-    FbClearScreen(DESKTOP_COLOR);
+    paint_desktop_area(0, 0, FbGetWidth(), FbGetHeight());
 
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         HANDLE hwnd = window_list[i];
@@ -840,7 +844,7 @@ static void begin_fast_drag(HANDLE hwnd) {
        this window's damage rectangle before taking the snapshot. */
     MouseEraseCursor();
     FbSetClipRect(win->x, win->y, win->width, win->height);
-    FbFillRect(win->x, win->y, win->width, win->height, DESKTOP_COLOR);
+    paint_desktop_area(win->x, win->y, win->width, win->height);
     draw_window_frame(win);
     if (win->wndProc && !win->minimized) win->wndProc(hwnd, WM_PAINT, 0, 0);
     draw_window_caption(win);
@@ -863,7 +867,7 @@ static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
 
     MouseEraseCursor();
     FbSetClipRect(left, top, right - left, bottom - top);
-    FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
+    paint_desktop_area(left, top, right - left, bottom - top);
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
         if (other && other->visible && (is_menu_popup_window(other) == (pass == 1)) &&
@@ -895,7 +899,7 @@ static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
 void Win32kInit(void *mb_info) {
     window_object_type = ObRegisterObjectType("Window", 0);
     FbInit(mb_info);
-    FbClearScreen(DESKTOP_COLOR);
+    paint_desktop_area(0, 0, FbGetWidth(), FbGetHeight());
     window_count = 0;
     active_window = INVALID_HANDLE;
     dragging = 0;
@@ -1360,7 +1364,7 @@ void Win32kHandleMouseMove(int x, int y) {
                          resize_start_y + resize_start_height : win->y + win->height;
             MouseEraseCursor();
             FbSetClipRect(left, top, right - left, bottom - top);
-            FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
+            paint_desktop_area(left, top, right - left, bottom - top);
             for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
                 WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
                 if (other && other->visible && (is_menu_popup_window(other) == (pass == 1)) &&
@@ -1556,7 +1560,7 @@ void Win32kRedrawAll(void) {
     redraw_in_progress = 1;
     MouseEraseCursor();
 
-    FbClearScreen(DESKTOP_COLOR);
+    paint_desktop_area(0, 0, FbGetWidth(), FbGetHeight());
 
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);

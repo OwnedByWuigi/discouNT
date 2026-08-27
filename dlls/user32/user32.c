@@ -914,8 +914,22 @@ static HWND u32_find_top_level_window_for_pid(DWORD pid) {
     return NULL;
 }
 
+static int u32_is_tabstop_candidate(const U32_WINDOW *win, HWND hDlg);
+
 static HWND u32_dialog_focused_child(HWND hDlg) {
+    int i;
     if (g_focus && u32_is_descendant(hDlg, g_focus)) return g_focus;
+
+    /* DialogBoxW/CreateDialogW do not receive native USER32 focus
+       management in this implementation.  Choose the first visible,
+       enabled tab-stop as the dialog's initial control.  This is important
+       for dialogs such as Progman's Execute dialog: without it, injected
+       characters are delivered to the dialog itself instead of its Edit
+       control until the user manages to click the field. */
+    for (i = 0; i < MAX_U32_WINDOWS; i++) {
+        if (u32_is_tabstop_candidate(&g_windows[i], hDlg))
+            return g_windows[i].hwnd;
+    }
     return NULL;
 }
 
@@ -3016,6 +3030,10 @@ HWND CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
     }
     u32_create_builtin_dialog_children(tmpl, hwnd);
     SendMessageW(hwnd, WM_INITDIALOG, 0, 0);
+    if (!g_focus || !u32_is_descendant(hwnd, g_focus)) {
+        HWND initial_focus = u32_dialog_focused_child(hwnd);
+        if (initial_focus) SetFocus(initial_focus);
+    }
     /* Controls and child pages are created during WM_INITDIALOG.  Give the
      * dialog one layout notification after initialization as Win32 does;
      * otherwise pages remain at their small template fallback size. */
@@ -3082,7 +3100,15 @@ static INT_PTR u32_dialog_box_w(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hW
     u32_create_builtin_dialog_children(tmpl, hwnd);
     SerialPutString("[USER32] DialogBoxW init\r\n");
     SendMessageW(hwnd, WM_INITDIALOG, 0, init_param);
+    if (!g_focus || !u32_is_descendant(hwnd, g_focus)) {
+        HWND initial_focus = u32_dialog_focused_child(hwnd);
+        if (initial_focus) SetFocus(initial_focus);
+    }
     ShowWindow(hwnd, SW_SHOW);
+    /* Keep the input bridge pointed at the modal dialog while it is open.
+       Otherwise keyboard injection can continue using Progman's previous
+       top-level window even though the dialog owns the visible controls. */
+    SetActiveWindow(hwnd);
     UpdateWindow(hwnd);
     SerialPutString("[USER32] DialogBoxW loop\r\n");
     while (!win->ended) {
@@ -4107,7 +4133,7 @@ HDESK GetThreadDesktop(DWORD thread){(void)thread;return (HDESK)(ULONG_PTR)1;}
 HDESK CreateDesktopW(LPCWSTR desktop,LPCWSTR device,DEVMODEW *mode,DWORD flags,DWORD access,void *attributes){(void)desktop;(void)device;(void)mode;(void)flags;(void)access;(void)attributes;return (HDESK)(ULONG_PTR)1;}
 BOOL GetUserObjectInformationW(HANDLE object,int index,PVOID info,DWORD length,DWORD *needed){(void)object;if(index==UOI_FLAGS){if(needed)*needed=sizeof(USEROBJECTFLAGS);if(info&&length>=sizeof(USEROBJECTFLAGS)){USEROBJECTFLAGS*f=info;f->fInherit=FALSE;f->fReserved=FALSE;f->dwFlags=WSF_VISIBLE;return TRUE;}}return FALSE;}
 BOOL SetShellWindow(HWND shell){(void)shell;return TRUE;}
-BOOL PaintDesktop(HDC dc){RECT r={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};HBRUSH b=CreateSolidBrush(RGB(0,0,128));BOOL ok=FillRect(dc,&r,b);if(b)DeleteObject(b);return ok;}
+BOOL PaintDesktop(HDC dc){RECT r={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};extern BOOL GdiPaintWallpaper(HDC,const char*);if(GdiPaintWallpaper(dc,"WEB/IMG0.JPG"))return TRUE;HBRUSH b=CreateSolidBrush(RGB(0,0,128));BOOL ok=FillRect(dc,&r,b);if(b)DeleteObject(b);return ok;}
 BOOL PeekMessageW(LPMSG msg,HWND hwnd,UINT min,UINT max,UINT remove){return u32_dequeue_message(msg,hwnd,min,max,(remove&PM_REMOVE)!=0);}
 DWORD MsgWaitForMultipleObjects(DWORD count,const HANDLE *handles,BOOL all,DWORD timeout,DWORD mask){(void)mask;return WaitForMultipleObjects(count,handles,all,timeout);}
 LONG ChangeDisplaySettingsExW(LPCWSTR device,DEVMODEW *mode,HWND hwnd,DWORD flags,LPVOID param){(void)device;(void)mode;(void)hwnd;(void)flags;(void)param;return 0;}

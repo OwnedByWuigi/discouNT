@@ -110,6 +110,7 @@ static void (*pFbDrawCharTransparent)(int x, int y, char c, uint8_t fg) = 0;
 static void (*pFbDrawStringTransparent)(int x, int y, const char *str, uint8_t fg) = 0;
 static uint32_t (*pFbGetPixelRGB)(int x, int y) = 0;
 static void (*pFbPutPixelRGB)(int x, int y, uint32_t rgb) = 0;
+static int (*pFbPaintWallpaper)(int x, int y, int w, int h, const char *path) = 0;
 static void (*pFbCaptureRGB)(int x, int y, int w, int h, uint32_t *dst, int dst_stride) = 0;
 static void (*pFbBlitRGB)(int x, int y, int w, int h, const uint32_t *src, int src_stride) = 0;
 static void (*pFbSetClipRect)(int x, int y, int w, int h) = 0;
@@ -266,6 +267,7 @@ int FbSetResolution(int width, int height, int bpp) {
 uint8_t FbGetPixel(int x, int y) { return pFbGetPixel ? pFbGetPixel(x, y) : 0; }
 uint32_t FbGetPixelRGB(int x, int y) { return pFbGetPixelRGB ? pFbGetPixelRGB(x, y) : 0; }
 void FbPutPixelRGB(int x, int y, uint32_t rgb) { if (pFbPutPixelRGB) pFbPutPixelRGB(x, y, rgb); }
+int FbPaintWallpaper(int x, int y, int w, int h, const char *path) { return pFbPaintWallpaper ? pFbPaintWallpaper(x, y, w, h, path) : 0; }
 void FbCaptureRGB(int x, int y, int w, int h, uint32_t *dst, int dst_stride) { if (pFbCaptureRGB) pFbCaptureRGB(x, y, w, h, dst, dst_stride); }
 void FbBlitRGB(int x, int y, int w, int h, const uint32_t *src, int src_stride) { if (pFbBlitRGB) pFbBlitRGB(x, y, w, h, src, src_stride); }
 void FbSetClipRect(int x, int y, int w, int h) { if (pFbSetClipRect) pFbSetClipRect(x, y, w, h); }
@@ -385,6 +387,7 @@ void DriverInstallFb(void *image) {
     RESOLVE(pFbDrawStringTransparent, image, "FbDrawStringTransparent");
     RESOLVE(pFbGetPixelRGB, image, "FbGetPixelRGB");
     RESOLVE(pFbPutPixelRGB, image, "FbPutPixelRGB");
+    RESOLVE(pFbPaintWallpaper, image, "FbPaintWallpaper");
     RESOLVE(pFbCaptureRGB, image, "FbCaptureRGB");
     RESOLVE(pFbBlitRGB, image, "FbBlitRGB");
     RESOLVE(pFbSetClipRect, image, "FbSetClipRect");

@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include "windows.h"
 #include "icon.h"
 
@@ -21,6 +22,7 @@ BOOL WINAPI GetTextExtentPointW(HDC dc,LPCWSTR text,int count,LPSIZE size){retur
 extern void Win32kGetClientScreenRect(void *hwnd, LPRECT lpRect);
 
 extern void FbPutPixel(int x, int y, uint8_t color);
+extern void FbPutPixelRGB(int x, int y, uint32_t rgb);
 extern void FbFillRect(int x, int y, int w, int h, uint8_t color);
 extern void FbDrawRect(int x, int y, int w, int h, uint8_t color);
 extern void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg);
@@ -28,6 +30,7 @@ extern void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg);
 extern void FbSwapBuffers(void);
 extern void Win32kRefreshCursor(void);
 extern void SerialPutString(const char *str);
+extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 
 #define GDI_OBJ_BRUSH  1
 #define GDI_OBJ_PEN    2
@@ -105,6 +108,7 @@ static GDIFONT g_stock_font = {{GDI_OBJ_FONT}, {16, 0, 0, 0, FW_REGULAR, 0, 0, 0
                                                FIXED_PITCH | FF_DONTCARE, {L'S',L'y',L's',L't',L'e',L'm',0}}};
 
 static GDIDC *gdi_alloc_dc(void);
+static void gdi_put_pixel(GDIDC *dc, int x, int y, COLORREF color);
 
 HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size) {
     const uint8_t *p = (const uint8_t *)data;
@@ -137,6 +141,39 @@ HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size) {
         }
     }
     return (HBITMAP)bmp;
+}
+
+BOOL GdiPaintWallpaper(HDC hdc, const char *path) {
+    static char loaded_path[128];
+    static GDIBITMAP *wallpaper;
+    char decode_path[128];
+    GDIDC *dc = (GDIDC *)hdc;
+    uint8_t *data = 0;
+    uint32_t size = 0;
+    int x, y, out_w, out_h;
+    if (!dc || !path) return FALSE;
+    if (!wallpaper || strcmp(loaded_path, path) != 0) {
+        int i = 0;
+        while (path[i] && i < (int)sizeof(decode_path) - 1) { decode_path[i] = path[i]; i++; }
+        decode_path[i] = 0;
+        /* JPEG/PNG files are retained in Web/, but their BMP companion is
+         * what the small native renderer can decode. */
+        if (i >= 4 && decode_path[i - 4] == '.') {
+            decode_path[i - 3] = 'B'; decode_path[i - 2] = 'M'; decode_path[i - 1] = 'P';
+        }
+        if (!CdfsReadFile(decode_path, &data, &size)) return FALSE;
+        wallpaper = (GDIBITMAP *)GdiCreateBitmapFromBmp(data, size);
+        kfree(data);
+        if (!wallpaper) return FALSE;
+        { int i = 0; while (path[i] && i < (int)sizeof(loaded_path) - 1) { loaded_path[i] = path[i]; i++; } loaded_path[i] = 0; }
+    }
+    out_w = dc->clip.right - dc->clip.left;
+    out_h = dc->clip.bottom - dc->clip.top;
+    if (out_w <= 0 || out_h <= 0) return FALSE;
+    for (y = 0; y < out_h; y++) for (x = 0; x < out_w; x++)
+        gdi_put_pixel(dc, x, y, wallpaper->pixels[(y * wallpaper->height / out_h) * wallpaper->width +
+                                                   (x * wallpaper->width / out_w)]);
+    return TRUE;
 }
 
 HDC GdiCreateScreenDC(HWND hwnd) {
@@ -237,7 +274,12 @@ static void gdi_put_pixel(GDIDC *dc, int x, int y, COLORREF color) {
         } else {
             gdi_get_screen_origin(dc->hwnd, &ox, &oy);
         }
-        FbPutPixel(ox + x, oy + y, gdi_color_to_index(color));
+        /* GDI COLORREF is 0x00BBGGRR; the framebuffer surface is
+         * 0x00RRGGBB. */
+        FbPutPixelRGB(ox + x, oy + y,
+                      ((color & 0x0000FFU) << 16) |
+                      (color & 0x00FF00U) |
+                      ((color & 0xFF0000U) >> 16));
         return;
     }
     bmp = gdi_get_bitmap(dc->selected_bitmap);

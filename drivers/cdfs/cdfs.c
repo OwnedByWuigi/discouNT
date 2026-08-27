@@ -1,5 +1,17 @@
 #include <stdint.h>
 #include "cdfs.h"
+
+static int cdfs_name_equal(const char *a, const char *b) {
+    int i = 0;
+    while (a[i] && b[i]) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'a' && ca <= 'z') ca -= 'a' - 'A';
+        if (cb >= 'a' && cb <= 'z') cb -= 'a' - 'A';
+        if (ca != cb) return 0;
+        i++;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
 #include "io/port.h"
 #include "serial.h"
 #include "mm/mm.h"
@@ -410,7 +422,7 @@ int CdfsFindFile(const char *path, uint32_t *out_lba, uint32_t *out_size) {
             SerialPutString(entry_name);
             SerialPutString(flags & 0x02 ? " (dir)\r\n" : " (file)\r\n");
             
-            if (strcmp(component, entry_name) == 0) {
+            if (cdfs_name_equal(component, entry_name)) {
                 found_lba = *(uint32_t*)(dir_buf + off + 2);
                 found_size = *(uint32_t*)(dir_buf + off + 10);
                 found_is_dir = (flags & 0x02) ? 1 : 0;

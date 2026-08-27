@@ -3,6 +3,9 @@ ISO_DIR := $(BUILD_DIR)/iso
 SYSTEM32_DIR := $(ISO_DIR)/SYSTEM32
 GRUB_DIR := $(ISO_DIR)/boot/grub
 KERNEL_ISO_PATH := $(SYSTEM32_DIR)/NTOSKRNL.EXE
+WEB_DIR := $(ISO_DIR)/Web
+WALLPAPER_FILES := $(wildcard media/wallpaper/*)
+WALLPAPER_STAMP := $(WEB_DIR)/.stamp
 
 ISO_NAME := ntos.iso
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
@@ -428,7 +431,11 @@ $(AHCI_SYS): drivers/ahci/ahci.c drivers/ahci/ahci.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ahci/ahci.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI)
+$(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
+	@mkdir -p "$(WEB_DIR)"
+	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
+
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"

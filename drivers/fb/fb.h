@@ -42,6 +42,7 @@ int FbSetResolution(int width, int height, int bpp);
 uint8_t FbGetPixel(int x, int y);
 uint32_t FbGetPixelRGB(int x, int y);
 void FbPutPixelRGB(int x, int y, uint32_t rgb);
+int FbPaintWallpaper(int x, int y, int w, int h, const char *path);
 void FbCaptureRGB(int x, int y, int w, int h, uint32_t *dst, int dst_stride);
 void FbBlitRGB(int x, int y, int w, int h, const uint32_t *src, int src_stride);
 void FbSetClipRect(int x, int y, int w, int h);
