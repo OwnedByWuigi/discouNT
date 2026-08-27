@@ -584,6 +584,10 @@ static void WINHELP_DeleteWindow(WINHELP_WINDOW* win)
 static char* WINHELP_GetCaption(WINHELP_WNDPAGE* wpage)
 {
     if (wpage->wininfo->caption[0]) return wpage->wininfo->caption;
+    /* WinHelp is also a valid shell/application target without a .HLP
+     * argument.  The empty help window has no page, so do not dereference
+     * page->file while choosing its title. */
+    if (!wpage->page || !wpage->page->file) return wpage->wininfo->name;
     return wpage->page->file->lpszTitle;
 }
 

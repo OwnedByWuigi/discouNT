@@ -52,8 +52,9 @@ HICON LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
             icon = u32_create_icon_from_ico_buffer(icon_data, icon_size, 32, 32);
             if (icon) return icon;
         }
-        icon = u32_try_load_module_sidecar_icon(hInstance, 32, 32);
-        if (icon) return icon;
+        /* Integer resource IDs are resolved from the module image.  Do not
+         * turn a missing embedded resource into an implicit <module>.ico
+         * filesystem lookup. */
         return u32_alloc_icon(u32_resource_id(lpIconName), 32, 32);
     }
     icon = u32_try_load_icon_by_name(lpIconName, 32, 32);
@@ -91,8 +92,6 @@ HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT
                 if (icon) return icon;
             }
         }
-        HANDLE icon = (HANDLE)u32_try_load_module_sidecar_icon(hinst, width, height);
-        if (icon) return icon;
         return (HANDLE)u32_alloc_icon(u32_resource_id(name), width, height);
     }
     {

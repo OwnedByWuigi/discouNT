@@ -1446,8 +1446,16 @@ void *PeLoadDll(const char *dll_name) {
     SerialPutString("[PE] Applying DLL relocations...\r\n");
     PePerformRelocations(image);
     
-    // Call DllMain
+    // Call DllMain.  Native ELF shared objects do not have to carry a
+    // meaningful ELF entry point (and older copies of the DLLs in an ISO
+    // were linked with entry == 0).  The loader's DLL contract is symbol
+    // based, so fall back to the exported DllMain symbol instead of silently
+    // returning a loaded-but-uninitialised DLL.
     void *entry = PeGetEntryPoint(image);
+    if (!entry && PeIsELFImage(image)) {
+        entry = PeGetProcAddress(image, "DllMain");
+        if (entry) SerialPutString("[PE] DLL entry recovered from DllMain export\r\n");
+    }
     if (entry) {
         SerialPutString("[PE] Calling DllMain...\r\n");
         typedef int (*DllMain_t)(void*, uint32_t, void*);

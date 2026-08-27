@@ -4,7 +4,10 @@ typedef struct {
     uint32_t image_size;
     uint32_t elf_base_vaddr;
     void *source_image;
+    void *allocation_base;
     uint32_t source_size;
+    uint8_t elf_class;
+    uint8_t reserved[3];
     char image_path[128];
 } U32_RUNTIME_HEADER;
 

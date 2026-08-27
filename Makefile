@@ -219,6 +219,7 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 			-l:kernel.elf; \
 	else \
 		$(CC) $(CPPFLAGS) -ffreestanding -nostdlib -fno-builtin -m32 -fPIC -shared -Wl,-Bsymbolic \
+			-Wl,-e,DllMain \
 			-o $$@ \
 			$$(DLL_$(1)_SRCS); \
 	fi
@@ -365,10 +366,11 @@ $(WINHLP32_MENU_RES): apps/winhlp32/winhlp32.rc apps/winhlp32/winhelp_res.h tool
 	@mkdir -p $(@D)
 	python3 tools/rc_menu_gen.py $< $@
 
-$(WINHLP32_APP): $(WINHLP32_SRCS) $(WINHLP32_LEX) apps/winhlp32/winhelp.h apps/winhlp32/hlpfile.h apps/winhlp32/macro.h apps/winhlp32/winhlp32.rc $(WINHLP32_MENU_RES)
+$(WINHLP32_APP): $(WINHLP32_SRCS) $(WINHLP32_LEX) apps/winhlp32/winhelp.h apps/winhlp32/hlpfile.h apps/winhlp32/macro.h apps/winhlp32/winhlp32.rc apps/winhlp32/winhelp.ico $(WINHLP32_MENU_RES)
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -Iapps/winhlp32 -include windows.h -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,WinMain -o $@ $(WINHLP32_SRCS) $(WINHLP32_LEX)
+		$(CC) $(CPPFLAGS) -Iapps/winhlp32 -include windows.h -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,WinMain -o $@ $(WINHLP32_SRCS) $(WINHLP32_LEX)
 	@objcopy --add-section .disres=$(WINHLP32_MENU_RES) --set-section-flags .disres=readonly,data $@
+	@objcopy --add-section .disicon=apps/winhlp32/winhelp.ico --set-section-flags .disicon=readonly,data $@
 
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
