@@ -26,7 +26,8 @@ jobs:
             grub-common \
             gcc \
             make \
-            mtools
+            mtools \
+            python3-pil
 
       - name: Build x86 ISO
         run: |
@@ -55,7 +56,8 @@ jobs:
             grub-common \
             gcc \
             make \
-            mtools
+            mtools \
+            python3-pil
 
       - name: Build AMD64 ISO
         run: |
