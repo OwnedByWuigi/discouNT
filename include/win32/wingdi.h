@@ -11,6 +11,13 @@ typedef struct tagBITMAPINFO { BITMAPINFOHEADER bmiHeader; RGBQUAD bmiColors[1];
 typedef struct _BLENDFUNCTION { BYTE BlendOp,BlendFlags,SourceConstantAlpha,AlphaFormat; } BLENDFUNCTION;
 int WINAPI GetObject(HGDIOBJ object, int bytes, LPVOID buffer);
 int WINAPI GetObjectW(HGDIOBJ object, int bytes, LPVOID buffer);
+HBITMAP WINAPI CreateBitmap(int width, int height, UINT planes, UINT bits, const void *bits_data);
+HBITMAP WINAPI CreateDIBitmap(HDC hdc, const BITMAPINFOHEADER *header, DWORD init,
+                              const void *bits, const BITMAPINFO *info, UINT usage);
+HDC WINAPI CreateEnhMetaFileW(HDC hdc, LPCWSTR filename, const RECT *rect, LPCWSTR description);
+HENHMETAFILE WINAPI CloseEnhMetaFile(HDC hdc);
+UINT WINAPI GetEnhMetaFileBits(HENHMETAFILE emf, UINT size, BYTE *bits);
+BOOL WINAPI DeleteEnhMetaFile(HENHMETAFILE emf);
 
 typedef struct tagLOGFONTW {
     LONG lfHeight;
@@ -28,6 +35,23 @@ typedef struct tagLOGFONTW {
     BYTE lfPitchAndFamily;
     WCHAR lfFaceName[32];
 } LOGFONTW, *PLOGFONTW, *LPLOGFONTW;
+
+typedef struct tagLOGFONTA {
+    LONG lfHeight;
+    LONG lfWidth;
+    LONG lfEscapement;
+    LONG lfOrientation;
+    LONG lfWeight;
+    BYTE lfItalic;
+    BYTE lfUnderline;
+    BYTE lfStrikeOut;
+    BYTE lfCharSet;
+    BYTE lfOutPrecision;
+    BYTE lfClipPrecision;
+    BYTE lfQuality;
+    BYTE lfPitchAndFamily;
+    char lfFaceName[32];
+} LOGFONTA, *PLOGFONTA, *LPLOGFONTA;
 
 typedef struct _ICONINFO {
     BOOL fIcon;
@@ -52,18 +76,46 @@ typedef struct tagDOCINFOW {
 #define PS_SOLID    0
 #define SRCCOPY     0x00CC0020
 #define SRCPAINT    0x00EE0086
+#define SRCAND      0x008800C6
+#define CBM_INIT    0x00000004
 #define BI_RGB 0
 #define DIB_RGB_COLORS 0
 #define AC_SRC_OVER 0
 #define AC_SRC_ALPHA 1
 
 #define FW_REGULAR          400
+#define ANSI_CHARSET        0
 #define DEFAULT_CHARSET     1
+#define SHIFTJIS_CHARSET    128
+#define HANGEUL_CHARSET     129
+#define GB2312_CHARSET      134
+#define CHINESEBIG5_CHARSET 136
+#define GREEK_CHARSET       161
+#define TURKISH_CHARSET     162
+#define HEBREW_CHARSET      177
+#define ARABIC_CHARSET      178
+#define BALTIC_CHARSET      186
+#define VIETNAMESE_CHARSET  163
+#define RUSSIAN_CHARSET     204
+#define EE_CHARSET          238
+#define THAI_CHARSET        222
+#define JOHAB_CHARSET       130
+#define MAC_CHARSET         77
 #define OUT_DEFAULT_PRECIS  0
 #define CLIP_DEFAULT_PRECIS 0
 #define DEFAULT_QUALITY     0
 #define FIXED_PITCH         1
+#define DEFAULT_PITCH       0
 #define FF_DONTCARE         0
+#define FF_MODERN           0x30
+#define FF_ROMAN            0x10
+#define FF_SWISS            0x20
+#define FF_SCRIPT           0x40
+#define FF_DECORATIVE       0x50
+#define LF_FACESIZE         32
+#define GetRValue(rgb) ((BYTE)((rgb) & 0xff))
+#define GetGValue(rgb) ((BYTE)(((rgb) >> 8) & 0xff))
+#define GetBValue(rgb) ((BYTE)(((rgb) >> 16) & 0xff))
 
 #define LOGPIXELSX          88
 #define LOGPIXELSY          90

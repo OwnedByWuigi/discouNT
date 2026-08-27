@@ -22,9 +22,16 @@ extern void *realloc(void *memory, SIZE_T size);
 extern void SerialPutString(const char *str);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 extern int CsrssExecuteImage(const char *path);
+extern HFILE _lopen(LPCSTR path, int read_write);
+extern HFILE _lclose(HFILE file);
+extern char *strrchr(const char *s, int c);
+#ifndef EOF
+#define EOF (-1)
+#endif
 
 typedef void (*K32_CONSOLE_SINK)(const char *buffer, uint32_t length);
 static K32_CONSOLE_SINK g_console_sink;
+int errno;
 
 static int k32_wstrlen(LPCWSTR s) {
     int n = 0;
@@ -383,6 +390,15 @@ void *calloc(SIZE_T count,SIZE_T size) {
     if (memory) memset(memory,0,(uint32_t)total);
     return memory;
 }
+void *malloc(SIZE_T size) { return kmalloc((uint32_t)size); }
+void free(void *memory) { if (memory) kfree(memory); }
+void *realloc(void *memory, SIZE_T size) {
+    void *replacement;
+    if (!memory) return kmalloc((uint32_t)size);
+    replacement = kmalloc((uint32_t)size);
+    if (replacement) kfree(memory);
+    return replacement;
+}
 
 LONG InterlockedIncrement(volatile LONG *value) { return __atomic_add_fetch(value,1,__ATOMIC_SEQ_CST); }
 LONG InterlockedDecrement(volatile LONG *value) { return __atomic_sub_fetch(value,1,__ATOMIC_SEQ_CST); }
@@ -735,6 +751,42 @@ HANDLE CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
     fh->pos = 0;
     fh->access = dwDesiredAccess;
     return (HANDLE)fh;
+}
+
+HANDLE CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa,
+                   DWORD disposition, DWORD flags, HANDLE template_file) {
+    WCHAR wide[260]; int i = 0;
+    if (!name) return INVALID_HANDLE_VALUE;
+    while (name[i] && i < 259) { wide[i] = (WCHAR)(unsigned char)name[i]; i++; }
+    wide[i] = 0;
+    return CreateFileW(wide, access, share, sa, disposition, flags, template_file);
+}
+
+DWORD GetFileAttributesA(LPCSTR name) {
+    HFILE f = _lopen(name, OF_READ);
+    if (f == HFILE_ERROR) return INVALID_FILE_ATTRIBUTES;
+    _lclose(f);
+    return FILE_ATTRIBUTE_NORMAL;
+}
+
+DWORD SearchPathA(LPCSTR path, LPCSTR file, LPCSTR extension, DWORD length,
+                  LPSTR buffer, LPSTR *part) {
+    char candidate[260]; uint32_t n, i = 0;
+    (void)path;
+    if (!file || !buffer || !length) return 0;
+    while (file[i] && i < sizeof(candidate)-1) { candidate[i] = file[i]; i++; }
+    candidate[i] = 0;
+    if (extension && !strrchr(candidate, '.')) {
+        n = strlen(candidate); i = 0;
+        while (extension[i] && n + i < sizeof(candidate)-1) { candidate[n+i] = extension[i]; i++; }
+        candidate[n+i] = 0;
+    }
+    if (GetFileAttributesA(candidate) == INVALID_FILE_ATTRIBUTES) return 0;
+    n = strlen(candidate);
+    if (n + 1 > length) return n + 1;
+    for (i=0; i<=n; i++) buffer[i] = candidate[i];
+    if (part) *part = (LPSTR)k32_find_last_path_part(buffer);
+    return n;
 }
 
 BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
@@ -1309,6 +1361,7 @@ UINT _lread(HFILE file, LPVOID buffer, UINT bytes) { DWORD done = 0; return Read
 UINT _lwrite(HFILE file, LPCVOID buffer, UINT bytes) { DWORD done = 0; return WriteFile((HANDLE)(LONG_PTR)file, (LPVOID)buffer, bytes, &done, 0) ? done : (UINT)-1; }
 HFILE _lcreat(LPCSTR path, int attributes) { (void)attributes; return k32_open_legacy_file(path, 1); }
 HFILE _lclose(HFILE file) { return CloseHandle((HANDLE)(LONG_PTR)file) ? 0 : HFILE_ERROR; }
+LONG _hread(HFILE file, LPVOID buffer, LONG count) { return (LONG)_lread(file, buffer, (UINT)count); }
 LONG _llseek(HFILE file, LONG offset, int origin) {
     K32_FILE_HANDLE *handle = k32_file_from_handle((HANDLE)(LONG_PTR)file);
     uint32_t position;
@@ -1359,6 +1412,25 @@ uint32_t strlen(const char *text) {
 
 int strcmp(const char *a, const char *b) { return lstrcmpA(a, b); }
 char *strcpy(char *dst, const char *src) { return lstrcpyA(dst, src); }
+char *strcat(char *dst, const char *src) { char *p = dst; while (p && *p) p++; if (p) lstrcpyA(p, src); return dst; }
+void *memmove(void *dst, const void *src, uint32_t n) { uint8_t *d=dst; const uint8_t *s=src; uint32_t i; if (d==s)return dst; if(d<s){for(i=0;i<n;i++)d[i]=s[i];}else{for(i=n;i;i--)d[i-1]=s[i-1];}return dst; }
+char *strchr(const char *s, int c) { if (!s) return 0; while (*s) { if ((unsigned char)*s == (unsigned char)c) return (char *)s; s++; } return c == 0 ? (char *)s : 0; }
+char *strrchr(const char *s, int c) { const char *last=0; if(!s)return 0; do {if((unsigned char)*s==(unsigned char)c)last=s;} while(*s++); return (char *)last; }
+int strcasecmp(const char *a, const char *b) { unsigned char ca,cb; if(!a||!b)return a==b?0:(a?1:-1); do {ca=(unsigned char)*a++;cb=(unsigned char)*b++;if(ca>='A'&&ca<='Z')ca+=32;if(cb>='A'&&cb<='Z')cb+=32;if(ca!=cb)return ca<cb?-1:1;} while(ca);return 0; }
+char *strdup(const char *s) { uint32_t n; char *p; if(!s)return 0; n=strlen(s)+1;p=kmalloc(n);if(p)memcpy(p,s,n);return p; }
+long strtol(const char *s, char **end, int base) { long v=0; int neg=0; if(!s){if(end)*end=(char*)s;return 0;} while(*s==' '||*s=='\t')s++;if(*s=='-'){neg=1;s++;}if(base==0)base=(*s=='0'&&(s[1]=='x'||s[1]=='X'))?16:10;if(base==16&&s[0]=='0'&&(s[1]=='x'||s[1]=='X'))s+=2;while(*s){int d=(*s>='0'&&*s<='9')?*s-'0':((*s>='a'&&*s<='f')?*s-'a'+10:(*s>='A'&&*s<='F'?*s-'A'+10:-1));if(d<0||d>=base)break;v=v*base+d;s++;}if(end)*end=(char*)s;return neg?-v:v; }
+int _snprintf(char *buffer, size_t count, const char *format, ...) { int r; va_list ap; va_start(ap,format); r=vsnprintf(buffer,count,format,ap); va_end(ap); return r; }
+
+/* Flex emits references to the hosted C stream ABI even though winhlp32
+ * supplies YY_INPUT itself.  Export the small stream surface it needs. */
+typedef struct _DISCOUNT_FILE FILE;
+FILE *stdin = (FILE *)(uintptr_t)1, *stdout = (FILE *)(uintptr_t)2, *stderr = (FILE *)(uintptr_t)3;
+int ferror(FILE *stream) { (void)stream; return 0; }
+int getc(FILE *stream) { (void)stream; return EOF; }
+int clearerr(FILE *stream) { (void)stream; return 0; }
+size_t fread(void *buffer, size_t size, size_t count, FILE *stream) { (void)buffer;(void)size;(void)count;(void)stream;return 0; }
+size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream) { (void)stream; if(buffer&&size&&count&&stream==stdout) WriteConsoleA(GetStdHandle((uint32_t)-11),buffer,(uint32_t)(size*count),0,0); return count; }
+int fprintf(FILE *stream, const char *format, ...) { char buffer[512]; int r; va_list ap; va_start(ap,format); r=vsnprintf(buffer,sizeof(buffer),format,ap); va_end(ap); if(stream==stdout||stream==stderr) fwrite(buffer,1,(size_t)r,stream); return r; }
 
 HRESULT SetThreadDescription(HANDLE thread, LPCWSTR description) {
     (void)thread; (void)description;

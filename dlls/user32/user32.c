@@ -2215,6 +2215,27 @@ ATOM RegisterClassExW(const WNDCLASSEXW *lpwcx) {
     }
 }
 
+/* ANSI entry points are real imports in a number of Win16/Win32 ports,
+ * including winhlp32.  Keep the conversion at the USER boundary so callers
+ * do not need a private compatibility library. */
+ATOM RegisterClassExA(const WNDCLASSEXA *a) {
+    WNDCLASSEXW w;
+    WCHAR menu[128], name[128];
+    if (!a) return 0;
+    memset(&w, 0, sizeof(w));
+    w.cbSize = sizeof(w); w.style = a->style; w.lpfnWndProc = a->lpfnWndProc;
+    w.cbClsExtra = a->cbClsExtra; w.cbWndExtra = a->cbWndExtra;
+    w.hInstance = a->hInstance; w.hIcon = a->hIcon; w.hCursor = a->hCursor;
+    w.hbrBackground = a->hbrBackground; w.hIconSm = a->hIconSm;
+    if (a->lpszMenuName && !u32_is_int_resource((LPCWSTR)a->lpszMenuName)) {
+        u32_ansi_to_wide(a->lpszMenuName, menu, 128); w.lpszMenuName = menu;
+    } else w.lpszMenuName = (LPCWSTR)a->lpszMenuName;
+    if (a->lpszClassName && !u32_is_int_resource((LPCWSTR)a->lpszClassName)) {
+        u32_ansi_to_wide(a->lpszClassName, name, 128); w.lpszClassName = name;
+    } else w.lpszClassName = (LPCWSTR)a->lpszClassName;
+    return RegisterClassExW(&w);
+}
+
 BOOL UnregisterClassW(LPCWSTR lpClassName, HINSTANCE hInstance) {
     U32_CLASS *cls = u32_find_class(lpClassName);
     int i;
@@ -3739,6 +3760,11 @@ HWND WINAPI GetAncestor(HWND hwnd,UINT flags){(void)flags;while(GetParent(hwnd))
 HWND WINAPI GetForegroundWindow(void){return GetActiveWindow();}
 BOOL WINAPI SystemParametersInfoW(UINT action,UINT param,PVOID data,UINT flags){(void)param;(void)flags;if(action==SPI_SETDESKWALLPAPER)return TRUE;if(!data)return FALSE;if(action==SPI_GETWORKAREA){RECT*r=data;r->left=r->top=0;r->right=GetSystemMetrics(SM_CXSCREEN);r->bottom=GetSystemMetrics(SM_CYSCREEN)-28;return TRUE;}if(action==SPI_GETICONTITLELOGFONT){memset(data,0,sizeof(LOGFONTW));((LOGFONTW*)data)->lfHeight=16;return TRUE;}if(action==SPI_GETNONCLIENTMETRICS){NONCLIENTMETRICSW*n=data;n->lfCaptionFont.lfHeight=16;return TRUE;}return FALSE;}
 HICON WINAPI CreateIcon(HINSTANCE i,int w,int h,BYTE p,BYTE b,const BYTE*a,const BYTE*x){(void)i;(void)w;(void)h;(void)p;(void)b;(void)a;(void)x;return (HICON)(ULONG_PTR)1;}
+HICON CreateIconFromResourceEx(const BYTE *bits, DWORD size, BOOL icon, DWORD version,
+                               int width, int height, UINT flags) {
+    (void)bits; (void)size; (void)icon; (void)version; (void)width; (void)height; (void)flags;
+    return LoadIconW(0, IDI_WINLOGO);
+}
 BOOL WINAPI DrawFrameControl(HDC dc,LPRECT r,UINT type,UINT state){(void)dc;(void)r;(void)type;(void)state;return TRUE;}
 BOOL WINAPI DrawCaptionTempW(HWND h,HDC dc,const RECT*r,HFONT f,HICON i,LPCWSTR t,UINT flags){(void)h;(void)dc;(void)r;(void)f;(void)i;(void)t;(void)flags;return TRUE;}
 BOOL WINAPI IsWindowEnabled(HWND hwnd){return IsWindow(hwnd);}
@@ -3956,6 +3982,14 @@ BOOL IsWindowVisible(HWND hWnd) { U32_WINDOW *win = u32_lookup_window(hWnd); ret
 BOOL IsIconic(HWND hWnd) { U32_WINDOW *win=u32_lookup_window(hWnd);return win&&win->top_level?Win32kIsWindowMinimized((HANDLE)hWnd):FALSE; }
 HWND GetWindow(HWND hWnd, UINT uCmd) { (void)uCmd; return hWnd; }
 LRESULT CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) { return lpPrevWndFunc ? lpPrevWndFunc(hWnd, Msg, wParam, lParam) : 0; }
+LRESULT DefWindowProcA(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) { return DefWindowProcW(hWnd, msg, wParam, lParam); }
+LRESULT CallWindowProcA(WNDPROC proc, HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) { return CallWindowProcW(proc, hWnd, msg, wParam, lParam); }
+LONG_PTR GetWindowLongPtrA(HWND hWnd, int index) { return GetWindowLongPtrW(hWnd, index); }
+LONG_PTR SetWindowLongPtrA(HWND hWnd, int index, LONG_PTR value) { return SetWindowLongPtrW(hWnd, index, value); }
+DWORD GetMessagePos(void) { return 0; }
+BOOL RedrawWindow(HWND hwnd, const RECT *update, HANDLE region, UINT flags) {
+    (void)update; (void)region; (void)flags; return UpdateWindow(hwnd);
+}
 DWORD GetSysColor(int nIndex) { (void)nIndex; return RGB(192,192,192); }
 BOOL OpenIcon(HWND hWnd) { return ShowWindow(hWnd, SW_RESTORE); }
 BOOL SetForegroundWindow(HWND hWnd) { BringWindowToTop(hWnd); return TRUE; }
@@ -4050,6 +4084,18 @@ HWND CreateWindowW(LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle,
                    HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam) {
     return CreateWindowExW(0, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
                            hWndParent, hMenu, hInstance, lpParam);
+}
+
+HWND CreateWindowExA(DWORD exstyle, LPCSTR cls, LPCSTR title, DWORD style,
+                     int x, int y, int w, int h, HWND parent, HMENU menu,
+                     HINSTANCE instance, LPVOID param) {
+    WCHAR wc[128], wt[256];
+    u32_ansi_to_wide(cls, wc, 128); u32_ansi_to_wide(title, wt, 256);
+    return CreateWindowExW(exstyle, wc, wt, style, x, y, w, h, parent, menu, instance, param);
+}
+HWND CreateWindowA(LPCSTR cls, LPCSTR title, DWORD style, int x, int y, int w, int h,
+                   HWND parent, HMENU menu, HINSTANCE instance, LPVOID param) {
+    return CreateWindowExA(0, cls, title, style, x, y, w, h, parent, menu, instance, param);
 }
 
 BOOL IntersectRect(LPRECT out,const RECT *a,const RECT *b){if(!out||!a||!b)return FALSE;out->left=a->left>b->left?a->left:b->left;out->top=a->top>b->top?a->top:b->top;out->right=a->right<b->right?a->right:b->right;out->bottom=a->bottom<b->bottom?a->bottom:b->bottom;if(out->right<=out->left||out->bottom<=out->top){memset(out,0,sizeof(*out));return FALSE;}return TRUE;}

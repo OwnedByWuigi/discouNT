@@ -18,6 +18,8 @@ typedef uint32_t ULONG;
 typedef int32_t LONG;
 typedef int INT;
 typedef INT *LPINT;
+typedef WORD *LPWORD;
+typedef LONG *LPLONG;
 typedef uint32_t UINT;
 typedef uintptr_t UINT_PTR;
 typedef intptr_t LONG_PTR;
@@ -47,6 +49,7 @@ typedef HANDLE HFONT;
 typedef HANDLE HMENU;
 typedef HANDLE HDC;
 typedef HANDLE HBITMAP;
+typedef HANDLE HENHMETAFILE;
 typedef HANDLE HIMAGELIST;
 typedef HANDLE HTOKEN;
 typedef HANDLE HGLOBAL;
@@ -72,6 +75,7 @@ typedef LONG HRESULT;
 typedef DWORD LCID;
 typedef DWORD COLORREF;
 typedef void *FARPROC;
+#define LongToPtr(value) ((LPVOID)(LONG_PTR)(value))
 #ifndef __cdecl
 #define __cdecl
 #endif
@@ -82,6 +86,7 @@ typedef struct tagPOINT {
     LONG x;
     LONG y;
 } POINT, *PPOINT, *LPPOINT;
+typedef POINT POINTL;
 
 typedef struct tagRECT {
     LONG left;

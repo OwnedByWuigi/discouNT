@@ -47,8 +47,10 @@ enum {
 #define UNIMPLEMENTED ((void)0)
 
 static inline const char *wine_dbgstr_a(const char *str) { return str ? str : "(null)"; }
+static inline const char *debugstr_a(const char *str) { return wine_dbgstr_a(str); }
 static inline const char *wine_dbgstr_w(const WCHAR *str) {
     return str ? wine_dbg_sprintf("%ls", str) : "(null)";
 }
+static inline const char *debugstr_w(const WCHAR *str) { return wine_dbgstr_w(str); }
 
 #endif

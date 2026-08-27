@@ -120,6 +120,12 @@ RUNDLL32_APP := $(BUILD_DIR)/apps/rundll32/rundll32.exe
 PROGMAN_APP := $(BUILD_DIR)/apps/progman/progman.exe
 PROGMAN_SRCS := $(filter %.c,$(wildcard apps/progman/*.c))
 PROGMAN_MENU_RES := $(BUILD_DIR)/apps/progman/progman.menu.bin
+FLEX ?= flex
+WINHLP32_APP := $(BUILD_DIR)/apps/winhlp32/winhlp32.exe
+WINHLP32_SRCS := apps/winhlp32/callback.c apps/winhlp32/hlpfile.c \
+	apps/winhlp32/macro.c apps/winhlp32/string.c apps/winhlp32/winhelp.c
+WINHLP32_LEX := $(BUILD_DIR)/apps/winhlp32/macro.lex.c
+WINHLP32_MENU_RES := $(BUILD_DIR)/apps/winhlp32/winhlp32.menu.bin
 MAIN_GRP := $(BUILD_DIR)/Main.grp
 PROGMAN_INI := apps/progman/progman.ini
 EXPLORER_SRCS := $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
@@ -164,7 +170,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(WIN32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -351,6 +357,19 @@ $(PROGMAN_MENU_RES): apps/progman/progman.rc apps/progman/progman.h tools/rc_men
 	@mkdir -p $(@D)
 	python3 tools/rc_menu_gen.py $< $@
 
+$(WINHLP32_LEX): apps/winhlp32/macro.lex.l
+	@mkdir -p $(@D)
+	$(FLEX) -o $@ $<
+
+$(WINHLP32_MENU_RES): apps/winhlp32/winhlp32.rc apps/winhlp32/winhelp_res.h tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
+
+$(WINHLP32_APP): $(WINHLP32_SRCS) $(WINHLP32_LEX) apps/winhlp32/winhelp.h apps/winhlp32/hlpfile.h apps/winhlp32/macro.h apps/winhlp32/winhlp32.rc $(WINHLP32_MENU_RES)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Iapps/winhlp32 -include windows.h -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,WinMain -o $@ $(WINHLP32_SRCS) $(WINHLP32_LEX)
+	@objcopy --add-section .disres=$(WINHLP32_MENU_RES) --set-section-flags .disres=readonly,data $@
+
 $(SMSS_APP): win32/smss/smss_app.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pic -no-pie \
@@ -407,7 +426,7 @@ $(AHCI_SYS): drivers/ahci/ahci.c drivers/ahci/ahci.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ahci/ahci.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
@@ -466,6 +485,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 	fi
 	@if [ -f "$(PROGMAN_APP)" ]; then \
 		cp "$(PROGMAN_APP)" "$(SYSTEM32_DIR)/PROGMAN.EXE"; \
+	fi
+	@if [ -f "$(WINHLP32_APP)" ]; then \
+		cp "$(WINHLP32_APP)" "$(SYSTEM32_DIR)/WINHLP32.EXE"; \
 	fi
 	@for sys in $(DRIVER_SYS_FILES); do \
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \

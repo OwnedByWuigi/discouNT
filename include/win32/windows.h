@@ -168,6 +168,14 @@ BOOL WINAPI CreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
 HANDLE WINAPI CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
                           LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
                           DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
+HANDLE WINAPI CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+                          LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
+                          DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
+HANDLE WINAPI LoadLibraryA(LPCSTR name);
+DWORD WINAPI GetFileAttributesA(LPCSTR name);
+DWORD WINAPI SearchPathA(LPCSTR path, LPCSTR file, LPCSTR extension, DWORD length, LPSTR buffer, LPSTR *part);
+LONG WINAPI _hread(HFILE file, LPVOID buffer, LONG count);
+#define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
 BOOL WINAPI ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
                      DWORD *lpNumberOfBytesRead, LPVOID lpOverlapped);
 BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,

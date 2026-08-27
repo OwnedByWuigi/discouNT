@@ -26,6 +26,15 @@ __attribute__((stdcall)) int InitCommonControlsEx(const void *lpInitCtrls) {
     return 1;
 }
 
+__attribute__((stdcall)) void *CreatePropertySheetPageA(const void *page) {
+    (void)page;
+    return (void*)1;
+}
+__attribute__((stdcall)) int PropertySheetA(const void *header) {
+    (void)header;
+    return 1;
+}
+
 __attribute__((stdcall)) void *CreateStatusWindowW(int32_t style, const uint16_t *text, void *parent, uint32_t id) {
     return CreateWindowExW(0, g_status_class, text, (uint32_t)style, 2, 226, 532, 18, parent, (void*)(uintptr_t)id, 0, 0);
 }

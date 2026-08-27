@@ -10,6 +10,12 @@ extern void Win32kGetWindowRect(void *hwnd, LPRECT lpRect);
 extern void Win32kGetClientRect(void *hwnd, LPRECT lpRect);
 
 HBITMAP WINAPI CreateDIBSection(HDC dc,const BITMAPINFO *info,UINT usage,void **bits,HANDLE section,DWORD offset){SIZE_T bytes;(void)dc;(void)usage;(void)section;(void)offset;if(!info||!bits)return 0;bytes=(SIZE_T)(info->bmiHeader.biWidth<0?-info->bmiHeader.biWidth:info->bmiHeader.biWidth)*(SIZE_T)(info->bmiHeader.biHeight<0?-info->bmiHeader.biHeight:info->bmiHeader.biHeight)*4;*bits=kmalloc((uint32_t)bytes);if(!*bits)return 0;memset(*bits,0,(uint32_t)bytes);return (HBITMAP)*bits;}
+HBITMAP WINAPI CreateBitmap(int width,int height,UINT planes,UINT bits,const void *data){BITMAPINFO info;void *pixels=0;(void)planes;(void)bits;(void)data;memset(&info,0,sizeof(info));info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=height;return CreateDIBSection(0,&info,0,&pixels,0,0);}
+HBITMAP WINAPI CreateDIBitmap(HDC dc,const BITMAPINFOHEADER *header,DWORD init,const void *bits,const BITMAPINFO *info,UINT usage){BITMAPINFO local;void *pixels=0;(void)init;(void)bits;if(!header)return 0;if(info)local=*info;else{memset(&local,0,sizeof(local));local.bmiHeader=*header;}return CreateDIBSection(dc,&local,usage,&pixels,0,0);}
+HDC WINAPI CreateEnhMetaFileW(HDC dc,LPCWSTR file,const RECT *rect,LPCWSTR desc){(void)file;(void)rect;(void)desc;return dc;}
+HENHMETAFILE WINAPI CloseEnhMetaFile(HDC dc){return (HENHMETAFILE)dc;}
+UINT WINAPI GetEnhMetaFileBits(HENHMETAFILE emf,UINT size,BYTE *bits){(void)emf;(void)size;(void)bits;return 0;}
+BOOL WINAPI DeleteEnhMetaFile(HENHMETAFILE emf){(void)emf;return TRUE;}
 BOOL WINAPI GetTextExtentPointA(HDC dc,LPCSTR text,int count,LPSIZE size){(void)dc;(void)text;if(!size)return FALSE;size->cx=count*8;size->cy=16;return TRUE;}
 BOOL WINAPI GetTextExtentPointW(HDC dc,LPCWSTR text,int count,LPSIZE size){return GetTextExtentPoint32W(dc,text,count,size);}
 extern void Win32kGetClientScreenRect(void *hwnd, LPRECT lpRect);

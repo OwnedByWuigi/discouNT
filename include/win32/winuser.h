@@ -37,6 +37,11 @@ typedef struct tagWNDCLASSEXW {
     LPCWSTR   lpszClassName;
     HICON     hIconSm;
 } WNDCLASSEXW, *PWNDCLASSEXW, *LPWNDCLASSEXW;
+typedef struct tagWNDCLASSEXA {
+    UINT cbSize, style; WNDPROC lpfnWndProc; int cbClsExtra, cbWndExtra;
+    HINSTANCE hInstance; HICON hIcon; HCURSOR hCursor; HBRUSH hbrBackground;
+    LPCSTR lpszMenuName, lpszClassName; HICON hIconSm;
+} WNDCLASSEXA, *LPWNDCLASSEXA;
 
 typedef struct tagNMHDR {
     HWND hwndFrom;
@@ -61,6 +66,7 @@ typedef struct tagMINMAXINFO {
     POINT ptMaxTrackSize;
 } MINMAXINFO, *PMINMAXINFO, *LPMINMAXINFO;
 typedef struct tagCREATESTRUCTW { LPVOID lpCreateParams; HINSTANCE hInstance; HMENU hMenu; HWND hwndParent; int cy,cx,y,x; LONG style; LPCWSTR lpszName,lpszClass; DWORD dwExStyle; } CREATESTRUCTW,*LPCREATESTRUCTW;
+typedef CREATESTRUCTW CREATESTRUCTA, *LPCREATESTRUCTA;
 typedef struct tagMDICREATESTRUCTW { LPCWSTR szClass; LPCWSTR szTitle; HINSTANCE hOwner; int x,y,cx,cy; DWORD style; LPARAM lParam; } MDICREATESTRUCTW,*LPMDICREATESTRUCTW;
 typedef struct tagCLIENTCREATESTRUCT { HMENU hWindowMenu; UINT idFirstChild; } CLIENTCREATESTRUCT,*LPCLIENTCREATESTRUCT;
 typedef struct tagWINDOWPOS { HWND hwnd,hwndInsertAfter; int x,y,cx,cy; UINT flags; } WINDOWPOS,*LPWINDOWPOS;
@@ -156,6 +162,31 @@ typedef struct tagSCROLLINFO {
 #define WM_GETDLGCODE       0x0087
 #define WM_QUERYDRAGICON    0x0037
 #define WM_PAINT            0x000F
+#define SW_NORMAL           1
+#define RDW_FRAME            0x0400
+#define RDW_INVALIDATE       0x0001
+#define IDC_HAND             32649
+#define COLOR_BTNFACE        15
+#define WA_INACTIVE          0
+#define VK_UP                0x26
+#define VK_DOWN              0x28
+#define VK_PRIOR             0x21
+#define VK_NEXT              0x22
+#define ES_READONLY          0x0800
+#define LB_ERR               (-1)
+#define LB_INSERTSTRING      0x0181
+#define LB_GETCOUNT          0x018B
+#define LB_SETITEMDATA       0x019A
+#define LB_GETCURSEL         0x0188
+#define LB_GETITEMDATA       0x0199
+#define LBN_DBLCLK           2
+#define EM_SCROLL            0x00B5
+#define DWLP_MSGRESULT       0
+#define HELP_CONTEXT         0x0001
+#define HELP_QUIT            0x0002
+#define HELP_HELPONHELP      0x0004
+#define HELP_SETCONTENTS     0x0005
+#define HELP_CONTEXTPOPUP    0x0008
 #define WM_CLOSE            0x0010
 #define WM_QUERYENDSESSION  0x0011
 #define WM_QUIT             0x0012
@@ -565,6 +596,7 @@ BOOL WINAPI SetMenuInfo(HMENU menu,const MENUINFO *info);
 
 ATOM WINAPI RegisterClassW(const WNDCLASSW *lpWndClass);
 ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *lpwcx);
+ATOM WINAPI RegisterClassExA(const WNDCLASSEXA *lpwcx);
 BOOL WINAPI UnregisterClassW(LPCWSTR lpClassName, HINSTANCE hInstance);
 int WINAPI GetClassNameW(HWND hWnd, LPWSTR lpClassName, int nMaxCount);
 BOOL WINAPI GetClassInfoW(HINSTANCE hInstance, LPCWSTR lpClassName, LPWNDCLASSW lpWndClass);
@@ -653,6 +685,18 @@ HLOCAL WINAPI LocalFree(HLOCAL hMem);
 BOOL WINAPI EndDialog(HWND hDlg, INT_PTR nResult);
 BOOL WINAPI PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 BOOL WINAPI WinHelpW(HWND hWndMain, LPCWSTR lpszHelp, UINT uCommand, ULONG_PTR dwData);
+HWND WINAPI CreateWindowA(LPCSTR class_name, LPCSTR title, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param);
+HWND WINAPI CreateWindowExA(DWORD exstyle, LPCSTR class_name, LPCSTR title, DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param);
+BOOL WINAPI RedrawWindow(HWND hwnd, const RECT *update, HANDLE region, UINT flags);
+LONG_PTR WINAPI SetWindowLongPtrA(HWND hwnd, int index, LONG_PTR value);
+LONG_PTR WINAPI GetWindowLongPtrA(HWND hwnd, int index);
+LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT WINAPI CallWindowProcA(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+DWORD WINAPI GetMessagePos(void);
+HWND WINAPI CreateWindowA(LPCSTR class_name, LPCSTR title, DWORD style, int x, int y,
+                          int width, int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param);
+HICON WINAPI CreateIconFromResourceEx(const BYTE *bits, DWORD size, BOOL icon, DWORD version,
+                                      int width, int height, UINT flags);
 BOOL WINAPI GetCursorPos(LPPOINT lpPoint);
 LONG_PTR WINAPI GetWindowLongW(HWND hWnd, int nIndex);
 LONG WINAPI SetWindowLongW(HWND hWnd, int nIndex, LONG dwNewLong);

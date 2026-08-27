@@ -3,6 +3,34 @@
 
 #include "winuser.h"
 
+typedef HANDLE HPROPSHEETPAGE;
+typedef struct _PROPSHEETPAGEA {
+    DWORD dwSize, dwFlags;
+    HINSTANCE hInstance;
+    LPCSTR pszTemplate;
+    HANDLE hIcon;
+    LPCSTR pszTitle;
+    DLGPROC pfnDlgProc;
+    LPARAM lParam;
+} PROPSHEETPAGEA;
+typedef struct _PROPSHEETHEADERA {
+    DWORD dwSize, dwFlags;
+    HWND hwndParent;
+    HINSTANCE hInstance;
+    HANDLE hIcon;
+    LPCSTR pszCaption;
+    UINT nPages, nStartPage;
+    HPROPSHEETPAGE *phpage;
+} PROPSHEETHEADERA;
+#define PSH_NOAPPLYNOW     0x00000080
+#define PSBTN_OK            0
+#define PSM_PRESSBUTTON    (WM_USER + 113)
+#define PSN_APPLY          ((UINT)-202)
+#define PSNRET_NOERROR     0
+#define PSNRET_INVALID     1
+HPROPSHEETPAGE WINAPI CreatePropertySheetPageA(const PROPSHEETPAGEA *page);
+int WINAPI PropertySheetA(const PROPSHEETHEADERA *header);
+
 typedef LRESULT (CALLBACK *SUBCLASSPROC)(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 typedef struct tagINITCOMMONCONTROLSEX {

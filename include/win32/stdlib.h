@@ -7,6 +7,7 @@ void *calloc(SIZE_T count,SIZE_T size);
 void *realloc(void *memory,SIZE_T size);
 ULONG wcstoul(const WCHAR *text,WCHAR **end,int base);
 long wcstol(const WCHAR *text,WCHAR **end,int base);
+long strtol(const char *text,char **end,int base);
 WCHAR *wcsdup(const WCHAR *text);
 void exit(int status);
 

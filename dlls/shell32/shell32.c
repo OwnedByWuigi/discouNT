@@ -286,4 +286,10 @@ HINSTANCE WINAPI ShellExecuteW(HWND hwnd,LPCWSTR operation,LPCWSTR file,LPCWSTR 
     CloseHandle(process.hThread);CloseHandle(process.hProcess);
     return (HINSTANCE)(ULONG_PTR)33;
 }
+HINSTANCE WINAPI ShellExecuteA(HWND hwnd,LPCSTR operation,LPCSTR file,LPCSTR parameters,LPCSTR directory,INT show) {
+    WCHAR wfile[260], wparams[512], wdir[260], wop[32];
+    sh_ansi_to_wide(wfile,file,260); sh_ansi_to_wide(wparams,parameters,512);
+    sh_ansi_to_wide(wdir,directory,260); sh_ansi_to_wide(wop,operation,32);
+    return ShellExecuteW(hwnd,wop,wfile,parameters?wparams:0,directory?wdir:0,show);
+}
 BOOL WINAPI ShellExecuteExW(LPSHELLEXECUTEINFOW info){HINSTANCE result;if(!info)return FALSE;if((info->fMask&SEE_MASK_IDLIST)&&info->lpIDList){WCHAR path[MAX_PATH];if(!SHGetPathFromIDListW(info->lpIDList,path))return FALSE;result=ShellExecuteW(info->hwnd,info->lpVerb,path,info->lpParameters,info->lpDirectory,info->nShow);}else result=ShellExecuteW(info->hwnd,info->lpVerb,info->lpFile,info->lpParameters,info->lpDirectory,info->nShow);info->hInstApp=result;return (ULONG_PTR)result>32;}

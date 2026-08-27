@@ -71,6 +71,7 @@ int WINAPI ShellAboutA(HWND hWnd, LPCSTR szApp, LPCSTR szOtherStuff, HICON hIcon
 int WINAPI ShellAboutW(HWND hWnd, LPCWSTR szApp, LPCWSTR szOtherStuff, HICON hIcon);
 DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path,DWORD attributes,SHFILEINFOW *info,UINT size,UINT flags);
 HINSTANCE WINAPI ShellExecuteW(HWND hwnd,LPCWSTR operation,LPCWSTR file,LPCWSTR parameters,LPCWSTR directory,INT show);
+HINSTANCE WINAPI ShellExecuteA(HWND hwnd,LPCSTR operation,LPCSTR file,LPCSTR parameters,LPCSTR directory,INT show);
 BOOL WINAPI ShellExecuteExW(LPSHELLEXECUTEINFOW info);
 
 #endif
