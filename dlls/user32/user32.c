@@ -1295,8 +1295,14 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu,
     }
     win = u32_alloc_window();
     if (!win) return NULL;
-    win->hwnd = (HWND)Win32kCreateWindow("MenuPopup", "", x, y, width, height,
-                                         WS_POPUP | WS_VISIBLE);
+    /* Menus are a separate front-layer surface.  Give win32k the real owner
+       and topmost/no-activate styles at creation time; setting these only on
+       the USER32 bookkeeping object is too late for native hit testing and
+       lets the owner repaint over the popup. */
+    win->hwnd = (HWND)Win32kCreateWindowEx("MenuPopup", "", x, y, width, height,
+                                          WS_POPUP | WS_VISIBLE,
+                                          WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                                          (HANDLE)owner_hwnd);
     if (!win->hwnd) {
         win->used = 0;
         return NULL;
@@ -1308,6 +1314,7 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu,
     win->enabled = 1;
     win->owner_pid = owner->owner_pid;
     win->style = WS_POPUP | WS_VISIBLE | WS_BORDER;
+    win->exstyle = WS_EX_TOPMOST | WS_EX_NOACTIVATE;
     win->ctrl_type = U32_CTRL_MENUPOPUP;
     win->menu = hMenu;
     win->popup_menu = NULL;
@@ -2169,7 +2176,11 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        if (win->top_level && win->menu) {
+        /* A popup is technically top-level for the native window manager,
+         * but its menu is an item list, not a menu bar.  Handling the generic
+         * top-level menu-bar hit test first makes the opening click reopen or
+         * close the popup immediately. */
+        if (win->top_level && win->menu && win->ctrl_type != U32_CTRL_MENUPOPUP) {
             int menu_index = u32_menu_bar_hit_test(win, x, y);
             if (menu_index >= 0) {
                 u32_open_menu_bar_popup(hWnd, menu_index);

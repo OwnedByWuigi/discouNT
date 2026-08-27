@@ -559,13 +559,18 @@ static void raise_window(HANDLE hwnd) {
         return;
     }
     candidate_topmost = window_is_topmost(candidate);
-    target = window_is_topmost(candidate) ? window_count - 1 : 0;
     ObDereferenceObject(hwnd);
     for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
         if (win && window_is_topmost(win) && first_topmost == window_count) first_topmost = i;
         if (win) ObDereferenceObject(window_list[i]);
     }
+    /* render_scene paints from back to front and find_window_at searches from
+       front to back.  Keep newly raised ordinary windows at the front of the
+       normal band; placing them at index zero made visible popups get painted
+       underneath their owner while still receiving the mouse hit. */
+    target = candidate_topmost ? window_count - 1 :
+             (first_topmost == window_count ? window_count - 1 : first_topmost - 1);
     for (int i = 0; i < window_count; i++) {
         if (window_list[i] == hwnd) {
             pos = i;
@@ -604,6 +609,10 @@ static void raise_window(HANDLE hwnd) {
 static int is_in_window(WINDOW *win, int x, int y) {
     return (x >= win->x && x < win->x + win->width &&
             y >= win->y && y < win->y + win->height);
+}
+
+static int is_menu_popup_window(const WINDOW *win) {
+    return win && win->wndClass && strcmp(win->wndClass->className, "MenuPopup") == 0;
 }
 
 static int is_title_bar(WINDOW *win, int x, int y) {
@@ -800,13 +809,13 @@ static int rects_intersect(int x1, int y1, int w1, int h1, int x2, int y2, int w
 static void render_scene(HANDLE skip_window) {
     FbClearScreen(DESKTOP_COLOR);
 
-    for (int i = 0; i < window_count; i++) {
+    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         HANDLE hwnd = window_list[i];
         WINDOW *win;
         if (hwnd == skip_window) continue;
 
         win = (WINDOW*)ObReferenceObject(hwnd);
-        if (win && win->visible) {
+        if (win && win->visible && (is_menu_popup_window(win) == (pass == 1))) {
             draw_window_frame(win);
             if (win->wndProc && !win->minimized) win->wndProc(hwnd, WM_PAINT, 0, 0);
         }
@@ -845,9 +854,9 @@ static void fast_drag_present(WINDOW *win, int old_x, int old_y) {
     MouseEraseCursor();
     FbSetClipRect(left, top, right - left, bottom - top);
     FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
-    for (int i = 0; i < window_count; i++) {
+    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (other && other->visible &&
+        if (other && other->visible && (is_menu_popup_window(other) == (pass == 1)) &&
             (window_list[i] == drag_window ||
              rects_intersect(other->x, other->y, other->width, other->height,
                              left, top, right - left, bottom - top))) {
@@ -1069,6 +1078,16 @@ int Win32kIsWindowMinimized(HANDLE hwnd) {
 
 void Win32kUpdateWindow(HANDLE hwnd) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
+    int top_level = win && (win->desktop || win->owner == INVALID_HANDLE || win->owner == 0);
+    if (top_level) {
+        /* USER32 may invalidate an owner immediately after opening a popup.
+           Painting that owner directly writes over the shared framebuffer
+           and leaves the popup invisible even though it remains hittable.
+           Recompose the complete scene so front-layer windows are restored. */
+        if (win) ObDereferenceObject(hwnd);
+        Win32kRedrawAll();
+        return;
+    }
     if (win && win->wndProc && !win->minimized) {
         win->wndProc(hwnd, WM_PAINT, 0, 0);
     }
@@ -1332,9 +1351,10 @@ void Win32kHandleMouseMove(int x, int y) {
             MouseEraseCursor();
             FbSetClipRect(left, top, right - left, bottom - top);
             FbFillRect(left, top, right - left, bottom - top, DESKTOP_COLOR);
-            for (int i = 0; i < window_count; i++) {
+            for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
                 WINDOW *other = (WINDOW*)ObReferenceObject(window_list[i]);
-                if (other && other->visible && rects_intersect(other->x, other->y,
+                if (other && other->visible && (is_menu_popup_window(other) == (pass == 1)) &&
+                    rects_intersect(other->x, other->y,
                     other->width, other->height, left, top, right - left, bottom - top)) {
                     draw_window_frame(other);
                     if (other->wndProc && !other->minimized) other->wndProc(window_list[i], WM_PAINT, 0, 0);
@@ -1528,9 +1548,9 @@ void Win32kRedrawAll(void) {
 
     FbClearScreen(DESKTOP_COLOR);
 
-    for (int i = 0; i < window_count; i++) {
+    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && win->visible) {
+        if (win && win->visible && (is_menu_popup_window(win) == (pass == 1))) {
             draw_window_frame(win);
             if (win->wndProc && !win->minimized) {
                 win->wndProc(window_list[i], WM_PAINT, 0, 0);
@@ -1539,9 +1559,9 @@ void Win32kRedrawAll(void) {
         if (win) ObDereferenceObject(window_list[i]);
     }
 
-    for (int i = 0; i < window_count; i++) {
+    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
         WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && win->visible) draw_window_caption(win);
+        if (win && win->visible && (is_menu_popup_window(win) == (pass == 1))) draw_window_caption(win);
         if (win) ObDereferenceObject(window_list[i]);
     }
 

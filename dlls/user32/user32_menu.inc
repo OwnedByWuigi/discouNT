@@ -136,6 +136,37 @@ static const char *u32_menu_next_line(const char *p, const char *end) {
     return p;
 }
 
+static HMENU u32_create_progman_menu(void) {
+    HMENU root = CreateMenu();
+    HMENU file, options, windows, help;
+    if (!root) return NULL;
+    file = CreateMenu(); options = CreateMenu(); windows = CreateMenu(); help = CreateMenu();
+    if (!file || !options || !windows || !help) return root;
+    AppendMenuW(root, MF_POPUP, (UINT_PTR)file, L"&File");
+    AppendMenuW(file, MF_STRING, 256, L"&New...");
+    AppendMenuW(file, MF_STRING, 257, L"O&pen\tEnter");
+    AppendMenuW(file, MF_GRAYED, 258, L"&Move...\tF7");
+    AppendMenuW(file, MF_GRAYED, 259, L"&Copy...\tF8");
+    AppendMenuW(file, MF_STRING, 260, L"&Delete\tDel");
+    AppendMenuW(file, MF_STRING, 261, L"&Properties\tAlt+Enter");
+    AppendMenuW(file, MF_SEPARATOR, 0, L"");
+    AppendMenuW(file, MF_STRING, 263, L"E&xecute...");
+    AppendMenuW(file, MF_SEPARATOR, 0, L"");
+    AppendMenuW(file, MF_STRING, 264, L"E&xit Windows");
+    AppendMenuW(root, MF_POPUP, (UINT_PTR)options, L"&Options");
+    AppendMenuW(options, MF_STRING, 272, L"&Arrange automatically");
+    AppendMenuW(options, MF_STRING, 273, L"&Minimize on run");
+    AppendMenuW(options, MF_STRING, 275, L"&Save settings on exit");
+    AppendMenuW(root, MF_POPUP, (UINT_PTR)windows, L"&Windows");
+    AppendMenuW(windows, MF_STRING, 288, L"&Overlapped\tShift+F5");
+    AppendMenuW(windows, MF_STRING, 289, L"&Side by side\tShift+F4");
+    AppendMenuW(windows, MF_STRING, 290, L"&Arrange Icons");
+    AppendMenuW(root, MF_POPUP, (UINT_PTR)help, L"&Help");
+    AppendMenuW(help, MF_STRING, 305, L"&Contents\tF1");
+    AppendMenuW(help, MF_STRING, 322, L"&About Program Manager");
+    return root;
+}
+
 static int u32_menu_match_key(const char *quoted_key, LPCWSTR lpMenuName) {
     char wanted[64];
     if (!quoted_key || !lpMenuName) return 0;
@@ -291,6 +322,8 @@ HMENU LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName) {
     int selected = 0;
 
     blob = u32_get_embedded_menu_blob(hInstance, &blob_size);
+    if ((!blob || !blob_size) && (ULONG_PTR)lpMenuName == 0x109u)
+        return u32_create_progman_menu();
     if (!blob || !blob_size) return NULL;
 
     p = (const char*)blob;
@@ -363,7 +396,9 @@ HMENU LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName) {
         }
         p = u32_menu_next_line(p, end);
     }
-    return root ? root->handle : NULL;
+    if (root) return root->handle;
+    if ((ULONG_PTR)lpMenuName == 0x109u) return u32_create_progman_menu();
+    return NULL;
 }
 
 BOOL InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem) {
