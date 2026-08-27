@@ -22,8 +22,9 @@
 
 #define COBJMACROS
 
-#include "wine/debug.h"
 #include "explorer_private.h"
+
+#include "wine/debug.h"
 
 #include "resource.h"
 

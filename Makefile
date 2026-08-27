@@ -120,6 +120,8 @@ RUNDLL32_APP := $(BUILD_DIR)/apps/rundll32/rundll32.exe
 PROGMAN_APP := $(BUILD_DIR)/apps/progman/progman.exe
 PROGMAN_SRCS := $(filter %.c,$(wildcard apps/progman/*.c))
 PROGMAN_MENU_RES := $(BUILD_DIR)/apps/progman/progman.menu.bin
+MAIN_GRP := $(BUILD_DIR)/Main.grp
+PROGMAN_INI := apps/progman/progman.ini
 EXPLORER_SRCS := $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
 WINVER_SRCS := apps/winver/winver.c
 RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
@@ -407,8 +409,12 @@ $(AHCI_SYS): drivers/ahci/ahci.c drivers/ahci/ahci.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ahci/ahci.c
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI)
 	@mkdir -p $(SYSTEM32_DIR)
+	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
+	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
+	@cp "$(PROGMAN_INI)" "$(ISO_DIR)/progman.ini"
+	@cp "$(PROGMAN_INI)" "$(SYSTEM32_DIR)/progman.ini"
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)
 	@for font in $(FONT_SOURCES); do cp "$$font" "$(FONT_DIR)/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; done
@@ -467,6 +473,11 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 		cp "$$sys" "$(DRIVERS_DIR)/$$(basename "$$sys" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@touch $@
+
+$(MAIN_GRP): tools/make_main_grp.py
+	@mkdir -p $(@D)
+	python3 $< $@
+
 
 $(GRUB_DIR)/grub.cfg: boot/grub/grub.cfg $(SYSTEM32_DIR)/.stamp
 	@mkdir -p $(GRUB_DIR) $(ISO_DIR)/boot

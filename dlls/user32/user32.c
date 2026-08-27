@@ -58,6 +58,7 @@ static const uint8_t *u32_get_embedded_blob(HINSTANCE hInstance, const char *sec
 #define U32_EDGE_THICKNESS 1
 #define U32_TITLEBAR_HEIGHT 18
 #define U32_MENU_HEIGHT 18
+#define U32_MENU_TEXT_Y 3
 
 typedef struct _U32_CLASS {
     int used;
@@ -391,6 +392,11 @@ static int g_registered_dialog_used;
 static HWND g_focus = NULL;
 static HWND g_active_window = NULL;
 static HWND g_mouse_capture_window = NULL;
+static HWND g_child_drag_window = NULL;
+static int g_child_drag_start_x;
+static int g_child_drag_start_y;
+static int g_child_drag_origin_x;
+static int g_child_drag_origin_y;
 static DWORD g_user32_process_id = 1;
 
 static DWORD u32_current_process_id(void) {
@@ -851,7 +857,12 @@ static void u32_sync_top_level(U32_WINDOW *win) {
 
 static HWND u32_get_root_window(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
-    while (win && win->parent) win = u32_lookup_window(win->parent);
+    /* A top-level window may retain its owner in parent for message and
+       ownership purposes.  It is nevertheless the coordinate root for its
+       child controls; walking through the owner shifts controls into the
+       owner's client area (most visibly in Progman's Execute dialog). */
+    while (win && win->parent && !win->top_level)
+        win = u32_lookup_window(win->parent);
     return win ? win->hwnd : hwnd;
 }
 
@@ -1035,13 +1046,27 @@ static void u32_get_absolute_rect(U32_WINDOW *win, RECT *out) {
         rc.top += parent->rect.top;
         rc.right += parent->rect.left;
         rc.bottom += parent->rect.top;
-        if (parent->top_level) {
+        if (parent->style & WS_CAPTION) {
             int ox = u32_client_offset_x(parent);
             int oy = u32_client_offset_y(parent);
             rc.left += ox;
             rc.top += oy;
             rc.right += ox;
             rc.bottom += oy;
+            /* The owner of a top-level window is not another coordinate
+               parent.  Stop here so controls of owned dialogs stay inside
+               the dialog rather than being offset by the owner. */
+            if (parent->top_level) break;
+        } else if (parent->top_level) {
+            /* Top-level windows without captions still use their client
+               origin as the coordinate root. */
+            int ox = u32_client_offset_x(parent);
+            int oy = u32_client_offset_y(parent);
+            rc.left += ox;
+            rc.top += oy;
+            rc.right += ox;
+            rc.bottom += oy;
+            break;
         }
         win = parent;
     }
@@ -1135,7 +1160,7 @@ static int u32_menu_text_copy(LPCWSTR src, WCHAR *dst, int max_chars, int strip_
 static int u32_menu_bar_item_width(LPCWSTR text) {
     WCHAR buf[64];
     int len = u32_menu_text_copy(text, buf, 64, 1);
-    return (len * 8) + 14;
+    return (len * 8) + 12;
 }
 
 static int u32_popup_item_height(const U32_MENU_ITEM *item) {
@@ -1221,13 +1246,16 @@ static void u32_close_popup_chain(HWND owner_hwnd) {
         SendMessageW(owner_hwnd, WM_EXITMENULOOP, 0, 0);
         g_open_menu_popup = NULL;
     }
-    u32_mark_invalid(owner_hwnd);
+    /* Popup state changes affect two top-level surfaces.  Recompose them
+       together; invalidating the owner lets its direct WM_PAINT pass erase
+       the popup or its menu-bar highlight. */
+    Win32kRedrawAll();
 }
 
 static int u32_menu_bar_hit_test(U32_WINDOW *win, int x, int y) {
     U32_MENU *menu;
     int i;
-    int left = 6;
+    int left = 4;
     if (!win || !win->menu || y < 0 || y >= U32_MENU_HEIGHT) return -1;
     menu = u32_lookup_menu(win->menu);
     if (!menu) return -1;
@@ -1261,6 +1289,7 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu,
     int width = 64;
     int height = 4;
     RECT parent_abs;
+    int origin_y;
     if (!pwin || !owner || !menu) return NULL;
     /* Applications commonly populate submenus lazily from this message.  It
        must be delivered before the popup is measured, not after its window
@@ -1273,9 +1302,23 @@ static HWND u32_create_menu_popup(HWND parent, HWND owner_hwnd, HMENU hMenu,
         if (item_width > width) width = item_width;
         height += u32_popup_item_height(&menu->items[i]);
     }
-    u32_get_absolute_rect(pwin, &parent_abs);
-    x += parent_abs.left + u32_client_offset_x(pwin);
-    y += parent_abs.top + u32_client_offset_y(pwin);
+    if (pwin->top_level) {
+        /* Menu coordinates are relative to the top-level client surface.
+           Keep the menu bar itself in that surface: the caller supplies the
+           menu-bar y coordinate, while only the native frame/title offset is
+           added here.  Including the menu height in this origin shifts every
+           popup by an extra bar, and relying on the native client rectangle
+           loses the offset when the window is partially clipped. */
+        u32_sync_top_level(pwin);
+        parent_abs = pwin->rect;
+        x += parent_abs.left + u32_client_offset_x(pwin);
+        y += parent_abs.top + U32_FRAME_THICKNESS + U32_TITLEBAR_HEIGHT + U32_EDGE_THICKNESS;
+    } else {
+        u32_get_absolute_rect(pwin, &parent_abs);
+        x += parent_abs.left + u32_client_offset_x(pwin);
+        origin_y = u32_client_offset_y(pwin);
+        y += parent_abs.top + origin_y;
+    }
     if (align_flags & TPM_BOTTOMALIGN) y -= height;
     if (x + width > GetSystemMetrics(SM_CXSCREEN)) x = GetSystemMetrics(SM_CXSCREEN) - width;
     if (y + height > GetSystemMetrics(SM_CYSCREEN)) y = GetSystemMetrics(SM_CYSCREEN) - height;
@@ -1350,7 +1393,7 @@ static HWND u32_open_menu_bar_popup(HWND owner_hwnd, int menu_index) {
     U32_WINDOW *owner = u32_lookup_window(owner_hwnd);
     U32_MENU *menu;
     int i;
-    int left = 6;
+    int left = 4;
     if (!owner || !owner->menu) return NULL;
     menu = u32_lookup_menu(owner->menu);
     if (!menu || menu_index < 0 || menu_index >= menu->count) return NULL;
@@ -1363,14 +1406,14 @@ static HWND u32_open_menu_bar_popup(HWND owner_hwnd, int menu_index) {
     owner->active_menu_index = menu_index;
     owner->hot_index = menu_index;
     g_open_menu_popup = owner->popup_menu;
-    u32_mark_invalid(owner_hwnd);
+    Win32kRedrawAll();
     return owner->popup_menu;
 }
 
 static void u32_draw_menu_bar(HDC hdc, U32_WINDOW *win, const RECT *rc) {
     U32_MENU *menu;
     int i;
-    int x = 6;
+    int x = 4;
     RECT bar_rc;
     if (!hdc || !win || !rc || !win->menu) return;
     menu = u32_lookup_menu(win->menu);
@@ -1390,14 +1433,14 @@ static void u32_draw_menu_bar(HDC hdc, U32_WINDOW *win, const RECT *rc) {
         RECT item_rc;
         u32_menu_text_copy(menu->items[i].text, text, 64, 1);
         item_rc.left = x - 2;
-        item_rc.top = 2;
-        item_rc.right = x + width - 4;
+        item_rc.top = 1;
+        item_rc.right = x + width - 2;
         item_rc.bottom = U32_MENU_HEIGHT - 2;
         if (win->active_menu_index == i) {
             FillRect(hdc, &item_rc, (HBRUSH)GetStockObject(0));
             Rectangle(hdc, item_rc.left, item_rc.top, item_rc.right, item_rc.bottom);
         }
-        TextOutW(hdc, x, 4, text, -1);
+        TextOutW(hdc, x, U32_MENU_TEXT_Y, text, -1);
         x += width;
     }
 }
@@ -1617,9 +1660,34 @@ static LRESULT u32_dispatch(U32_WINDOW *win, UINT msg, WPARAM wParam, LPARAM lPa
 
 static void u32_win32k_callback(HANDLE hwnd, uint32_t msg, uint32_t wParam, uint32_t lParam) {
     U32_WINDOW *win = u32_lookup_window((HWND)hwnd);
+    HWND child_target = NULL;
+    U32_WINDOW *child_win = NULL;
+    int route_mouse = 0;
     if (!win) return;
     if (win->top_level) u32_sync_top_level(win);
-    u32_dispatch(win, msg, (WPARAM)wParam, (LPARAM)lParam);
+    /* Native Win32k sends mouse input straight to the top-level window
+       callback.  Run it through USER32's message entry point so emulated
+       child controls (edit fields and buttons in builtin dialogs) get
+       hit-tested, focused, and dispatched first. */
+    if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN ||
+        msg == WM_LBUTTONUP || msg == WM_MOUSEWHEEL) {
+        child_target = u32_hit_test_child((HWND)hwnd,
+                                          (short)(lParam & 0xFFFF),
+                                          (short)((lParam >> 16) & 0xFFFF));
+        child_win = child_target ? u32_lookup_window(child_target) : NULL;
+        /* Do not treat a full-size generic MDI client as the target.  Its
+           background covers the frame window's menu bar, but menu clicks
+           must still be handled by the frame. */
+        route_mouse = win->dialog ||
+                      (child_win && (child_win->ctrl_type != U32_CTRL_GENERIC ||
+                                     (child_win->style & WS_CAPTION))) ||
+                      (g_mouse_capture_window &&
+                       u32_is_descendant((HWND)hwnd, g_mouse_capture_window));
+    }
+    if (route_mouse)
+        SendMessageW((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam);
+    else
+        u32_dispatch(win, msg, (WPARAM)wParam, (LPARAM)lParam);
     if (msg == WM_PAINT && win->top_level) {
         u32_paint_children((HWND)hwnd);
     }
@@ -1686,6 +1754,55 @@ static HWND u32_create_child_control(HWND parent, LPCWSTR class_name, LPCWSTR ti
     return win->hwnd;
 }
 
+static const U32_TEMPLATE_CONTROL u32_dlg_2_controls[] = {
+    {L"Button", L"", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0x150, 10, 15, 10, 15},
+    {L"Static", L"Program group", WS_CHILD | WS_VISIBLE, 0, 0xffff, 20, 18, 80, 15},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0x151, 10, 35, 10, 15},
+    {L"Static", L"Program", WS_CHILD | WS_VISIBLE, 0, 0xffff, 20, 38, 80, 15},
+    {L"Button", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, IDOK, 105, 5, 60, 15},
+    {L"Button", L"Cancel", WS_CHILD | WS_VISIBLE, 0, IDCANCEL, 105, 25, 60, 15},
+    {L"Button", L"&Help", WS_CHILD | WS_VISIBLE, 0, 0x1a3, 105, 45, 60, 15},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_10_controls[] = {
+    {L"Static", L"Command line:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 15, 120, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x1a0, 5, 25, 120, 15},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0x1a1, 5, 45, 10, 10},
+    {L"Static", L"Minimize at launch", WS_CHILD | WS_VISIBLE, 0, 0xffff, 20, 45, 120, 10},
+    {L"Button", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, IDOK, 135, 5, 60, 15},
+    {L"Button", L"Cancel", WS_CHILD | WS_VISIBLE, 0, IDCANCEL, 135, 25, 60, 15},
+    {L"Button", L"&Browse...", WS_CHILD | WS_VISIBLE, 0, 0x1a2, 135, 45, 60, 15},
+    {L"Button", L"&Help", WS_CHILD | WS_VISIBLE, 0, 0x1a3, 135, 65, 60, 15},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_7_controls[] = {
+    {L"Static", L"&Description:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 18, 60, 15},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x170, 70, 18, 110, 15},
+    {L"Static", L"&Group file:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 38, 60, 15},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x172, 70, 38, 110, 15},
+    {L"Button", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, IDOK, 185, 5, 60, 15},
+    {L"Button", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, IDCANCEL, 185, 25, 60, 15},
+    {L"Button", L"&Help", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x1a3, 185, 45, 60, 15},
+};
+
+static const U32_TEMPLATE_CONTROL u32_dlg_8_controls[] = {
+    {L"Static", L"&Description:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 10, 75, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x170, 95, 10, 90, 15},
+    {L"Static", L"&Command line:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 25, 75, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x180, 95, 25, 90, 15},
+    {L"Static", L"&Working directory:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 40, 75, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x182, 95, 40, 90, 15},
+    {L"Static", L"&Key combination:", WS_CHILD | WS_VISIBLE, 0, 0xffff, 5, 55, 75, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x184, 95, 55, 90, 15},
+    {L"Static", L"", WS_CHILD | WS_VISIBLE, 0, 0x186, 20, 70, 32, 24},
+    {L"Button", L"&Minimize at launch", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0x1a1, 95, 75, 90, 10},
+    {L"Button", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, IDOK, 200, 5, 70, 15},
+    {L"Button", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, IDCANCEL, 200, 25, 70, 15},
+    {L"Button", L"&Browse...", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x1a2, 200, 45, 70, 15},
+    {L"Button", L"Change &icon...", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x187, 200, 65, 70, 15},
+    {L"Button", L"&Help", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0x1a3, 200, 85, 70, 15},
+};
+
 static const U32_TEMPLATE_CONTROL u32_dlg_102_controls[] = {
     {L"SysTabControl32", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 1015, 3, 3, 510, 350},
 };
@@ -1743,6 +1860,10 @@ static const U32_TEMPLATE_CONTROL u32_dlg_134_controls[] = {
 };
 
 static const U32_DIALOG_TEMPLATE_DEF u32_builtin_dialogs[] = {
+    {2, L"New", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 170, 65, 0, u32_dlg_2_controls, (int)(sizeof(u32_dlg_2_controls)/sizeof(u32_dlg_2_controls[0]))},
+    {7, L"Program Group Attributes", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 250, 65, 0, u32_dlg_7_controls, (int)(sizeof(u32_dlg_7_controls)/sizeof(u32_dlg_7_controls[0]))},
+    {8, L"Program Attributes", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 275, 105, 0, u32_dlg_8_controls, (int)(sizeof(u32_dlg_8_controls)/sizeof(u32_dlg_8_controls[0]))},
+    {10, L"Execute Program", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 200, 85, 0, u32_dlg_10_controls, (int)(sizeof(u32_dlg_10_controls)/sizeof(u32_dlg_10_controls[0]))},
     {102, L"Task Manager", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 540, 420, 0, u32_dlg_102_controls, (int)(sizeof(u32_dlg_102_controls)/sizeof(u32_dlg_102_controls[0]))},
     {106, L"Dialog", WS_CHILD | WS_VISIBLE, 510, 350, 1, u32_dlg_106_controls, (int)(sizeof(u32_dlg_106_controls)/sizeof(u32_dlg_106_controls[0]))},
     {133, L"Dialog", WS_CHILD | WS_VISIBLE, 510, 350, 1, u32_dlg_133_controls, (int)(sizeof(u32_dlg_133_controls)/sizeof(u32_dlg_133_controls[0]))},
@@ -1800,6 +1921,11 @@ static void u32_paint_window(HWND hwnd) {
     U32_WINDOW *win = u32_lookup_window(hwnd);
     if (!win || !u32_effectively_visible(hwnd)) return;
     SendMessageW(hwnd, WM_PAINT, 0, 0);
+    /* Progman's program tiles draw their icon from WM_NCPAINT.  Native
+       Win32k would issue that notification separately; these child windows
+       are USER32 surfaces, so make the non-client pass explicit. */
+    if (win->style & WS_CAPTION)
+        SendMessageW(hwnd, WM_NCPAINT, 0, 0);
     for (i = 0; i < MAX_U32_WINDOWS; i++) {
         if (g_windows[i].used && g_windows[i].parent == hwnd &&
             u32_effectively_visible(g_windows[i].hwnd)) {
@@ -2165,6 +2291,18 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             DestroyWindow(hWnd);
         }
     } else if (win && Msg == WM_LBUTTONDOWN) {
+        if (!win->top_level && (win->style & WS_CAPTION) && y >= 0 && y < U32_TITLEBAR_HEIGHT) {
+            RECT abs;
+            u32_get_absolute_rect(win, &abs);
+            g_child_drag_window = hWnd;
+            g_child_drag_start_x = abs.left + x;
+            g_child_drag_start_y = abs.top + y;
+            g_child_drag_origin_x = win->rect.left;
+            g_child_drag_origin_y = win->rect.top;
+            g_mouse_capture_window = hWnd;
+            SetFocus(hWnd);
+            return 0;
+        }
         int scroll_bar, scroll_code;
         if (u32_scroll_hit(win, x, y, &scroll_bar, &scroll_code)) {
             if (scroll_code == SB_THUMBTRACK) {
@@ -2223,13 +2361,31 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 } else if (win->popup_menu) {
                     u32_close_popup_chain(hWnd);
                 }
-                u32_mark_invalid(hWnd);
+                Win32kRedrawAll();
                 return 0;
             }
         default:
             break;
         }
     } else if (win && Msg == WM_MOUSEMOVE) {
+        if (g_child_drag_window == hWnd) {
+            RECT abs;
+            int current_x;
+            int current_y;
+            int width = win->rect.right - win->rect.left;
+            int height = win->rect.bottom - win->rect.top;
+            u32_get_absolute_rect(win, &abs);
+            current_x = abs.left + x;
+            current_y = abs.top + y;
+            win->rect.left = g_child_drag_origin_x + (current_x - g_child_drag_start_x);
+            win->rect.top = g_child_drag_origin_y + (current_y - g_child_drag_start_y);
+            win->rect.right = win->rect.left + width;
+            win->rect.bottom = win->rect.top + height;
+            u32_mark_invalid_descendants(hWnd);
+            u32_mark_invalid(hWnd);
+            Win32kRedrawAll();
+            return 0;
+        }
         if (win->scroll_drag_bar) {
             int bar = win->scroll_drag_bar;
             int i = u32_scroll_bar_index(bar);
@@ -2261,11 +2417,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 } else if (win->popup_menu) {
                     u32_close_popup_chain(hWnd);
                 }
-                u32_mark_invalid(hWnd);
+                Win32kRedrawAll();
             }
             return 0;
         }
     } else if (win && Msg == WM_LBUTTONUP) {
+        if (g_child_drag_window == hWnd) {
+            g_child_drag_window = NULL;
+            if (g_mouse_capture_window == hWnd) g_mouse_capture_window = NULL;
+            Win32kRedrawAll();
+            return 0;
+        }
         /* Some applications receive the release after the native window
          * manager has completed its click dispatch.  Treat the tab header as
          * a committed selection on release as well, so selection cannot be
@@ -2317,11 +2479,20 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                             u32_open_submenu(win->menu_owner, hWnd, index);
                         } else if (win->menu_owner) {
                             HWND root = u32_find_menu_root(win->menu_owner);
-                            if (menu->style & MNS_NOTIFYBYPOS)
-                                SendMessageW(win->menu_owner, WM_MENUCOMMAND, index, (LPARAM)win->menu);
-                            else
-                                SendMessageW(win->menu_owner, WM_COMMAND, item->id, 0);
+                            HWND command_owner = win->menu_owner;
+                            UINT command_id = item->id;
+
+                            /* Close the popup before queueing the command.
+                               Dispatching it synchronously from the native
+                               mouse-release path can enter a modal loop
+                               (Progman's New/About commands do that) while
+                               CSRSS is still processing the mouse event.
+                               Queueing lets the input pump return first. */
                             u32_close_popup_chain(root);
+                            if (menu->style & MNS_NOTIFYBYPOS)
+                                PostMessageW(command_owner, WM_MENUCOMMAND, index, (LPARAM)win->menu);
+                            else
+                                PostMessageW(command_owner, WM_COMMAND, command_id, 0);
                         }
                     }
                 }
@@ -2343,6 +2514,12 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         switch (win->ctrl_type) {
         case U32_CTRL_GENERIC:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+            if (!win->top_level && (win->style & WS_CAPTION)) {
+                RECT caption = { 1, 1, rc.right - 1, U32_TITLEBAR_HEIGHT };
+                FillRect(hdc, &caption, (HBRUSH)GetStockObject(1));
+                if (win->title[0]) TextOutW(hdc, 8, 4, win->title, -1);
+                Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+            }
             if (win->top_level && win->menu) u32_draw_menu_bar(hdc, win, &rc);
             break;
         case U32_CTRL_DIALOG:
@@ -2682,9 +2859,19 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
         if (Y == CW_USEDEFAULT) Y = 24 + cascade * 24;
         if (nWidth == CW_USEDEFAULT || nWidth <= 0) nWidth = 480;
         if (nHeight == CW_USEDEFAULT || nHeight <= 0) nHeight = 320;
+    } else {
+        /* Progman creates its miniature program windows with
+           CW_USEDEFAULT dimensions and sizes them later with SetWindowPos.
+           Never store the sentinel in a child RECT: it otherwise produces a
+           huge/negative surface that obscures the entire group. */
+        if (nWidth == CW_USEDEFAULT || nWidth <= 0) nWidth = 64;
+        if (nHeight == CW_USEDEFAULT || nHeight <= 0) nHeight = 64;
     }
     u32_wstrcpy(win->title, lpWindowName, 128);
-    win->parent = hWndParent;
+    /* Owned top-level windows are not children.  Keep the owner separately so
+       coordinate, hit-test, and focus walks for dialog controls stop at the
+       dialog instead of continuing into the owning application window. */
+    win->parent = (hWndParent && (dwStyle & WS_CHILD)) ? hWndParent : NULL;
     win->owner = hWndParent;
     win->style = dwStyle;
     win->exstyle = dwExStyle;
@@ -2773,6 +2960,14 @@ HWND CreateDialogW(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hWndParent, DLG
         style = tmpl->style;
         width = tmpl->width;
         height = tmpl->height;
+        /* Dialog resource dimensions describe the client area.  CreateWindow
+           expects the complete outer rectangle, so preserve room for the
+           frame, caption, and bottom border or the rightmost/bottom controls
+           are clipped. */
+        if (!(style & WS_CHILD)) {
+            width += u32_client_offset_x(NULL) + U32_FRAME_THICKNESS + U32_EDGE_THICKNESS;
+            height += (U32_FRAME_THICKNESS * 2) + U32_TITLEBAR_HEIGHT + (U32_EDGE_THICKNESS * 2);
+        }
     }
     if (tmpl && tmpl->attach_to_tab_of_parent && actual_parent) {
         RECT tab_client;
@@ -2845,6 +3040,10 @@ static INT_PTR u32_dialog_box_w(HINSTANCE hInstance, LPCWSTR lpTemplate, HWND hW
         style = tmpl->style;
         width = tmpl->width;
         height = tmpl->height;
+        if (!(style & WS_CHILD)) {
+            width += u32_client_offset_x(NULL) + U32_FRAME_THICKNESS + U32_EDGE_THICKNESS;
+            height += (U32_FRAME_THICKNESS * 2) + U32_TITLEBAR_HEIGHT + (U32_EDGE_THICKNESS * 2);
+        }
     }
     hwnd = CreateWindowExW(0, L"#32770", caption, style,
                            40, 40, width, height, hWndParent, 0, hInstance, NULL);
@@ -2982,6 +3181,27 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     }
 
     switch (Msg) {
+    case WM_MDICREATE:
+        {
+            const MDICREATESTRUCTW *cs = (const MDICREATESTRUCTW *)lParam;
+            HWND child;
+            if (!cs || !cs->szClass) return 0;
+            /* MDI children are ordinary USER32 child windows in this
+               implementation.  The MDI client remains responsible for
+               routing paint/input through its child tree. */
+            child = CreateWindowExW(0, cs->szClass,
+                                    cs->szTitle ? cs->szTitle : L"",
+                                    WS_CHILD | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | cs->style,
+                                    cs->x, cs->y, cs->cx, cs->cy,
+                                    hWnd, 0, cs->hOwner, NULL);
+            return (LRESULT)child;
+        }
+    case WM_MDIDESTROY:
+        if (wParam) {
+            DestroyWindow((HWND)wParam);
+            return 0;
+        }
+        return 0;
     case WM_ENABLE:
         win->enabled = wParam ? TRUE : FALSE;
         u32_mark_invalid(hWnd);
@@ -3577,7 +3797,13 @@ void WINAPI User32InjectKeyboard(HWND hWnd, UINT key, BOOL pressed) {
         return;
     }
     if (key == 8 || key >= 32) {
-        SendMessageW(root, WM_CHAR, key, 0);
+        /* The edit control is a USER32 child surface, so deliver characters
+           directly to the focused child.  Sending to the dialog relies on a
+           native child-window routing pass that does not exist here. */
+        if (focus && focus_win && focus_win->ctrl_type == U32_CTRL_EDIT)
+            SendMessageW(focus, WM_CHAR, key, 0);
+        else
+            SendMessageW(root, WM_CHAR, key, 0);
     }
 }
 
@@ -3593,7 +3819,24 @@ void WINAPI User32InjectMouse(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
 void WINAPI User32SetProcessId(DWORD pid) {
-    g_user32_process_id = pid ? pid : 1;
+    DWORD new_pid = pid ? pid : 1;
+    U32_QUIT_STATE *quit_state;
+    int i;
+
+    /* CSRSS reuses its small GUI PID space, including PID 1 for the shell.
+       A quit flag belongs to the previous logical GUI process and must not
+       make the next process' first GetMessage return WM_QUIT immediately. */
+    g_user32_process_id = new_pid;
+    quit_state = u32_get_quit_state(new_pid, 1);
+    if (quit_state) {
+        quit_state->exit_requested = 0;
+        quit_state->exit_code = 0;
+    }
+    for (i = 0; i < MAX_U32_MESSAGES; i++) {
+        if (g_messages[i].used && g_messages[i].owner_pid == new_pid &&
+            g_messages[i].msg.message == WM_QUIT)
+            g_messages[i].used = 0;
+    }
 }
 
 HWND GetActiveWindow(void) { return g_active_window; }

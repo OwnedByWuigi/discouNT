@@ -1245,8 +1245,8 @@ void CsrssSessionRun(void *mb_info) {
     while (running) {
         UsbPoll();
         if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
-            if (csrss_spawn_gui_instance("/SYSTEM32/CMD.EXE", "") < 0) {
-                csrss_queue_launch_error("/SYSTEM32/CMD.EXE", "The logon shell could not be started.");
+            if (csrss_spawn_gui_instance("/SYSTEM32/PROGMAN.EXE", "") < 0) {
+                csrss_queue_launch_error("/SYSTEM32/PROGMAN.EXE", "The logon shell could not be started.");
                 g_session_state = CSRSS_SESSION_LOGGING_OFF;
             } else {
                 g_shell_started = 1;
@@ -1444,8 +1444,12 @@ void CsrssSessionRun(void *mb_info) {
                     /* Winlogon/GINA and other USER32-owned windows are not
                      * represented in the application table.  Their active
                      * HWND still has a normal USER32 message queue. */
-                    if (!delivered && g_session_state == CSRSS_SESSION_BOOTING &&
-                        active_hwnd != INVALID_HANDLE && key_wparam)
+                    /* USER32-owned modal windows (for example Progman's
+                       Execute dialog) are not separate entries in the GUI
+                       application table.  They still need keyboard input
+                       after logon, so fall back to the USER32 bridge for
+                       any active window that was not handled above. */
+                    if (!delivered && active_hwnd != INVALID_HANDLE && key_wparam)
                         if (g_user32_inject_keyboard)
                             g_user32_inject_keyboard(active_hwnd, key_wparam, key_event.pressed);
                         else
