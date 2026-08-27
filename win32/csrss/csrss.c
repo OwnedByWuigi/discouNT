@@ -1281,20 +1281,7 @@ void CsrssSessionRun(void *mb_info) {
                                 }
                                 ObDereferenceObject(active_hwnd);
                             }
-                        } else if (app && app->kind != GUI_APP_KIND_CUSTOM) {
-                            WINDOW *win = (WINDOW*)ObReferenceObject(active_hwnd);
-                            if (win) {
-                                int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
-                                int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
-                                if (!win->minimized) {
-                                    if (g_user32_inject_mouse)
-                                        g_user32_inject_mouse(active_hwnd, WM_MOUSEMOVE,
-                                            (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
-                                            MAKELPARAM(mouse_state.x - client_left, mouse_state.y - client_top));
-                                }
-                                ObDereferenceObject(active_hwnd);
-                            }
-                        } else {
+                        } else if (g_session_state == CSRSS_SESSION_BOOTING) {
                             csrss_post_logon_mouse(WM_MOUSEMOVE,
                                                    (mouse_state.buttons & MOUSE_LEFT) ? MK_LBUTTON : 0,
                                                    mouse_state.x, mouse_state.y);
@@ -1323,16 +1310,7 @@ void CsrssSessionRun(void *mb_info) {
                                               GUI_MOUSE_WHEEL);
                             g_current_gui_pid = 0;
                         }
-                        if (app && win && !win->minimized && app->kind != GUI_APP_KIND_CUSTOM) {
-                            int client_left = win->x + ((win->style & WS_CAPTION) ? 3 : 2);
-                            int client_top = win->y + ((win->style & WS_CAPTION) ? 21 : 2);
-                            if (g_user32_inject_mouse)
-                                g_user32_inject_mouse(active_hwnd, WM_MOUSEWHEEL,
-                                    (uint32_t)((uint16_t)mouse_state.wheel_delta << 16),
-                                    MAKELPARAM(mouse_state.x - client_left,
-                                               mouse_state.y - client_top));
-                        }
-                        if (!app)
+                        if (!app && g_session_state == CSRSS_SESSION_BOOTING)
                             csrss_post_logon_mouse(WM_MOUSEWHEEL,
                                                    (uint32_t)mouse_state.wheel_delta,
                                                    mouse_state.x, mouse_state.y);
@@ -1368,15 +1346,6 @@ void CsrssSessionRun(void *mb_info) {
                                                                    GUI_MOUSE_LDOWN);
                                         g_current_gui_pid = 0;
                                         g_mouse_capture = active_hwnd;
-                                    } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
-                                        if (g_user32_inject_mouse)
-                                            g_user32_inject_mouse(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
-                                                MAKELPARAM(mouse_state.x - client_left,
-                                                           mouse_state.y - client_top));
-                                        else
-                                            csrss_post_standard_message(active_hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
-                                                                        MAKELPARAM(mouse_state.x - client_left,
-                                                                                   mouse_state.y - client_top));
                                     }
                                 }
                                 ObDereferenceObject(active_hwnd);
@@ -1384,7 +1353,8 @@ void CsrssSessionRun(void *mb_info) {
                             break;
                         }
                     }
-                    if (!csrss_find_app_by_window(active_hwnd))
+                    if (g_session_state == CSRSS_SESSION_BOOTING &&
+                        !csrss_find_app_by_window(active_hwnd))
                         csrss_post_logon_mouse(WM_LBUTTONDOWN, MK_LBUTTON,
                                                mouse_state.x, mouse_state.y);
                 }
@@ -1412,15 +1382,6 @@ void CsrssSessionRun(void *mb_info) {
                                                                    mouse_state.buttons,
                                                                    GUI_MOUSE_LUP);
                                         g_current_gui_pid = 0;
-                                    } else if (g_gui_apps[i].kind != GUI_APP_KIND_CUSTOM) {
-                                        if (g_user32_inject_mouse)
-                                            g_user32_inject_mouse(active_hwnd, WM_LBUTTONUP, 0,
-                                                MAKELPARAM(mouse_state.x - client_left,
-                                                           mouse_state.y - client_top));
-                                        else
-                                            csrss_post_standard_message(active_hwnd, WM_LBUTTONUP, 0,
-                                                                        MAKELPARAM(mouse_state.x - client_left,
-                                                                                   mouse_state.y - client_top));
                                     }
                                 }
                                 if (g_mouse_capture == active_hwnd) g_mouse_capture = INVALID_HANDLE;
@@ -1429,7 +1390,8 @@ void CsrssSessionRun(void *mb_info) {
                             break;
                         }
                     }
-                    if (!csrss_find_app_by_window(active_hwnd))
+                    if (g_session_state == CSRSS_SESSION_BOOTING &&
+                        !csrss_find_app_by_window(active_hwnd))
                         csrss_post_logon_mouse(WM_LBUTTONUP, 0,
                                                mouse_state.x, mouse_state.y);
                     /* Flush only application/cursor damage. A button release

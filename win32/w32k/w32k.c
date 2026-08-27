@@ -615,6 +615,16 @@ static int is_menu_popup_window(const WINDOW *win) {
     return win && win->wndClass && strcmp(win->wndClass->className, "MenuPopup") == 0;
 }
 
+static int has_visible_menu_popup(void) {
+    for (int i = 0; i < window_count; i++) {
+        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
+        int visible = win && win->visible && is_menu_popup_window(win);
+        if (win) ObDereferenceObject(window_list[i]);
+        if (visible) return 1;
+    }
+    return 0;
+}
+
 static int is_title_bar(WINDOW *win, int x, int y) {
     if (!(win->style & WS_CAPTION)) return 0;
 
@@ -1079,7 +1089,7 @@ int Win32kIsWindowMinimized(HANDLE hwnd) {
 void Win32kUpdateWindow(HANDLE hwnd) {
     WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
     int top_level = win && (win->desktop || win->owner == INVALID_HANDLE || win->owner == 0);
-    if (top_level) {
+    if (top_level && has_visible_menu_popup()) {
         /* USER32 may invalidate an owner immediately after opening a popup.
            Painting that owner directly writes over the shared framebuffer
            and leaves the popup invisible even though it remains hittable.
@@ -1140,7 +1150,7 @@ void Win32kHandleMouseDown(int x, int y, int button) {
     /* The desktop is an input surface, but never a foreground window.  It
        must remain at the bottom of the compositor and background clicks must
        not replace the active application. */
-    if (!win->desktop) {
+    if (!win->desktop && !(win->exstyle & WS_EX_NOACTIVATE)) {
         raise_window(hwnd);
         set_window_active(hwnd);
     }
