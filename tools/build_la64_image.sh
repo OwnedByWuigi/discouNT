@@ -5,6 +5,8 @@ output=$1
 entry=$2
 shift 2
 
+compiler=${CLANG:-clang}
+
 object_dir="${output}.objects"
 mkdir -p "$object_dir" "$(dirname "$output")"
 objects=""
@@ -12,7 +14,7 @@ objects=""
 for source in "$@"; do
     object_name=$(printf '%s' "$source" | tr '/.' '__')
     object="$object_dir/$object_name.o"
-    clang --target=loongarch64-unknown-elf ${CPPFLAGS:-} ${USER_CFLAGS:-} \
+    "$compiler" --target=loongarch64-unknown-elf ${CPPFLAGS:-} ${USER_CFLAGS:-} \
         ${EXTRA_CFLAGS:-} -c "$source" -o "$object"
     objects="$objects $object"
 done

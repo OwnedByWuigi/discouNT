@@ -6,6 +6,7 @@ CMD_APP := $(BUILD_DIR)/apps/cmd/cmd.exe
 CMD_OBJS := $(BUILD_DIR)/apps/cmd/cmd.o $(BUILD_DIR)/apps/cmd/util.o
 
 CLANG ?= clang
+export CLANG
 LD := ld.lld
 OBJCOPY ?= llvm-objcopy-19
 QEMU ?= qemu-system-loongarch64
@@ -61,6 +62,7 @@ C_SRCS := kernel/arch/loongarch64/boot.c \
 	kernel/mm/vmm.c \
 	kernel/ob/object.c \
 	kernel/io/io.c \
+	kernel/io/service.c \
 	kernel/io/driver.c \
 	win32/w32k/w32k.c \
 	win32/smss/smss_init.c \
@@ -78,33 +80,42 @@ NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAME
 NATIVE_APPS := $(CMD_APP) $(BUILD_DIR)/apps/control/control.exe \
 	$(BUILD_DIR)/apps/control/desk/desk.cpl $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
 	$(BUILD_DIR)/apps/notepad/notepad.exe $(BUILD_DIR)/apps/winver/winver.exe \
-	$(BUILD_DIR)/apps/whoami/whoami.exe $(BUILD_DIR)/apps/explorer/explorer.exe
+	$(BUILD_DIR)/apps/whoami/whoami.exe $(BUILD_DIR)/apps/explorer/explorer.exe \
+	$(BUILD_DIR)/apps/sc/sc.exe $(BUILD_DIR)/apps/progman/progman.exe
 
 NATIVE_APPS += $(BUILD_DIR)/apps/rundll32/rundll32.exe
+PROGMAN_SRCS := $(filter %.c,$(wildcard apps/progman/*.c))
+PROGMAN_MENU_RES := $(BUILD_DIR)/apps/progman/progman.menu.bin
+MAIN_GRP := $(BUILD_DIR)/Main.grp
+PROGMAN_INI := apps/progman/progman.ini
 NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll $(BUILD_DIR)/win32/w32k/win32k.dll
-DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide ahci
 NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
 
 all: kernel userspace system $(SYSTEM_ISO)
 kernel: $(KERNEL) $(BOOT_ROM)
 userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
 
-system: kernel userspace
+system: kernel userspace $(MAIN_GRP)
 	@mkdir -p $(SYSTEM_DIR)/SYSTEM32/DRIVERS $(SYSTEM_DIR)/SYSTEM32/FONTS
+	cp $(MAIN_GRP) $(SYSTEM_DIR)/Main.grp
+	cp $(PROGMAN_INI) $(SYSTEM_DIR)/progman.ini
+	cp $(MAIN_GRP) $(SYSTEM_DIR)/SYSTEM32/Main.grp
+	cp $(PROGMAN_INI) $(SYSTEM_DIR)/SYSTEM32/progman.ini
 	cp $(KERNEL) $(SYSTEM_DIR)/SYSTEM32/NTOSKRNL.EXE
 	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
 		cp "$$image" "$(SYSTEM_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
 	done
 
 $(SYSTEM_ISO): system
-	xorriso -as mkisofs -quiet -V DISCOUNT -o $@ $(SYSTEM_DIR)
 	@for driver in $(NATIVE_DRIVERS); do \
 		cp "$$driver" "$(SYSTEM_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@for font in $(FONT_SOURCES); do \
 		cp "$$font" "$(SYSTEM_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
 	done
+	xorriso -as mkisofs -quiet -V DISCOUNT -o $@ $(SYSTEM_DIR)
 
 # Compile the complete user-facing session process even before all of its
 # device/runtime dependencies are linked into the LA64 image.  This keeps
@@ -180,6 +191,21 @@ $(BUILD_DIR)/apps/explorer/explorer.exe: $(filter-out %/tests/%,$(wildcard apps/
 $(BUILD_DIR)/apps/rundll32/rundll32.exe: apps/rundll32/rundll32.c
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ wWinMain $^
 
+$(BUILD_DIR)/apps/sc/sc.exe: apps/sc/sc.c include/win32/winsvc.h include/win32/windows.h
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' EXTRA_CFLAGS='-fshort-wchar -include stdio.h -include string.h -include stdlib.h' $(IMAGE_BUILDER) $@ wmain apps/sc/sc.c
+
+$(BUILD_DIR)/apps/progman/progman.exe: $(PROGMAN_SRCS) apps/progman/progman.h apps/progman/progman.rc include/win32/windows.h include/win32/commdlg.h include/win32/mmsystem.h $(PROGMAN_MENU_RES)
+	CPPFLAGS='$(CPPFLAGS) -Iapps/progman' USER_CFLAGS='$(USER_CFLAGS)' EXTRA_CFLAGS='-include string.h -include stdio.h' $(IMAGE_BUILDER) $@ WinMain $(PROGMAN_SRCS)
+	$(OBJCOPY) --add-section .disres=$(PROGMAN_MENU_RES) --set-section-flags .disres=readonly,data $@
+
+$(PROGMAN_MENU_RES): apps/progman/progman.rc apps/progman/progman.h tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
+
+$(MAIN_GRP): tools/make_main_grp.py
+	@mkdir -p $(@D)
+	python3 $< $@
+
 $(BUILD_DIR)/win32/smss/smss.exe: win32/smss/smss_app.c kernel/core/util.c
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ main $^
 
@@ -216,6 +242,9 @@ $(BUILD_DIR)/drivers/usb.sys: $(USB_SOURCES)
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
 
 $(BUILD_DIR)/drivers/ide.sys: drivers/ide/ide.c
+	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
+
+$(BUILD_DIR)/drivers/ahci.sys: drivers/ahci/ahci.c
 	CPPFLAGS='$(CPPFLAGS)' USER_CFLAGS='$(USER_CFLAGS)' $(IMAGE_BUILDER) $@ DriverEntry $^
 
 run: check-tools $(BOOT_ROM) $(SYSTEM_ISO)
