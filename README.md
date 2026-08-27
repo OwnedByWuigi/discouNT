@@ -2,7 +2,7 @@
 
 <img src="docs/readme/demo.png" height="500px">
 <br>
-<i>discouNT in multi-user mode</i>
+<i>discouNT with Program Manager open (720p)</i>
 <br><br>
 
 discouNT is a from-scratch operating system designed to be compatible with Windows NT.
