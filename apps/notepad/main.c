@@ -796,10 +796,10 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
     class.cbSize        = sizeof(class);
     class.lpfnWndProc   = NOTEPAD_WndProc;
     class.hInstance     = Globals.hInstance;
-    class.hIcon         = LoadIconW(Globals.hInstance, MAKEINTRESOURCEW(IDI_NOTEPAD));
-    class.hIconSm       = LoadImageW(Globals.hInstance, MAKEINTRESOURCEW(IDI_NOTEPAD), IMAGE_ICON,
-                                     GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
-                                     LR_SHARED);
+    /* The freestanding x86 image does not carry Win32 icon resources.  Do
+       not ask USER32 to fall back to a NOTEPAD.ICO sidecar file. */
+    class.hIcon         = NULL;
+    class.hIconSm       = NULL;
     class.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     class.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     class.lpszMenuName  = MAKEINTRESOURCEW(MAIN_MENU);

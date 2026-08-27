@@ -172,6 +172,3 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
 /* @makedep: notepad.manifest */
 1 RT_MANIFEST notepad.manifest
-
-/* @makedep: notepad.ico */
-IDI_NOTEPAD ICON "notepad.ico"

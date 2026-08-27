@@ -1181,8 +1181,7 @@ VOID DIALOG_HelpContents(VOID)
 VOID DIALOG_HelpAboutNotepad(VOID)
 {
     WCHAR szNotepad[MAX_STRING_LEN];
-    HICON icon = LoadImageW(Globals.hInstance, MAKEINTRESOURCEW(IDI_NOTEPAD),
-                            IMAGE_ICON, 48, 48, LR_SHARED);
+    HICON icon = NULL;
 
     LoadStringW(Globals.hInstance, STRING_NOTEPAD, szNotepad, ARRAY_SIZE(szNotepad));
     ShellAboutW(Globals.hMainWnd, szNotepad, L"Wine Notepad", icon);

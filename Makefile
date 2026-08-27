@@ -128,7 +128,6 @@ RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
 RESOURCE_MENU_OUTPUTS := $(patsubst apps/%/%.rc,$(BUILD_DIR)/apps/%/%.menu.bin,$(RESOURCE_MENU_SRCS))
 TASKMGR_MENU_RES := $(BUILD_DIR)/apps/taskmgr/taskmgr.menu.bin
 NOTEPAD_MENU_RES := $(BUILD_DIR)/apps/notepad/notepad.menu.bin
-NOTEPAD_ICON := apps/notepad/notepad.ico
 WINVER_MENU_RES := $(BUILD_DIR)/apps/winver/winver.menu.bin
 DRIVERS_DIR := $(SYSTEM32_DIR)/DRIVERS
 SERIAL_SYS := $(BUILD_DIR)/drivers/serial/serial.sys
@@ -294,14 +293,13 @@ $(TASKMGR_APP): $(TASKMGR_SRCS) kernel/core/util.c $(TASKMGR_MENU_RES) apps/task
 	@objcopy --add-section .disres=$(TASKMGR_MENU_RES) --set-section-flags .disres=readonly,data $@
 	@objcopy --add-section .disicon=apps/taskmgr/taskmgr.ico --set-section-flags .disicon=readonly,data $@
 
-$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/core/util.c $(NOTEPAD_MENU_RES) $(NOTEPAD_ICON)
+$(NOTEPAD_APP): $(NOTEPAD_SRCS) kernel/core/util.c $(NOTEPAD_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include string.h -include ctype.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,-e,WinMain \
 		-o $@ \
 		$(NOTEPAD_SRCS) kernel/core/util.c
 	@objcopy --add-section .disres=$(NOTEPAD_MENU_RES) --set-section-flags .disres=readonly,data $@
-	@objcopy --add-section .disicon=$(NOTEPAD_ICON) --set-section-flags .disicon=readonly,data $@
 
 $(WINVER_APP): $(WINVER_SRCS) kernel/core/util.c $(WINVER_MENU_RES)
 	@mkdir -p $(@D)
