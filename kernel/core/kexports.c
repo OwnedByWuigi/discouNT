@@ -27,6 +27,48 @@ extern void CsrssShutdownSystem(void);
 extern uint32_t KeGetProcessorCount(void);
 extern uint32_t KeGetPhysicalMemoryPages(void);
 
+typedef struct {
+    uint16_t vt, reserved1, reserved2, reserved3;
+    union { int32_t lval; void *ptr; } value;
+} KERNEL_VARIANT;
+
+/* Native ELF images do not retain the DLL name associated with an undefined
+   symbol.  Their imports are therefore resolved through this kernel export
+   table.  Keep the small OLE Automation primitives here as well as in
+   oleaut32 so callers cannot receive null IAT entries when oleaut32 has not
+   already been loaded. */
+void *SysAllocString(const uint32_t *text)
+{
+    uint32_t length = 0;
+    uint32_t *copy;
+
+    while (text && text[length]) length++;
+    copy = (uint32_t *)kmalloc((uint32_t)((length + 1) * sizeof(uint32_t)));
+    if (!copy) return 0;
+    if (length) memcpy(copy, text, (uint32_t)(length * sizeof(uint32_t)));
+    copy[length] = 0;
+    return copy;
+}
+
+void SysFreeString(void *text)
+{
+    kfree(text);
+}
+
+void VariantInit(void *argument)
+{
+    if (argument) memset(argument, 0, sizeof(KERNEL_VARIANT));
+}
+
+int32_t VariantClear(void *argument)
+{
+    KERNEL_VARIANT *value = (KERNEL_VARIANT *)argument;
+    if (!value) return (int32_t)0x80070057;
+    if (value->vt == 8 && value->value.ptr) kfree(value->value.ptr);
+    VariantInit(value);
+    return 0;
+}
+
 typedef struct _KERNEL_EXPORT {
     const char *name;
     void *addr;
@@ -37,6 +79,10 @@ extern uint8_t back_buffer[640 * 480];
 static KERNEL_EXPORT kernel_exports[] = {
     {"kmalloc", kmalloc},
     {"kfree", kfree},
+    {"SysAllocString", SysAllocString},
+    {"SysFreeString", SysFreeString},
+    {"VariantInit", VariantInit},
+    {"VariantClear", VariantClear},
     {"malloc", malloc},
     {"calloc", calloc},
     {"realloc", realloc},

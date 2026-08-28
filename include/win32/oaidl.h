@@ -13,11 +13,17 @@ typedef struct tagVARIANT VARIANT;
 typedef struct tagDISPPARAMS { VARIANT *rgvarg; DISPID *rgdispidNamedArgs; UINT cArgs,cNamedArgs; } DISPPARAMS;
 typedef struct tagEXCEPINFO { WORD wCode,wReserved; BSTR bstrSource,bstrDescription,bstrHelpFile; DWORD dwHelpContext; LPVOID pvReserved; HRESULT (WINAPI *pfnDeferredFillIn)(struct tagEXCEPINFO*); HRESULT scode; } EXCEPINFO;
 #define VT_EMPTY 0
+#define VT_I4 3
+#define VT_BSTR 8
+#define VT_UI4 19
+#define VT_UI8 21
+#define VT_BOOL 11
 #define VT_UI1 17
+#define VT_LPWSTR 31
 #define VT_ARRAY 0x2000
 typedef struct tagSAFEARRAYBOUND { ULONG cElements; LONG lLbound; } SAFEARRAYBOUND;
 typedef struct tagSAFEARRAY { WORD cDims,fFeatures; ULONG cbElements,cLocks; LPVOID pvData; SAFEARRAYBOUND rgsabound[1]; } SAFEARRAY;
-typedef struct tagVARIANT { VARTYPE vt; WORD reserved1,reserved2,reserved3; union { LONG lVal; ULONG ulVal; BSTR bstrVal; IUnknown *punkVal; SAFEARRAY *parray; LPVOID byref; }; } VARIANT;
+typedef struct tagVARIANT { VARTYPE vt; WORD reserved1,reserved2,reserved3; union { LONG lVal; ULONG ulVal; unsigned long long ullVal; VARIANT_BOOL boolVal; BSTR bstrVal; WCHAR *pwszVal; IUnknown *punkVal; SAFEARRAY *parray; LPVOID byref; }; } VARIANT;
 typedef struct IDispatchVtbl {
  HRESULT(WINAPI*QueryInterface)(IDispatch*,REFIID,void**); ULONG(WINAPI*AddRef)(IDispatch*); ULONG(WINAPI*Release)(IDispatch*);
  HRESULT(WINAPI*GetTypeInfoCount)(IDispatch*,UINT*); HRESULT(WINAPI*GetTypeInfo)(IDispatch*,UINT,LCID,ITypeInfo**);
@@ -40,11 +46,20 @@ struct ITypeLib { const ITypeLibVtbl *lpVtbl; };
 #define ITypeLib_GetTypeInfoOfGuid(p,a,b) ((p)->lpVtbl->GetTypeInfoOfGuid((p),(a),(b)))
 HRESULT WINAPI LoadRegTypeLib(REFGUID libid,WORD major,WORD minor,LCID locale,ITypeLib **library);
 #define V_VT(v) ((v)->vt)
+#define V_BSTR(v) ((v)->bstrVal)
+#define V_I4(v) ((v)->lVal)
+#define V_UI4(v) ((v)->ulVal)
+#define V_UI8(v) ((v)->ullVal)
+#define V_BOOL(v) ((v)->boolVal)
 #define V_ARRAY(v) ((v)->parray)
 SAFEARRAY *WINAPI SafeArrayCreateVector(VARTYPE type,LONG lower,ULONG count);
 HRESULT WINAPI SafeArrayDestroy(SAFEARRAY *array);
 void WINAPI VariantInit(VARIANT *value);
 HRESULT WINAPI VariantClear(VARIANT *value);
+HRESULT WINAPI VariantCopy(VARIANT *destination, const VARIANT *source);
+HRESULT WINAPI VariantChangeType(VARIANT *destination, VARIANT *source, WORD flags, VARTYPE type);
+HRESULT WINAPI SafeArrayAccessData(SAFEARRAY *array, void **data);
+HRESULT WINAPI SafeArrayUnaccessData(SAFEARRAY *array);
 BSTR WINAPI SysAllocString(const WCHAR *text);
 void WINAPI SysFreeString(BSTR text);
 #endif

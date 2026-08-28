@@ -4,6 +4,7 @@
 typedef struct _GUID { DWORD Data1; WORD Data2, Data3; BYTE Data4[8]; } GUID;
 typedef GUID IID, CLSID;
 typedef const GUID *REFGUID;
+typedef GUID *LPGUID;
 typedef const IID *REFIID;
 typedef const CLSID *REFCLSID;
 static inline BOOL IsEqualGUID(REFGUID a, REFGUID b) {

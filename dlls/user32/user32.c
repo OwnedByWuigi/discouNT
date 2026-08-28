@@ -2843,8 +2843,107 @@ void PostQuitMessage(int nExitCode) {
     u32_enqueue_message(NULL, WM_QUIT, (WPARAM)nExitCode, 0);
 }
 
-int MessageBoxW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType) {
-    (void)hWnd; (void)lpText; (void)lpCaption; (void)uType;
+static HWND u32_messagebox_window;
+static LPCWSTR u32_messagebox_text;
+static BOOL u32_messagebox_done;
+
+static void u32_messagebox_copy_wide(WCHAR *destination, size_t capacity, LPCWSTR source)
+{
+    const uint16_t *source16 = (const uint16_t *)source;
+    const uint32_t *source32 = (const uint32_t *)source;
+    size_t i = 0;
+
+    if (!destination || !capacity) return;
+    /* Accept both the two-byte Win32 strings used by DxDiag and the native
+       four-byte strings used by the older built-in applications. */
+    if (source && source16[1] == 0) {
+        while (source32[i] && i < capacity - 1) {
+            destination[i] = (WCHAR)source32[i];
+            i++;
+        }
+    } else {
+        while (source16 && source16[i] && i < capacity - 1) {
+            destination[i] = (WCHAR)source16[i];
+            i++;
+        }
+    }
+    destination[i] = 0;
+}
+
+static LRESULT WINAPI u32_messagebox_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc;
+        int y = 12;
+        const WCHAR *line = u32_messagebox_text ? u32_messagebox_text : L"";
+
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+        while (*line && y < rc.bottom - 12) {
+            const WCHAR *end = line;
+            int length = 0;
+            while (end[length] && end[length] != L'\r' && end[length] != L'\n') length++;
+            TextOutW(hdc, 12, y, line, length);
+            y += 16;
+            line += length;
+            while (*line == L'\r' || *line == L'\n') line++;
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_LBUTTONUP || (msg == WM_KEYDOWN && (wParam == VK_RETURN || wParam == VK_ESCAPE))) {
+        u32_messagebox_done = TRUE;
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+int MessageBoxW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType)
+{
+    static BOOL registered;
+    static const WCHAR class_name[] = L"discouNT.MessageBox";
+    static WCHAR text_buffer[2048];
+    static WCHAR caption_buffer[256];
+    WNDCLASSW wc;
+    MSG msg;
+    HWND hwnd;
+
+    (void)uType;
+    /* DxDiag is built with the Win32 two-byte WCHAR ABI while this legacy
+       USER32 DLL uses the kernel's native four-byte WCHAR ABI.  Convert the
+       message inputs at this boundary instead of changing USER32's ABI for
+       every existing application. */
+    u32_messagebox_copy_wide(text_buffer, ARRAY_SIZE(text_buffer), lpText);
+    u32_messagebox_copy_wide(caption_buffer, ARRAY_SIZE(caption_buffer), lpCaption);
+    if (!registered) {
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = u32_messagebox_wndproc;
+        wc.lpszClassName = class_name;
+        if (!RegisterClassW(&wc)) return IDOK;
+        registered = TRUE;
+    }
+
+    u32_messagebox_text = text_buffer;
+    u32_messagebox_done = FALSE;
+    hwnd = CreateWindowExW(0, class_name, caption_buffer[0] ? caption_buffer : L"Message",
+                           WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                           CW_USEDEFAULT, CW_USEDEFAULT, 560, 360,
+                           hWnd, 0, NULL, NULL);
+    if (!hwnd) return IDOK;
+    u32_messagebox_window = hwnd;
+    ShowWindow(hwnd, SW_SHOW);
+    SetActiveWindow(hwnd);
+    UpdateWindow(hwnd);
+    while (!u32_messagebox_done) {
+        if (!GetMessageW(&msg, NULL, 0, 0)) break;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    u32_messagebox_window = NULL;
+    u32_messagebox_text = NULL;
     return IDOK;
 }
 

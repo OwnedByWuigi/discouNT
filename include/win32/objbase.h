@@ -16,6 +16,7 @@
 #define SUCCEEDED(hr) ((HRESULT)(hr)>=0)
 #define FAILED(hr) ((HRESULT)(hr)<0)
 #define CLSCTX_INPROC_SERVER 1
+#define CLSCTX_INPROC CLSCTX_INPROC_SERVER
 #define CLSCTX_LOCAL_SERVER 4
 #define REGCLS_MULTIPLEUSE 1
 
@@ -41,6 +42,7 @@ typedef struct IClassFactoryVtbl {
 struct IClassFactory { const IClassFactoryVtbl *lpVtbl; };
 #define IClassFactory_CreateInstance(p,a,b,c) ((p)->lpVtbl->CreateInstance((p),(a),(b),(c)))
 #define IClassFactory_Release(p) ((p)->lpVtbl->Release((p)))
+#define IClassFactory_AddRef(p) ((p)->lpVtbl->AddRef((p)))
 
 extern const IID IID_IUnknown;
 extern const IID IID_IClassFactory;
@@ -48,6 +50,8 @@ HRESULT WINAPI CoInitialize(LPVOID reserved);
 HRESULT WINAPI CoInitializeEx(LPVOID reserved,DWORD flags);
 void WINAPI CoUninitialize(void);
 HRESULT WINAPI CoCreateInstance(REFCLSID clsid,IUnknown *outer,DWORD context,REFIID iid,void **object);
+HRESULT WINAPI CLSIDFromString(LPCWSTR string, CLSID *clsid);
+int WINAPI StringFromGUID2(REFGUID guid, LPWSTR string, int cchMax);
 HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid,IUnknown *factory,DWORD context,DWORD flags,DWORD *cookie);
 HRESULT WINAPI CoRevokeClassObject(DWORD cookie);
 LPVOID WINAPI CoTaskMemAlloc(SIZE_T size);

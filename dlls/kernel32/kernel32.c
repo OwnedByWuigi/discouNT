@@ -23,6 +23,29 @@ extern void SerialPutString(const char *str);
 extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size);
 extern int CsrssExecuteImage(const char *path);
 extern HFILE _lopen(LPCSTR path, int read_write);
+extern uint32_t KeGetPhysicalMemoryPages(void);
+
+UINT WINAPI GetSystemDirectoryW(LPWSTR b, UINT n) { static const WCHAR s[] = L"/SYSTEM32"; UINT i=0; if(!b||!n)return 0; while(i+1<n&&s[i]){b[i]=s[i];i++;} b[i]=0; return i; }
+BOOL WINAPI GlobalMemoryStatusEx(void *status) {
+    uint64_t total = (uint64_t)KeGetPhysicalMemoryPages() * 4096;
+    uint64_t *values = (uint64_t *)((uint8_t *)status + 8);
+    if (!status) return FALSE;
+    memset(status, 0, 64);
+    values[0] = total;
+    values[1] = total;
+    values[2] = total;
+    values[3] = total;
+    values[4] = total;
+    values[5] = total;
+    return TRUE;
+}
+int WINAPI GetLocaleInfoW(LCID locale,DWORD type,LPWSTR b,int n) { static const WCHAR s[] = L"English"; int i=0; (void)locale;(void)type; if(!b||n<=0)return 0; while(i+1<n&&s[i]){b[i]=s[i];i++;}b[i]=0;return i+1; }
+BOOL WINAPI EnumProcesses(DWORD *p,DWORD bytes,DWORD *needed) { (void)p;(void)bytes; if(needed)*needed=0; return TRUE; }
+BOOL WINAPI EnumProcessModules(HANDLE p,HMODULE *m,DWORD bytes,DWORD *needed) { (void)p;if(needed)*needed=0;if(m&&bytes>=sizeof(HMODULE)){*m=GetModuleHandleW(NULL);if(needed)*needed=sizeof(HMODULE);return TRUE;}return FALSE; }
+DWORD WINAPI GetModuleBaseNameW(HANDLE p,HMODULE m,LPWSTR b,DWORD n) { (void)p;(void)m;if(!b||!n)return 0;b[0]=L'K';if(n>1)b[1]=0;return 1; }
+DWORD WINAPI GetFileVersionInfoSizeW(LPCWSTR file, DWORD *handle) { (void)file; if(handle)*handle=0; return 0; }
+BOOL WINAPI GetFileVersionInfoW(LPCWSTR file,DWORD handle,DWORD len,LPVOID data) { (void)file;(void)handle;(void)len;(void)data; return FALSE; }
+BOOL WINAPI VerQueryValueW(LPCVOID block,LPCWSTR sub,LPVOID *value,UINT *len) { (void)block;(void)sub;if(value)*value=0;if(len)*len=0;return FALSE; }
 extern HFILE _lclose(HFILE file);
 extern char *strrchr(const char *s, int c);
 #ifndef EOF
@@ -286,6 +309,17 @@ int _wcsicmp(LPCWSTR a, LPCWSTR b) {
 }
 
 WCHAR *wcsdup(LPCWSTR source) {
+    const uint8_t *raw = (const uint8_t *)source;
+    if (source && raw[1] == 0 && raw[2] != 0) {
+        const uint16_t *short_source = (const uint16_t *)source;
+        uint16_t *short_copy;
+        SIZE_T length = 0;
+        while (short_source[length]) length++;
+        short_copy = (uint16_t *)kmalloc((uint32_t)((length + 1) * sizeof(uint16_t)));
+        if (!short_copy) return 0;
+        memcpy(short_copy, short_source, (uint32_t)((length + 1) * sizeof(uint16_t)));
+        return (WCHAR *)short_copy;
+    }
     int length = k32_wstrlen(source) + 1;
     WCHAR *copy = (WCHAR*)kmalloc((uint32_t)length * sizeof(WCHAR));
     int i;
@@ -307,8 +341,15 @@ long wcstol(LPCWSTR source, LPWSTR *end, int radix) {
 
 void *HeapAlloc(void *heap, uint32_t flags, SIZE_T size) {
     (void)heap;
+    void *memory = kmalloc(size);
+    if (memory && (flags & HEAP_ZERO_MEMORY)) memset(memory, 0, size);
+    return memory;
+}
+
+void *HeapReAlloc(void *heap, uint32_t flags, void *memory, SIZE_T size) {
+    (void)heap;
     (void)flags;
-    return kmalloc(size);
+    return realloc(memory, size);
 }
 
 HLOCAL LocalAlloc(UINT flags, SIZE_T bytes) {

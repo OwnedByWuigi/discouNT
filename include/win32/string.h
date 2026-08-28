@@ -54,6 +54,19 @@ static inline WCHAR *wcschr(const WCHAR *s, WCHAR ch) {
     return ch == 0 ? (WCHAR*)s : 0;
 }
 
+int swprintf(WCHAR *buffer, SIZE_T count, const WCHAR *format, ...);
+
+static inline WCHAR *wcsrchr(const WCHAR *s, WCHAR ch) {
+    const WCHAR *last = 0;
+    if (!s) return 0;
+    while (*s) {
+        if (*s == ch) last = s;
+        s++;
+    }
+    if (ch == 0) return (WCHAR *)s;
+    return (WCHAR *)last;
+}
+
 static inline WCHAR *wcspbrk(const WCHAR *s, const WCHAR *accept) {
     while (*s) {
         const WCHAR *p = accept;

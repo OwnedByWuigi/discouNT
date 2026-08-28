@@ -27,7 +27,7 @@ BOOT_SERIAL := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 
 .PHONY: all iso usb-image userspace clean
-NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32
+NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/control/control.exe \
@@ -35,6 +35,7 @@ NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
  $(BUILD_DIR)/apps/notepad/notepad.exe \
  $(BUILD_DIR)/apps/winver/winver.exe \
+ $(BUILD_DIR)/apps/dxdiag/dxdiag.exe \
  $(BUILD_DIR)/apps/whoami/whoami.exe \
  $(BUILD_DIR)/apps/explorer/explorer.exe \
  $(BUILD_DIR)/apps/rundll32/rundll32.exe \
@@ -87,6 +88,10 @@ $(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
 
+$(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main.c dlls/dxdiagn/provider.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
+
 $(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c kernel/core/util.c kernel/core/version.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ apps/cmd/cmd.c kernel/core/util.c
@@ -110,6 +115,10 @@ $(BUILD_DIR)/apps/notepad/notepad.exe: apps/notepad/main.c apps/notepad/dialog.c
 $(BUILD_DIR)/apps/winver/winver.exe: apps/winver/winver.c kernel/core/util.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -include string.h -Wl,-e,WinMain -shared -o $@ $^
+
+$(BUILD_DIR)/apps/dxdiag/dxdiag.exe: apps/dxdiag/main.c apps/dxdiag/information.c apps/dxdiag/output.c apps/dxdiag/dxdiag_guids.c apps/dxdiag/dxdiag_private.h include/win32/dxdiag.h include/win32/msxml2.h include/win32/initguid.h include/win32/wine/debug.h kernel/core/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Iapps/dxdiag $(USER_CFLAGS) -include string.h -include stdio.h -include stdlib.h -fshort-wchar -Wl,-e,wWinMain -shared -Wl,-Bsymbolic -o $@ apps/dxdiag/main.c apps/dxdiag/information.c apps/dxdiag/output.c apps/dxdiag/dxdiag_guids.c kernel/core/util.c
 
 $(BUILD_DIR)/apps/whoami/whoami.exe: apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c
 	@mkdir -p $(@D)

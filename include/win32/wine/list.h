@@ -13,6 +13,7 @@ struct list
 };
 
 #define LIST_INIT(name) { &(name), &(name) }
+static inline void list_init(struct list *head) { head->next = head; head->prev = head; }
 
 static inline void list_add_tail(struct list *head, struct list *entry)
 {

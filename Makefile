@@ -116,6 +116,7 @@ TASKMGR_SRCS := $(filter %.c,$(wildcard apps/taskmgr/*.c))
 NOTEPAD_APP := $(BUILD_DIR)/apps/notepad/notepad.exe
 NOTEPAD_SRCS := apps/notepad/main.c apps/notepad/dialog.c
 WINVER_APP := $(BUILD_DIR)/apps/winver/winver.exe
+DXDIAG_APP := $(BUILD_DIR)/apps/dxdiag/dxdiag.exe
 WHOAMI_APP := $(BUILD_DIR)/apps/whoami/whoami.exe
 EXPLORER_APP := $(BUILD_DIR)/apps/explorer/explorer.exe
 SC_APP := $(BUILD_DIR)/apps/sc/sc.exe
@@ -133,6 +134,7 @@ MAIN_GRP := $(BUILD_DIR)/Main.grp
 PROGMAN_INI := apps/progman/progman.ini
 EXPLORER_SRCS := $(filter-out %/tests/%,$(wildcard apps/explorer/*.c))
 WINVER_SRCS := apps/winver/winver.c
+DXDIAG_SRCS := apps/dxdiag/main.c apps/dxdiag/information.c apps/dxdiag/output.c apps/dxdiag/dxdiag_guids.c
 RESOURCE_MENU_SRCS := $(wildcard apps/*/*.rc)
 RESOURCE_MENU_OUTPUTS := $(patsubst apps/%/%.rc,$(BUILD_DIR)/apps/%/%.menu.bin,$(RESOURCE_MENU_SRCS))
 TASKMGR_MENU_RES := $(BUILD_DIR)/apps/taskmgr/taskmgr.menu.bin
@@ -173,7 +175,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(WIN32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
+apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -319,6 +321,11 @@ $(WINVER_APP): $(WINVER_SRCS) kernel/core/util.c $(WINVER_MENU_RES)
 		$(WINVER_SRCS) kernel/core/util.c
 	@objcopy --add-section .disres=$(WINVER_MENU_RES) --set-section-flags .disres=readonly,data $@
 
+$(DXDIAG_APP): $(DXDIAG_SRCS) apps/dxdiag/dxdiag_private.h include/win32/dxdiag.h include/win32/msxml2.h include/win32/initguid.h include/win32/wine/debug.h kernel/core/util.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Iapps/dxdiag -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
+		-Wl,-e,wWinMain -o $@ $(DXDIAG_SRCS) kernel/core/util.c
+
 $(WHOAMI_APP): apps/whoami/main.c apps/whoami/compat.c apps/whoami/entry.c kernel/core/util.c include/win32/security.h include/win32/sddl.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
@@ -435,7 +442,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
@@ -479,6 +486,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 	fi
 	@if [ -f "$(WINVER_APP)" ]; then \
 		cp "$(WINVER_APP)" "$(SYSTEM32_DIR)/WINVER.EXE"; \
+	fi
+	@if [ -f "$(DXDIAG_APP)" ]; then \
+		cp "$(DXDIAG_APP)" "$(SYSTEM32_DIR)/DXDIAG.EXE"; \
 	fi
 	@if [ -f "$(WHOAMI_APP)" ]; then \
 		cp "$(WHOAMI_APP)" "$(SYSTEM32_DIR)/WHOAMI.EXE"; \

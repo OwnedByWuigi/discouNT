@@ -77,6 +77,7 @@ typedef struct _SECURITY_ATTRIBUTES {
 } SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
 typedef HKEY *PHKEY;
 typedef WCHAR *PWCHAR;
+static inline BOOL WINAPI DisableThreadLibraryCalls(HMODULE module) { (void)module; return TRUE; }
 
 typedef struct _WIN32_FIND_DATAW {
     DWORD dwFileAttributes;
@@ -196,6 +197,10 @@ DWORD WINAPI GetTickCount(void);
 DWORD WINAPI GetVersion(void);
 HANDLE WINAPI GetProcessHeap(void);
 LPVOID WINAPI HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes);
+LPVOID WINAPI HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID memory, SIZE_T dwBytes);
+BOOL WINAPI GlobalMemoryStatusEx(void *status);
+int WINAPI GetLocaleInfoW(LCID locale, DWORD type, LPWSTR buffer, int count);
+UINT WINAPI GetSystemDirectoryW(LPWSTR buffer, UINT size);
 BOOL WINAPI HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem);
 HMODULE WINAPI GetModuleHandleW(LPCWSTR lpModuleName);
 HMODULE WINAPI GetModuleHandleA(LPCSTR lpModuleName);
@@ -231,6 +236,7 @@ DWORD WINAPI GetFullPathNameW(LPCWSTR path,DWORD size,LPWSTR buffer,LPWSTR *file
 #define FILE_SHARE_READ          0x00000001
 #define FILE_SHARE_WRITE         0x00000002
 #define OPEN_EXISTING            3
+#define CREATE_ALWAYS            2
 #define OPEN_ALWAYS              4
 #define FILE_ATTRIBUTE_NORMAL    0x00000080
 #define FILE_MAP_WRITE           0x00000002
