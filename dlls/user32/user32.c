@@ -20,8 +20,6 @@ extern int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_si
 extern const char *PeGetImagePath(void *image_base);
 extern void *Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc)(void *, uint32_t, uint32_t, uint32_t));
 extern void *Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style);
-extern void *Win32kCreateWindowEx(const char *className, const char *title, int x, int y, int w, int h,
-                                  uint32_t style, uint32_t exstyle, void *owner);
 extern void Win32kShowWindow(void *hwnd);
 extern void Win32kSetWindowShowState(void *hwnd, int command);
 extern int Win32kIsWindowMinimized(void *hwnd);
@@ -32,7 +30,6 @@ extern void Win32kActivateWindow(void *hwnd);
 extern int Win32kGetScreenWidth(void);
 extern int Win32kGetScreenHeight(void);
 extern void Win32kSetWindowRect(void *hwnd, int x, int y, int width, int height);
-extern int Win32kSetWindowPos(void *hwnd, void *insert_after, int x, int y, int width, int height, uint32_t flags);
 extern void *Win32kGetActiveWindow(void);
 extern void Win32kSetWindowIcons(void *hwnd, HANDLE big_icon, HANDLE small_icon);
 extern void Win32kRedrawAll(void);
@@ -3035,11 +3032,7 @@ HWND CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
         }
         u32_wide_to_ansi(cls->name, class_name, 64);
         u32_wide_to_ansi(win->title, title, 128);
-        {
-            HWND native_owner = hWndParent && !(dwStyle & WS_CHILD) ? u32_get_root_window(hWndParent) : NULL;
-            win->hwnd = (HWND)Win32kCreateWindowEx(class_name, title, X, Y, nWidth, nHeight,
-                                                   dwStyle, dwExStyle, (void*)native_owner);
-        }
+        win->hwnd = (HWND)Win32kCreateWindow(class_name, title, X, Y, nWidth, nHeight, dwStyle);
         if (!win->hwnd) {
             win->used = 0;
             return NULL;

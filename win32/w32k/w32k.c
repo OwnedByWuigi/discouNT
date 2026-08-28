@@ -43,13 +43,6 @@
 #define W32K_SW_SHOWMINIMIZED  2
 #define W32K_SW_MINIMIZE       6
 #define W32K_SW_RESTORE        9
-#define W32K_SWP_NOSIZE        0x0001
-#define W32K_SWP_NOMOVE        0x0002
-#define W32K_SWP_NOZORDER      0x0004
-#define W32K_SWP_NOACTIVATE    0x0010
-#define W32K_SWP_SHOWWINDOW    0x0040
-#define W32K_SWP_HIDEWINDOW    0x0080
-#define W32K_SWP_NOOWNERZORDER 0x0200
 
 static HANDLE window_list[MAX_WINDOWS];
 static int window_count = 0;
@@ -112,69 +105,32 @@ static void paint_desktop_area(int x, int y, int w, int h) {
     if (!FbPaintWallpaper(x, y, w, h, "WEB/IMG0.BMP")) FbFillRect(x, y, w, h, DESKTOP_COLOR);
 }
 
-static void raise_owned_windows(HANDLE owner) {
-    for (int i = 0; i < window_count; i++) {
-        WINDOW *child = (WINDOW*)ObReferenceObject(window_list[i]);
-        int is_owned = child && child->owner == owner;
-        HANDLE child_hwnd = window_list[i];
-        if (child) ObDereferenceObject(child_hwnd);
-        if (!is_owned) continue;
-
-        /* Move the owned popup directly above its owner, preserving the
-           relative order of multiple popups. */
-        int owner_pos = -1;
-        int child_pos = -1;
-        for (int j = 0; j < window_count; j++) {
-            if (window_list[j] == owner) owner_pos = j;
-            if (window_list[j] == child_hwnd) child_pos = j;
-        }
-        if (owner_pos >= 0 && child_pos >= 0 && child_pos != owner_pos + 1) {
-            for (int j = child_pos; j > owner_pos + 1; j--) window_list[j] = window_list[j - 1];
-            window_list[owner_pos + 1] = child_hwnd;
-        }
-        raise_owned_windows(child_hwnd);
-        i = owner_pos + 1;
-    }
-}
-
 static int window_is_topmost(const WINDOW *win) {
     if (!win || !win->wndClass) return 0;
-    return (win->exstyle & WS_EX_TOPMOST) ||
-           strcmp(win->wndClass->className, "Shell_TrayWnd") == 0 ||
+    return strcmp(win->wndClass->className, "Shell_TrayWnd") == 0 ||
            strcmp(win->wndClass->className, "MenuPopup") == 0;
 }
 
 static int minimized_window_height(void) {
-    return 1 + TITLEBAR_HEIGHT + 1;
-}
-
-static int window_frame_thickness(const WINDOW *win) {
-    if (!win) return 0;
-    if (win->style & WS_THICKFRAME) return FRAME_THICKNESS;
-    return (win->style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME)) ? 1 : 0;
-}
-
-static int window_client_edge(const WINDOW *win) {
-    return win && (win->exstyle & WS_EX_CLIENTEDGE) ? 2 : 0;
+    return FRAME_THICKNESS + TITLEBAR_HEIGHT + FRAME_THICKNESS;
 }
 
 static int client_top(const WINDOW *win) {
-    int frame = window_frame_thickness(win);
     if (win->minimized) return win->height;
-    return frame + ((win->style & WS_CAPTION) ? TITLEBAR_HEIGHT : 0) + window_client_edge(win);
+    return (win->style & WS_CAPTION) ? (FRAME_THICKNESS + TITLEBAR_HEIGHT + EDGE_THICKNESS) : FRAME_THICKNESS;
 }
 
 static int client_left(const WINDOW *win) {
-    return window_frame_thickness(win) + window_client_edge(win);
+    return FRAME_THICKNESS + EDGE_THICKNESS;
 }
 
 static int client_right(const WINDOW *win) {
-    return win->width - window_frame_thickness(win) - window_client_edge(win);
+    return win->width - FRAME_THICKNESS - EDGE_THICKNESS;
 }
 
 static int client_bottom(const WINDOW *win) {
     if (win->minimized) return win->height;
-    return win->height - window_frame_thickness(win) - window_client_edge(win);
+    return win->height - FRAME_THICKNESS - EDGE_THICKNESS;
 }
 
 static uint8_t win32k_rgb_to_index(uint32_t color) {
@@ -253,11 +209,11 @@ static void draw_caption_glyph_close(int x, int y, int size, int o) {
 }
 
 static void draw_caption_button(int x, int y, int size, char glyph, int pressed) {
-    int o = pressed ? 1 : 0;
-    FbFillRect(x, y, size, size, FRAME_COLOR);
-    if (pressed) draw_bevel(x + 1, y + 1, size - 2, size - 2, SHADOW_COLOR, HILIGHT_COLOR);
-    else draw_bevel(x + 1, y + 1, size - 2, size - 2, HILIGHT_COLOR, SHADOW_COLOR);
-    FbFillRect(x + 2, y + 2, size - 4, size - 4, FACE_COLOR);
+    int ox = pressed ? 1 : 0;
+    int oy = pressed ? 1 : 0;
+    FbFillRect(x, y, size, size, FACE_COLOR);
+    if (pressed) draw_bevel(x, y, size, size, SHADOW_COLOR, HILIGHT_COLOR);
+    else draw_bevel(x, y, size, size, HILIGHT_COLOR, SHADOW_COLOR);
 
     switch (glyph) {
     case '_': draw_caption_glyph_min(x, y, size, o);      break;
@@ -277,13 +233,11 @@ static int caption_button_pressed(WINDOW *win, int hit) {
 
 static int get_caption_button_count(const WINDOW *win) {
     if (!(win->style & WS_CAPTION) || !(win->style & WS_SYSMENU)) return 0;
-    return 1 + ((win->style & WS_MAXIMIZEBOX) ? 1 : 0) +
-               ((win->style & WS_MINIMIZEBOX) ? 1 : 0);
+    return 3;
 }
 
 static int get_caption_button_x(const WINDOW *win, int index_from_right) {
-    int frame = window_frame_thickness(win);
-    return win->x + win->width - frame - BUTTON_MARGIN - BUTTON_SIZE -
+    return win->x + win->width - FRAME_THICKNESS - BUTTON_MARGIN - BUTTON_SIZE -
            (index_from_right * (BUTTON_SIZE + 2));
 }
 
@@ -291,15 +245,12 @@ static CAPTION_BUTTON_HIT hit_caption_button(WINDOW *win, int x, int y) {
     int by;
     if (!(win->style & WS_CAPTION) || !(win->style & WS_SYSMENU)) return CAPBTN_NONE;
 
-    by = win->y + window_frame_thickness(win) + BUTTON_MARGIN;
+    by = win->y + FRAME_THICKNESS + BUTTON_MARGIN;
     if (!(y >= by && y < by + BUTTON_SIZE)) return CAPBTN_NONE;
 
     if (x >= get_caption_button_x(win, 0) && x < get_caption_button_x(win, 0) + BUTTON_SIZE) return CAPBTN_CLOSE;
-    if ((win->style & WS_MAXIMIZEBOX) &&
-        x >= get_caption_button_x(win, 1) && x < get_caption_button_x(win, 1) + BUTTON_SIZE) return CAPBTN_MAXIMIZE;
-    if ((win->style & WS_MINIMIZEBOX) &&
-        x >= get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1) &&
-        x < get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1) + BUTTON_SIZE) return CAPBTN_MINIMIZE;
+    if (x >= get_caption_button_x(win, 1) && x < get_caption_button_x(win, 1) + BUTTON_SIZE) return CAPBTN_MAXIMIZE;
+    if (x >= get_caption_button_x(win, 2) && x < get_caption_button_x(win, 2) + BUTTON_SIZE) return CAPBTN_MINIMIZE;
     return CAPBTN_NONE;
 }
 
@@ -347,9 +298,12 @@ static void draw_sys_icon(WINDOW *win, int x, int y) {
     uintptr_t icon_key = (uintptr_t)(win ? (win->small_icon ? win->small_icon : win->big_icon) : 0);
     DISCOUNT_ICON *icon = (DISCOUNT_ICON*)icon_key;
 
+    FbFillRect(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, FACE_COLOR);
+    draw_bevel(x, y, ICON_BOX_SIZE, ICON_BOX_SIZE, HILIGHT_COLOR, SHADOW_COLOR);
+
     if (icon && icon->magic == DISCOUNT_ICON_MAGIC && icon->pixels && icon->width > 0 && icon->height > 0) {
-        int dst_w = ICON_BOX_SIZE;
-        int dst_h = ICON_BOX_SIZE;
+        int dst_w = ICON_BOX_SIZE - 2;
+        int dst_h = ICON_BOX_SIZE - 2;
         for (int dy = 0; dy < dst_h; dy++) {
             int sy = (dy * icon->height) / dst_h;
             for (int dx = 0; dx < dst_w; dx++) {
@@ -357,7 +311,7 @@ static void draw_sys_icon(WINDOW *win, int x, int y) {
                 uint32_t pixel = icon->pixels[(sy * icon->width) + sx];
                 uint8_t alpha = (uint8_t)(pixel >> 24);
                 if (!alpha) continue;
-                FbPutPixel(x + dx, y + dy, win32k_rgb_to_index(pixel & 0x00FFFFFFU));
+                FbPutPixel(x + 1 + dx, y + 1 + dy, win32k_rgb_to_index(pixel & 0x00FFFFFFU));
             }
         }
         return;
@@ -382,23 +336,8 @@ static void draw_sys_icon(WINDOW *win, int x, int y) {
         }
     }
 
-    FbFillRect(x + 2, y + 2, 10, 10, ACTIVE_CAPTION);
-    FbFillRect(x + 4, y + 4, 6, 1, HILIGHT_COLOR);
-}
-
-static void draw_caption_background(int x, int y, int width, int height, int active) {
-    if (!FbIsFramebuffer()) {
-        FbFillRect(x, y, width, height, active ? ACTIVE_CAPTION : INACTIVE_CAPTION);
-        return;
-    }
-    for (int i = 0; i < width; i++) {
-        int r0 = active ? 63 : 128, g0 = active ? 91 : 128, b0 = active ? 183 : 128;
-        int r1 = active ? 10 : 192, g1 = active ? 27 : 192, b1 = active ? 132 : 192;
-        int r = r0 + (r1 - r0) * i / (width > 1 ? width - 1 : 1);
-        int g = g0 + (g1 - g0) * i / (width > 1 ? width - 1 : 1);
-        int b = b0 + (b1 - b0) * i / (width > 1 ? width - 1 : 1);
-        FbFillRectRGB(x + i, y, 1, height, ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
-    }
+    FbFillRect(x + 3, y + 3, 8, 8, ACTIVE_CAPTION);
+    FbFillRect(x + 5, y + 5, 4, 1, HILIGHT_COLOR);
 }
 
 static void draw_window_frame(WINDOW *win) {
@@ -409,22 +348,17 @@ static void draw_window_frame(WINDOW *win) {
     int title_color = win->active ? ACTIVE_CAPTION : INACTIVE_CAPTION;
     int title_text_color = win->active ? ACTIVE_CAPTION_TEXT : INACTIVE_CAPTION_TEXT;
 
-    int frame = window_frame_thickness(win);
+    FbFillRect(x, y, w, h, FACE_COLOR);
 
-    FbFillRect(x, y, w, h, CLIENT_COLOR);
-    if (frame >= 2) {
-        draw_bevel(x, y, w, h, HILIGHT_COLOR, FRAME_COLOR);
-        draw_bevel(x + 1, y + 1, w - 2, h - 2, HILIGHT_COLOR, SHADOW_COLOR);
-    } else if (frame == 1) {
-        draw_bevel(x, y, w, h, HILIGHT_COLOR, SHADOW_COLOR);
-    }
+    draw_bevel(x, y, w, h, HILIGHT_COLOR, FRAME_COLOR);
+    draw_bevel(x + 1, y + 1, w - 2, h - 2, HILIGHT_COLOR, SHADOW_COLOR);
 
     if (win->style & WS_CAPTION) {
-        int cap_x = x + frame;
-        int cap_y = y + frame;
-        int cap_w = w - (frame * 2);
+        int cap_x = x + FRAME_THICKNESS;
+        int cap_y = y + FRAME_THICKNESS;
+        int cap_w = w - (FRAME_THICKNESS * 2);
 
-        draw_caption_background(cap_x, cap_y, cap_w, TITLEBAR_HEIGHT, win->active);
+        FbFillRect(cap_x, cap_y, cap_w, TITLEBAR_HEIGHT, title_color);
 
         if (win->style & WS_SYSMENU) {
             draw_sys_icon(win, cap_x + BUTTON_MARGIN, cap_y + BUTTON_MARGIN);
@@ -434,20 +368,15 @@ static void draw_window_frame(WINDOW *win) {
             int btn_y = cap_y + BUTTON_MARGIN;
             int close_x = get_caption_button_x(win, 0);
             int max_x = get_caption_button_x(win, 1);
-            int min_x = get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1);
-            if (win->style & WS_MINIMIZEBOX)
-                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_',
-                                    caption_button_pressed(win, CAPBTN_MINIMIZE));
-            if (win->style & WS_MAXIMIZEBOX)
-                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O',
-                                  caption_button_pressed(win, CAPBTN_MAXIMIZE));
-            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X',
-                              caption_button_pressed(win, CAPBTN_CLOSE));
+            int min_x = get_caption_button_x(win, 2);
+            draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_', 0);
+            draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O', 0);
+            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X', 0);
         }
 
         {
             int text_x = cap_x + BUTTON_MARGIN + ((win->style & WS_SYSMENU) ? (ICON_BOX_SIZE + 4) : 2);
-            int text_right = x + w - frame - BUTTON_MARGIN -
+            int text_right = x + w - FRAME_THICKNESS - BUTTON_MARGIN -
                              ((win->style & WS_SYSMENU) ? ((get_caption_button_count(win) * (BUTTON_SIZE + 2)) + 2) : 2);
             int max_chars = (text_right - text_x) / 8;
             char title_buf[64];
@@ -456,8 +385,7 @@ static void draw_window_frame(WINDOW *win) {
             if (len < 0) len = 0;
             memcpy(title_buf, win->title, (uint32_t)len);
             title_buf[len] = 0;
-            if (FbIsFramebuffer()) FbDrawStringTransparent(text_x, cap_y + 4, title_buf, title_text_color);
-            else FbDrawString(text_x, cap_y + 4, title_buf, title_text_color, title_color);
+            FbDrawString(text_x, cap_y + 4, title_buf, title_text_color, title_color);
         }
     }
 
@@ -471,60 +399,8 @@ static void draw_window_frame(WINDOW *win) {
 
         if (client_w > 0 && client_h > 0) {
             FbFillRect(left, top, client_w, client_h, CLIENT_COLOR);
-            if (window_client_edge(win))
-                draw_bevel(left - 2, top - 2, client_w + 4, client_h + 4, SHADOW_COLOR, HILIGHT_COLOR);
+            draw_bevel(left - 1, top - 1, client_w + 2, client_h + 2, SHADOW_COLOR, HILIGHT_COLOR);
         }
-    }
-}
-
-/* Non-client rendering is deliberately repeated after the client has
-   painted.  WINE keeps decorations outside the application surface; doing
-   the same here prevents a client repaint or drag redraw from replacing the
-   RGB caption gradient with indexed framebuffer contents. */
-static void draw_window_caption(WINDOW *win) {
-    int frame;
-    int cap_x, cap_y, cap_w;
-    if (!win || !(win->style & WS_CAPTION) || win->minimized) return;
-    frame = window_frame_thickness(win);
-    cap_x = win->x + frame;
-    cap_y = win->y + frame;
-    cap_w = win->width - (frame * 2);
-    draw_caption_background(cap_x, cap_y, cap_w, TITLEBAR_HEIGHT, win->active);
-
-    if (win->style & WS_SYSMENU) {
-        draw_sys_icon(win, cap_x + BUTTON_MARGIN, cap_y + BUTTON_MARGIN);
-        {
-            int btn_y = cap_y + BUTTON_MARGIN;
-            int close_x = get_caption_button_x(win, 0);
-            int max_x = get_caption_button_x(win, 1);
-            int min_x = get_caption_button_x(win, (win->style & WS_MAXIMIZEBOX) ? 2 : 1);
-            if (win->style & WS_MINIMIZEBOX)
-                draw_caption_button(min_x, btn_y, BUTTON_SIZE, win->minimized ? 'R' : '_',
-                                    caption_button_pressed(win, CAPBTN_MINIMIZE));
-            if (win->style & WS_MAXIMIZEBOX)
-                draw_caption_button(max_x, btn_y, BUTTON_SIZE, win->maximized ? 'R' : 'O',
-                                    caption_button_pressed(win, CAPBTN_MAXIMIZE));
-            draw_caption_button(close_x, btn_y, BUTTON_SIZE, 'X',
-                              caption_button_pressed(win, CAPBTN_CLOSE));
-        }
-    }
-
-    {
-        int text_x = cap_x + BUTTON_MARGIN + ((win->style & WS_SYSMENU) ? (ICON_BOX_SIZE + 4) : 2);
-        int text_right = win->x + win->width - frame - BUTTON_MARGIN -
-                         ((win->style & WS_SYSMENU) ? ((get_caption_button_count(win) * (BUTTON_SIZE + 2)) + 2) : 2);
-        int max_chars = (text_right - text_x) / 8;
-        char title_buf[64];
-        int len = (int)strlen(win->title);
-        if (len > max_chars) len = max_chars;
-        if (len < 0) len = 0;
-        memcpy(title_buf, win->title, (uint32_t)len);
-        title_buf[len] = 0;
-        if (FbIsFramebuffer()) FbDrawStringTransparent(text_x, cap_y + 4, title_buf,
-                                                         win->active ? ACTIVE_CAPTION_TEXT : INACTIVE_CAPTION_TEXT);
-        else FbDrawString(text_x, cap_y + 4, title_buf,
-                          win->active ? ACTIVE_CAPTION_TEXT : INACTIVE_CAPTION_TEXT,
-                          win->active ? ACTIVE_CAPTION : INACTIVE_CAPTION);
     }
 }
 
@@ -554,27 +430,14 @@ static void set_window_active(HANDLE hwnd) {
 static void raise_window(HANDLE hwnd) {
     int pos = -1;
     int target;
-    int first_topmost = window_count;
-    int candidate_topmost;
     WINDOW *candidate = (WINDOW*)ObReferenceObject(hwnd);
     if (!candidate) return;
     if (candidate->desktop) {
         ObDereferenceObject(hwnd);
         return;
     }
-    candidate_topmost = window_is_topmost(candidate);
+    target = window_is_topmost(candidate) ? window_count - 1 : 0;
     ObDereferenceObject(hwnd);
-    for (int i = 0; i < window_count; i++) {
-        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && window_is_topmost(win) && first_topmost == window_count) first_topmost = i;
-        if (win) ObDereferenceObject(window_list[i]);
-    }
-    /* render_scene paints from back to front and find_window_at searches from
-       front to back.  Keep newly raised ordinary windows at the front of the
-       normal band; placing them at index zero made visible popups get painted
-       underneath their owner while still receiving the mouse hit. */
-    target = candidate_topmost ? window_count - 1 :
-             (first_topmost == window_count ? window_count - 1 : first_topmost - 1);
     for (int i = 0; i < window_count; i++) {
         if (window_list[i] == hwnd) {
             pos = i;
@@ -582,32 +445,20 @@ static void raise_window(HANDLE hwnd) {
         }
     }
     if (pos < 0) return;
-    if (!candidate_topmost) target = first_topmost - (pos < first_topmost ? 1 : 0);
-    if (target < 0) target = 0;
-    if (pos == target) {
-        raise_owned_windows(hwnd);
-        return;
+    if (target == 0) {
+        target = window_count - 1;
+        for (int i = 0; i < window_count; i++) {
+            WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
+            int topmost = window_is_topmost(win);
+            if (win) ObDereferenceObject(window_list[i]);
+            if (topmost) { target = i - (pos < i ? 1 : 0); break; }
+        }
+        if (target < 0) target = 0;
     }
+    if (pos == target) return;
     if (pos < target) for (int i = pos; i < target; i++) window_list[i] = window_list[i + 1];
     else for (int i = pos; i > target; i--) window_list[i] = window_list[i - 1];
     window_list[target] = hwnd;
-
-    /* An owned popup is always above its owner.  Keep the owner relationship
-       independent from the topmost band; WINE does the same in its server
-       window tree. */
-    {
-        WINDOW *moved = (WINDOW*)ObReferenceObject(hwnd);
-        if (moved && moved->owner != INVALID_HANDLE) {
-            int owner_pos = -1;
-            for (int i = 0; i < window_count; i++) if (window_list[i] == moved->owner) { owner_pos = i; break; }
-            if (owner_pos >= 0 && target <= owner_pos) {
-                for (int i = target; i < owner_pos; i++) window_list[i] = window_list[i + 1];
-                window_list[owner_pos] = hwnd;
-            }
-        }
-        if (moved) ObDereferenceObject(hwnd);
-    }
-    raise_owned_windows(hwnd);
 }
 
 static int is_in_window(WINDOW *win, int x, int y) {
@@ -633,16 +484,15 @@ static int is_title_bar(WINDOW *win, int x, int y) {
     if (!(win->style & WS_CAPTION)) return 0;
 
     {
-        int frame = window_frame_thickness(win);
-        int tx = win->x + frame;
-        int ty = win->y + frame;
+        int tx = win->x + FRAME_THICKNESS;
+        int ty = win->y + FRAME_THICKNESS;
         int tw = win->width - (FRAME_THICKNESS * 2);
         if (!(x >= tx && x < tx + tw && y >= ty && y < ty + TITLEBAR_HEIGHT)) return 0;
     }
 
     if (hit_caption_button(win, x, y) != CAPBTN_NONE) return 0;
     if ((win->style & WS_SYSMENU) &&
-        x < win->x + window_frame_thickness(win) + BUTTON_MARGIN + ICON_BOX_SIZE + 2) return 0;
+        x < win->x + FRAME_THICKNESS + BUTTON_MARGIN + ICON_BOX_SIZE + 2) return 0;
     return 1;
 }
 
@@ -937,8 +787,7 @@ HANDLE Win32kRegisterClass(const char *className, uint32_t style, void (*wndProc
     return hclass;
 }
 
-static HANDLE win32k_create_window_by_class(HANDLE hClass, const char *title, int x, int y, int w, int h,
-                                            uint32_t style, uint32_t exstyle, HANDLE owner) {
+HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style) {
     if (hClass == INVALID_HANDLE) {
         SerialPutString("[Win32k] CreateWindowByClass invalid class handle\r\n");
         return INVALID_HANDLE;
@@ -970,13 +819,11 @@ static HANDLE win32k_create_window_by_class(HANDLE hClass, const char *title, in
     win->restore_x = x; win->restore_y = y;
     win->restore_width = w; win->restore_height = h;
     win->style = style;
-    win->exstyle = exstyle;
     win->visible = (style & WS_VISIBLE) ? 1 : 0;
     win->active = 0;
     win->minimized = 0;
     win->maximized = 0;
     win->desktop = strcmp(wc->className, "Desktop") == 0;
-    win->owner = owner;
     win->wndClass = wc;
     win->wndProc = wc->wndProc;
     
@@ -1003,26 +850,20 @@ static HANDLE win32k_create_window_by_class(HANDLE hClass, const char *title, in
         SerialPutString("[Win32k] CreateWindowByClass window list full\r\n");
     }
 
-    if (!win->desktop) raise_window(hwnd);
+    if (!win->desktop) {
+        raise_window(hwnd);
+        set_window_active(hwnd);
+    }
     
     if (win->wndProc) win->wndProc(hwnd, WM_CREATE, 0, 0);
     ObDereferenceObject(hClass);
     return hwnd;
 }
 
-HANDLE Win32kCreateWindowByClass(HANDLE hClass, const char *title, int x, int y, int w, int h, uint32_t style) {
-    return win32k_create_window_by_class(hClass, title, x, y, w, h, style, 0, INVALID_HANDLE);
-}
-
-HANDLE Win32kCreateWindowEx(const char *className, const char *title, int x, int y, int w, int h,
-                            uint32_t style, uint32_t exstyle, HANDLE owner) {
+HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
     HANDLE hClass = ObFindObject(className, window_object_type);
     if (hClass == INVALID_HANDLE) return INVALID_HANDLE;
-    return win32k_create_window_by_class(hClass, title, x, y, w, h, style, exstyle, owner);
-}
-
-HANDLE Win32kCreateWindow(const char *className, const char *title, int x, int y, int w, int h, uint32_t style) {
-    return Win32kCreateWindowEx(className, title, x, y, w, h, style, 0, INVALID_HANDLE);
+    return Win32kCreateWindowByClass(hClass, title, x, y, w, h, style);
 }
 
 void Win32kDestroyWindow(HANDLE hwnd) {
@@ -1445,10 +1286,6 @@ void Win32kHandleMouseMove(int x, int y) {
 }
 
 void Win32kRefreshCursor(void) {
-    /* The cursor keeps a native RGB copy of the pixels beneath it. Restore
-       that copy, draw the cursor at its new position, and flush only the
-       resulting dirty cursor bounds. Mouse movement must not recompose every
-       window on the desktop. */
     MouseEraseCursor();
     MouseDrawCursor();
     FbSwapBuffers();
@@ -1481,10 +1318,6 @@ void Win32kActivateWindow(HANDLE hwnd) {
     if (hwnd == INVALID_HANDLE) return;
     win = (WINDOW*)ObReferenceObject(hwnd);
     if (!win) return;
-    if (win->exstyle & WS_EX_NOACTIVATE) {
-        ObDereferenceObject(hwnd);
-        return;
-    }
     if (win->desktop && active_window != INVALID_HANDLE && active_window != hwnd) {
         ObDereferenceObject(hwnd);
         return;
@@ -1520,41 +1353,6 @@ void Win32kSetWindowRect(HANDLE hwnd, int x, int y, int width, int height) {
     ObDereferenceObject(hwnd);
 }
 
-int Win32kSetWindowPos(HANDLE hwnd, HANDLE insert_after, int x, int y, int width, int height, uint32_t flags) {
-    WINDOW *win = (WINDOW*)ObReferenceObject(hwnd);
-    if (!win) return 0;
-
-    if (!(flags & W32K_SWP_NOMOVE)) { win->x = x; win->y = y; }
-    if (!(flags & W32K_SWP_NOSIZE) && width > 0 && height > 0) {
-        win->width = width;
-        win->height = height;
-        if (!win->maximized) {
-            win->restore_width = width;
-            win->restore_height = height;
-        }
-    }
-    if (flags & W32K_SWP_HIDEWINDOW) win->visible = 0;
-    if (flags & W32K_SWP_SHOWWINDOW) win->visible = 1;
-
-    if (!(flags & W32K_SWP_NOZORDER) && insert_after != INVALID_HANDLE) {
-        if (insert_after == (HANDLE)0 || insert_after == (HANDLE)(intptr_t)-1 ||
-            insert_after == (HANDLE)(intptr_t)-2) {
-            if (insert_after == (HANDLE)(intptr_t)-1) win->exstyle |= WS_EX_TOPMOST;
-            else if (insert_after == (HANDLE)(intptr_t)-2) win->exstyle &= ~WS_EX_TOPMOST;
-            raise_window(hwnd);
-        } else {
-            /* The lightweight compositor has no child tree in win32k; for
-               top-level windows inserting after a real sibling is equivalent
-               to raising the target while preserving the topmost band. */
-            raise_window(hwnd);
-        }
-    }
-    if (!(flags & W32K_SWP_NOACTIVATE) && !(win->exstyle & WS_EX_NOACTIVATE)) set_window_active(hwnd);
-    ObDereferenceObject(hwnd);
-    Win32kRedrawAll();
-    return 1;
-}
-
 void Win32kRedrawAll(void) {
     if (redraw_in_progress) return;
     redraw_in_progress = 1;
@@ -1570,12 +1368,6 @@ void Win32kRedrawAll(void) {
                 win->wndProc(window_list[i], WM_PAINT, 0, 0);
             }
         }
-        if (win) ObDereferenceObject(window_list[i]);
-    }
-
-    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < window_count; i++) {
-        WINDOW *win = (WINDOW*)ObReferenceObject(window_list[i]);
-        if (win && win->visible && (is_menu_popup_window(win) == (pass == 1))) draw_window_caption(win);
         if (win) ObDereferenceObject(window_list[i]);
     }
 

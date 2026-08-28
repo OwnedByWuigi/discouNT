@@ -301,6 +301,7 @@ BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy,
     int old_h;
     int moved = 0;
     int sized = 0;
+    (void)hWndInsertAfter;
     if (!win) return FALSE;
     old_w = win->rect.right - win->rect.left;
     old_h = win->rect.bottom - win->rect.top;
@@ -315,16 +316,11 @@ BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy,
         win->rect.bottom = win->rect.top + cy;
     }
     if (uFlags & SWP_SHOWWINDOW) win->visible = 1;
-    if (uFlags & SWP_HIDEWINDOW) win->visible = 0;
     if (win->top_level) {
-        if (!Win32kSetWindowPos((HANDLE)hWnd, (HANDLE)hWndInsertAfter,
-                                win->rect.left, win->rect.top,
-                                win->rect.right - win->rect.left,
-                                win->rect.bottom - win->rect.top, uFlags)) return FALSE;
-        if (!(uFlags & SWP_NOZORDER)) {
-            if (hWndInsertAfter == HWND_TOPMOST) win->exstyle |= WS_EX_TOPMOST;
-            else if (hWndInsertAfter == HWND_NOTOPMOST) win->exstyle &= ~WS_EX_TOPMOST;
-        }
+        Win32kSetWindowRect((HANDLE)hWnd, win->rect.left, win->rect.top,
+                            win->rect.right - win->rect.left,
+                            win->rect.bottom - win->rect.top);
+        if (uFlags & SWP_SHOWWINDOW) Win32kShowWindow((HANDLE)hWnd);
         u32_sync_top_level(win);
     }
     if (moved || sized) {

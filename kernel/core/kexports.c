@@ -174,8 +174,6 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"FbDrawRect", FbDrawRect},
     {"FbDrawChar", FbDrawChar},
     {"FbDrawString", FbDrawString},
-    {"FbDrawCharTransparent", FbDrawCharTransparent},
-    {"FbDrawStringTransparent", FbDrawStringTransparent},
     {"FbSwapBuffers", FbSwapBuffers},
     {"FbIsFramebuffer", FbIsFramebuffer},
     {"FbGetWidth", FbGetWidth},
