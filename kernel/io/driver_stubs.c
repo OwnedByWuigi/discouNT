@@ -106,6 +106,15 @@ static void (*pFbFillRectRGB)(int x, int y, int w, int h, uint32_t rgb) = 0;
 static void (*pFbDrawRect)(int x, int y, int w, int h, uint8_t color) = 0;
 static void (*pFbDrawChar)(int x, int y, char c, uint8_t fg, uint8_t bg) = 0;
 static void (*pFbDrawString)(int x, int y, const char *str, uint8_t fg, uint8_t bg) = 0;
+static void (*pFbDrawCharTransparent)(int x, int y, char c, uint8_t fg) = 0;
+static void (*pFbDrawStringTransparent)(int x, int y, const char *str, uint8_t fg) = 0;
+static uint32_t (*pFbGetPixelRGB)(int x, int y) = 0;
+static void (*pFbPutPixelRGB)(int x, int y, uint32_t rgb) = 0;
+static int (*pFbPaintWallpaper)(int x, int y, int w, int h, const char *path) = 0;
+static void (*pFbCaptureRGB)(int x, int y, int w, int h, uint32_t *dst, int dst_stride) = 0;
+static void (*pFbBlitRGB)(int x, int y, int w, int h, const uint32_t *src, int src_stride) = 0;
+static void (*pFbSetClipRect)(int x, int y, int w, int h) = 0;
+static void (*pFbResetClipRect)(void) = 0;
 static void (*pFbSwapBuffers)(void) = 0;
 static int (*pFbIsFramebuffer)(void) = 0;
 static int (*pFbGetWidth)(void) = 0;
@@ -241,6 +250,8 @@ void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb) { if (pFbFillRectRG
 void FbDrawRect(int x, int y, int w, int h, uint8_t color) { if (pFbDrawRect) pFbDrawRect(x, y, w, h, color); }
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) { if (pFbDrawChar) pFbDrawChar(x, y, c, fg, bg); }
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) { if (pFbDrawString) pFbDrawString(x, y, str, fg, bg); }
+void FbDrawCharTransparent(int x, int y, char c, uint8_t fg) { if (pFbDrawCharTransparent) pFbDrawCharTransparent(x, y, c, fg); }
+void FbDrawStringTransparent(int x, int y, const char *str, uint8_t fg) { if (pFbDrawStringTransparent) pFbDrawStringTransparent(x, y, str, fg); }
 void FbSwapBuffers(void) { if (pFbSwapBuffers) pFbSwapBuffers(); }
 int FbIsFramebuffer(void) { return pFbIsFramebuffer ? pFbIsFramebuffer() : 0; }
 int FbGetWidth(void) { return pFbGetWidth ? pFbGetWidth() : fb_width; }
@@ -372,6 +383,15 @@ void DriverInstallFb(void *image) {
     RESOLVE(pFbDrawRect, image, "FbDrawRect");
     RESOLVE(pFbDrawChar, image, "FbDrawChar");
     RESOLVE(pFbDrawString, image, "FbDrawString");
+    RESOLVE(pFbDrawCharTransparent, image, "FbDrawCharTransparent");
+    RESOLVE(pFbDrawStringTransparent, image, "FbDrawStringTransparent");
+    RESOLVE(pFbGetPixelRGB, image, "FbGetPixelRGB");
+    RESOLVE(pFbPutPixelRGB, image, "FbPutPixelRGB");
+    RESOLVE(pFbPaintWallpaper, image, "FbPaintWallpaper");
+    RESOLVE(pFbCaptureRGB, image, "FbCaptureRGB");
+    RESOLVE(pFbBlitRGB, image, "FbBlitRGB");
+    RESOLVE(pFbSetClipRect, image, "FbSetClipRect");
+    RESOLVE(pFbResetClipRect, image, "FbResetClipRect");
     RESOLVE(pFbSwapBuffers, image, "FbSwapBuffers");
     RESOLVE(pFbIsFramebuffer, image, "FbIsFramebuffer");
     RESOLVE(pFbGetWidth, image, "FbGetWidth");

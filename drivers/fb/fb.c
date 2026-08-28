@@ -1050,6 +1050,7 @@ void FbPutPixel(int x, int y, uint8_t color) {
         if (!fb_shadow || !fb_surface || x < 0 || x >= fb_width || y < 0 || y >= fb_height) return;
         if (fb_clip_enabled && (x < fb_clip_left || x >= fb_clip_right || y < fb_clip_top || y >= fb_clip_bottom)) return;
         fb_shadow[y * fb_width + x] = color & 0x0F;
+        fb_surface[y * fb_width + x] = vga_to_rgb888[color & 0x0F];
         fb_mark_dirty(x, y, 1, 1);
     } else {
         VgaPutPixel(x, y, color);
@@ -1073,7 +1074,11 @@ void FbFillRect(int x, int y, int w, int h, uint8_t color) {
 
         for (int row = y; row < y + h; row++) {
             uint8_t *dst = fb_shadow + (row * fb_width) + x;
-            for (int col = 0; col < w; col++) dst[col] = color & 0x0F;
+            uint32_t *surface = fb_surface + (row * fb_width) + x;
+            for (int col = 0; col < w; col++) {
+                dst[col] = color & 0x0F;
+                surface[col] = vga_to_rgb888[color & 0x0F];
+            }
         }
         fb_mark_dirty(x, y, w, h);
     } else {
@@ -1142,6 +1147,33 @@ void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg) {
     }
 }
 
+void FbDrawCharTransparent(int x, int y, char c, uint8_t fg) {
+    if (!use_framebuffer) { VgaDrawChar(x, y, c, fg, COLOR_BLUE); return; }
+    {
+        uint8_t ttf_glyph[12];
+        const uint8_t *glyph = fb_get_font(c);
+        int glyph_height = 8;
+        if (fb_use_ttf_glyphs && FbTtfReady() && FbTtfGlyph(c, ttf_glyph)) {
+            glyph = ttf_glyph;
+            glyph_height = 12;
+        }
+        for (int row = 0; row < glyph_height; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < 8; col++)
+                if (bits & (0x80 >> col)) FbPutPixel(x + col, y + row, fg);
+        }
+    }
+}
+
+void FbDrawStringTransparent(int x, int y, const char *str, uint8_t fg) {
+    int cx = x;
+    while (str && *str) {
+        if (*str == '\n') { cx = x; y += 10; }
+        else { FbDrawCharTransparent(cx, y, *str, fg); cx += 8; }
+        str++;
+    }
+}
+
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
     if (use_framebuffer) {
         int cx = x;
@@ -1168,15 +1200,7 @@ void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg) {
 
 void FbSwapBuffers(void) {
     if (use_framebuffer) {
-        if (rgb_direct_frame) {
-            /* Preserve a direct RGB preview instead of copying the indexed
-             * UI shadow buffer over it during the compositor swap. */
-            svga_update(0, 0, fb_width, fb_height);
-            rgb_direct_frame = 0;
-            fb_reset_dirty();
-            return;
-        }
-        if (!fb_shadow || !dirty_valid) return;
+        if (!fb_surface || !dirty_valid) return;
 
         int update_x = dirty_x1;
         int update_y = dirty_y1;

@@ -30,6 +30,8 @@ void FbFillRectRGB(int x, int y, int w, int h, uint32_t rgb);
 void FbDrawRect(int x, int y, int w, int h, uint8_t color);
 void FbDrawChar(int x, int y, char c, uint8_t fg, uint8_t bg);
 void FbDrawString(int x, int y, const char *str, uint8_t fg, uint8_t bg);
+void FbDrawCharTransparent(int x, int y, char c, uint8_t fg);
+void FbDrawStringTransparent(int x, int y, const char *str, uint8_t fg);
 void FbSwapBuffers(void);
 int FbIsFramebuffer(void);
 int FbGetWidth(void);
