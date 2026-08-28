@@ -34,8 +34,8 @@
 #define TITLEBAR_HEIGHT      18
 #define FRAME_THICKNESS      2
 #define EDGE_THICKNESS       1
-#define BUTTON_SIZE          14
-#define BUTTON_MARGIN        2
+#define BUTTON_SIZE          17
+#define BUTTON_MARGIN        1
 #define ICON_BOX_SIZE        14
 #define MINIMIZED_WIDTH      180
 #define W32K_SW_HIDE           0
