@@ -5,17 +5,19 @@ NASM := nasm
 ISO_NAME := ntos-amd64.iso
 ISO_DIR := $(BUILD_DIR)/iso
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
+MEDIA_FILES := $(wildcard media/audio/*)
+MEDIA_DIR := $(ISO_DIR)/Media
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
- -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/input -Idrivers/ide -Idrivers/ahci -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
+ -Idrivers/serial -Idrivers/vga -Idrivers/fat32 -Idrivers/input -Idrivers/ide -Idrivers/ahci -Idrivers/audio -Iwin32/w32k -Iwin32/smss -Iwin32/csrss
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
  -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
 SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/io/service.c kernel/core/ke.c \
- kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/core/setup.c \
+ kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/audio/audio_service.c kernel/core/setup.c \
  kernel/core/subsystem.c kernel/core/nativecmd.c kernel/core/bugcheck.c kernel/arch/x86/idt.c \
  kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/fb/storage.c drivers/input/input.c drivers/ide/ide.c drivers/ahci/ahci.c drivers/usb/usb.c drivers/usb/usb_msc.c \
  drivers/usb/uhci.c drivers/usb/ohci.c drivers/usb/ehci.c drivers/usb/xhci.c \
@@ -30,6 +32,7 @@ BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
+ $(BUILD_DIR)/apps/wavplay.exe \
  $(BUILD_DIR)/apps/control/control.exe \
  $(BUILD_DIR)/apps/control/desk/desk.cpl \
  $(BUILD_DIR)/apps/taskmgr/taskmgr.exe \
@@ -49,18 +52,20 @@ NATIVE_BOOTSTRAP := $(BUILD_DIR)/win32/smss/smss.exe \
  $(BUILD_DIR)/win32/csrss/csrss.exe
 NATIVE_SUPPORT := $(BUILD_DIR)/dlls/msgina.dll \
  $(BUILD_DIR)/win32/w32k/win32k.dll
-DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide ahci
+DRIVER_NAMES := serial vga cdfs keyboard mouse net fb usb ide ahci hda es1371 ac97 sb16
 NATIVE_DRIVERS := $(addprefix $(BUILD_DIR)/drivers/,$(addsuffix .sys,$(DRIVER_NAMES)))
 
 all: iso
 
 userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
 
-iso: $(KERNEL) userspace $(MAIN_GRP)
+iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES)
 	@rm -rf $(ISO_DIR)/SYSTEM32
 	@mkdir -p $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
 	@mkdir -p $(ISO_DIR)/SYSTEM32/DRIVERS
 	@mkdir -p $(ISO_DIR)/SYSTEM32/FONTS
+	@mkdir -p $(MEDIA_DIR)
+	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
 	cp $(MAIN_GRP) $(ISO_DIR)/Main.grp
 	cp $(PROGMAN_INI) $(ISO_DIR)/progman.ini
 	cp $(MAIN_GRP) $(ISO_DIR)/SYSTEM32/Main.grp
@@ -95,6 +100,10 @@ $(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main
 $(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c kernel/core/util.c kernel/core/version.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ apps/cmd/cmd.c kernel/core/util.c
+
+$(BUILD_DIR)/apps/wavplay.exe: apps/wavplay.c apps/audio/sound.c apps/audio/sound.h drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,main -shared -o $@ apps/wavplay.c apps/audio/sound.c
 
 $(BUILD_DIR)/apps/control/control.exe: apps/control/control.c kernel/core/util.c
 	@mkdir -p $(@D)
@@ -229,6 +238,22 @@ $(BUILD_DIR)/drivers/ide.sys: drivers/ide/ide.c drivers/ide/ide.h
 $(BUILD_DIR)/drivers/ahci.sys: drivers/ahci/ahci.c drivers/ahci/ahci.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ drivers/ahci/ahci.c
+
+$(BUILD_DIR)/drivers/ac97.sys: drivers/audio/ac97.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
+
+$(BUILD_DIR)/drivers/es1371.sys: drivers/audio/es1371.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
+
+$(BUILD_DIR)/drivers/hda.sys: drivers/audio/hda.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
+
+$(BUILD_DIR)/drivers/sb16.sys: drivers/audio/sb16.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -Wl,-e,DriverEntry -shared -o $@ $<
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)

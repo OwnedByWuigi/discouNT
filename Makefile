@@ -16,6 +16,10 @@ LD := ld
 NASM := nasm
 GRUB_MKRESCUE := grub-mkrescue
 MINGW_CC := i686-w64-mingw32-gcc
+QEMU_AUDIODEV ?= driver=alsa,id=audio0
+# QEMU's ES1370 model is register-compatible with the ES1371 path used by
+# VMware. Override this when testing the alternate endpoint.
+QEMU_SOUND_DEVICE ?= AC97
 
 CPPFLAGS := \
 	-Iinclude/win32 \
@@ -29,6 +33,7 @@ CPPFLAGS := \
 	-Idrivers/usb \
 	-Idrivers/ide \
 	-Idrivers/ahci \
+	-Idrivers/audio \
 	-Idrivers/fat32 \
 	-Idrivers/input \
 	-Idrivers/serial \
@@ -64,6 +69,7 @@ KERNEL_CORE_SRCS := \
 	kernel/loader/peloader.c \
 	kernel/core/kexports.c \
 	kernel/io/driver.c \
+	kernel/audio/audio_service.c \
 	kernel/io/driver_stubs.c \
 	kernel/core/setup.c \
 	kernel/core/subsystem.c \
@@ -106,6 +112,7 @@ WIN32K_DLL := $(BUILD_DIR)/win32/w32k/win32k.dll
 
 APP_SRC_FILES := $(wildcard apps/*.c)
 BUILT_APP_FILES := $(patsubst apps/%.c,$(BUILD_DIR)/apps/%.exe,$(APP_SRC_FILES))
+WAVPLAY_APP := $(BUILD_DIR)/apps/wavplay.exe
 SMSS_APP := $(BUILD_DIR)/win32/smss/smss.exe
 CSRSS_APP := $(BUILD_DIR)/win32/csrss/csrss.exe
 CONTROL_APP := $(BUILD_DIR)/apps/control/control.exe
@@ -150,12 +157,18 @@ NET_SYS := $(BUILD_DIR)/drivers/net/net.sys
 FB_SYS := $(BUILD_DIR)/drivers/fb/fb.sys
 FONT_DIR := $(SYSTEM32_DIR)/FONTS
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
+MEDIA_FILES := $(wildcard media/audio/*)
+MEDIA_DIR := $(ISO_DIR)/Media
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 IDE_SYS := $(BUILD_DIR)/drivers/ide/ide.sys
 AHCI_SYS := $(BUILD_DIR)/drivers/ahci/ahci.sys
-DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS) $(IDE_SYS) $(AHCI_SYS)
+AC97_SYS := $(BUILD_DIR)/drivers/ac97.sys
+SB16_SYS := $(BUILD_DIR)/drivers/sb16.sys
+ES1371_SYS := $(BUILD_DIR)/drivers/es1371.sys
+HDA_SYS := $(BUILD_DIR)/drivers/hda.sys
+DRIVER_SYS_FILES := $(SERIAL_SYS) $(VGA_SYS) $(CDFS_SYS) $(KEYBOARD_SYS) $(MOUSE_SYS) $(NET_SYS) $(FB_SYS) $(USB_SYS) $(IDE_SYS) $(AHCI_SYS) $(HDA_SYS) $(ES1371_SYS) $(AC97_SYS) $(SB16_SYS)
 
-.PHONY: all clean iso usb-image kernel dlls apps run-x86 run-amd64 x86 amd64 loongarch64 run-loongarch64
+.PHONY: all clean iso usb-image kernel dlls apps run run-x86 run-amd64 x86 amd64 loongarch64 run-loongarch64
 
 x86:
 	$(MAKE) BUILD_DIR=build/x86 ISO_NAME=ntos-x86.iso all
@@ -175,7 +188,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(WIN32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
+apps: $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -281,6 +294,10 @@ $(CMD_APP): apps/cmd/cmd.c kernel/core/version.h
 		-Wl,-e,main \
 		-o $@ \
 		$< kernel/core/util.c
+
+$(WAVPLAY_APP): apps/wavplay.c apps/audio/sound.c apps/audio/sound.h drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,main -o $@ apps/wavplay.c apps/audio/sound.c
 
 $(CONTROL_APP): apps/control/control.c
 	@mkdir -p $(@D)
@@ -438,11 +455,27 @@ $(AHCI_SYS): drivers/ahci/ahci.c drivers/ahci/ahci.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ drivers/ahci/ahci.c
 
+$(AC97_SYS): drivers/audio/ac97.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $<
+
+$(ES1371_SYS): drivers/audio/es1371.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $<
+
+$(HDA_SYS): drivers/audio/hda.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $<
+
+$(SB16_SYS): drivers/audio/sb16.c drivers/audio/audio.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fPIC -shared -Wl,-Bsymbolic -Wl,-e,DriverEntry -o $@ $<
+
 $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
@@ -471,6 +504,9 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(CMD_AP
 	@if [ -f "$(CMD_APP)" ]; then \
 		cp "$(CMD_APP)" "$(SYSTEM32_DIR)/CMD.EXE"; \
 	fi
+	@if [ -f "$(WAVPLAY_APP)" ]; then cp "$(WAVPLAY_APP)" "$(SYSTEM32_DIR)/WAVPLAY.EXE"; fi
+	@mkdir -p "$(MEDIA_DIR)"
+	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
 	@if [ -f "$(CONTROL_APP)" ]; then \
 		cp "$(CONTROL_APP)" "$(SYSTEM32_DIR)/CONTROL.EXE"; \
 	fi
@@ -533,11 +569,13 @@ RUN_ISO := $(if $(RUN_AMD64),ntos-amd64.iso,$(if $(RUN_X86),ntos-x86.iso,$(ISO_N
 
 run-x86:
 	$(MAKE) x86
-	qemu-system-i386 -cdrom ntos-x86.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139
+	qemu-system-i386 -cdrom ntos-x86.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139 -audiodev $(QEMU_AUDIODEV) -device $(QEMU_SOUND_DEVICE),audiodev=audio0
 
 run-amd64:
 	$(MAKE) amd64
-	qemu-system-x86_64 -cdrom ntos-amd64.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139
+	qemu-system-x86_64 -cdrom ntos-amd64.iso -m 128 -vga std -serial stdio -nic user,model=rtl8139 -audiodev $(QEMU_AUDIODEV) -device $(QEMU_SOUND_DEVICE),audiodev=audio0
+
+run: run-x86
 
 clean:
 	rm -rf $(BUILD_DIR) ntos-x86.iso ntos-amd64.iso

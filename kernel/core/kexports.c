@@ -20,6 +20,7 @@
 #include "core/ke.h"
 #include "loader/peloader.h"
 #include "core/bugcheck.h"
+#include "audio/audio_service.h"
 
 extern void CsrssGinaShowLogon(void);
 extern int CsrssExecuteImage(const char *path);
@@ -130,6 +131,11 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"IoCallDriver", IoCallDriver},
     {"IoSendRequest", IoSendRequest},
     {"IoDeviceControl", IoDeviceControl},
+    {"AudioServiceGetCaps", AudioServiceGetCaps},
+    {"AudioServicePlay", AudioServicePlay},
+    {"AudioServiceStreamStart", AudioServiceStreamStart},
+    {"AudioServiceStreamWrite", AudioServiceStreamWrite},
+    {"AudioServiceStreamStop", AudioServiceStreamStop},
     {"SerialInit", SerialInit},
     {"SerialPutChar", SerialPutChar},
     {"SerialPutString", SerialPutString},
