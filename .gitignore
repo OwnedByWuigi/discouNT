@@ -3,6 +3,7 @@ build/
 *.img
 winemaster/
 *wine/
+!include/win32/wine/
 .*/
 *.o
 

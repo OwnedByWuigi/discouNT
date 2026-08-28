@@ -88,7 +88,7 @@ $(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
 
-$(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main.c dlls/dxdiagn/provider.c
+$(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main.c dlls/dxdiagn/provider.c include/win32/wine/fil_data.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
 
