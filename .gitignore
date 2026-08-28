@@ -6,6 +6,7 @@ winemaster/
 !include/win32/wine/
 .*/
 *.o
+media/audio/test2.wav
 
 # Explicitly include .github directory
 !.github/
