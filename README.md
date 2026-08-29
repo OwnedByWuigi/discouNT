@@ -19,7 +19,7 @@ discouNT can theoretically be booted on real x86 and AMD64 hardware, though I do
 
 ### Credits
 
-Microsoft - KMDF source (/media)
+Microsoft - WDF source (/compat/wdf)
 
 ReactOS team - MSGINA source (/dlls/msgina)
 
