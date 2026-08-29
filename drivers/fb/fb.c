@@ -229,8 +229,11 @@ static const uint8_t *fb_get_font(char c) {
     return font[0];
 }
 
-/* The TrueType renderer in drivers/fb/ttf.c is NOT the active font backend ATM. */
-/* TrueType support is broken in discouNT, and IDK why. */
+/* The TrueType renderer in drivers/fb/ttf.c is now the active font backend, */
+/* The compact TTF rasterizer remains available for explicit callers, but the
+ * system UI uses the stable built-in 8x8 font until a full-size glyph cache is
+ * available.  Rendering Tahoma into an 8x12 binary cell loses too much
+ * contour information and makes menu text look corrupted. */
 static int fb_use_ttf_glyphs = 0;
 
 #if 0
