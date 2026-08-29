@@ -7,6 +7,9 @@ ISO_DIR := $(BUILD_DIR)/iso
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 MEDIA_FILES := $(wildcard media/audio/*)
 MEDIA_DIR := $(ISO_DIR)/Media
+WALLPAPER_FILES := $(wildcard media/wallpaper/*)
+WEB_DIR := $(ISO_DIR)/Web
+WALLPAPER_STAMP := $(WEB_DIR)/.stamp
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
  -Idrivers/keyboard -Idrivers/mouse -Idrivers/net -Idrivers/usb \
@@ -61,12 +64,13 @@ all: iso
 
 userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
 
-iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES)
+iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES) $(WALLPAPER_STAMP)
 	@rm -rf $(ISO_DIR)/SYSTEM32
 	@mkdir -p $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
 	@mkdir -p $(ISO_DIR)/SYSTEM32/DRIVERS
 	@mkdir -p $(ISO_DIR)/SYSTEM32/FONTS
 	@mkdir -p $(MEDIA_DIR)
+	@mkdir -p $(WEB_DIR)
 	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
 	cp $(MAIN_GRP) $(ISO_DIR)/Main.grp
 	cp $(PROGMAN_INI) $(ISO_DIR)/progman.ini
@@ -84,6 +88,10 @@ iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES)
 	done
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR) -volid DISCOUNT
+
+$(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
+	@mkdir -p "$(WEB_DIR)"
+	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
 usb-image: iso
 	sh tools/make_usb_image.sh $(ISO_DIR) $(ISO_DIR)/boot/grub/grub.cfg ntos-amd64-usb.img
