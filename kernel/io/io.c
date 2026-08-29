@@ -60,6 +60,12 @@ IO_DRIVER_OBJECT *IoCreateDriver(const char *name, void *image, void *context) {
 IO_DRIVER_OBJECT *IoGetCurrentDriver(void) { return current_driver; }
 void IoSetCurrentDriver(IO_DRIVER_OBJECT *driver) { current_driver = driver; }
 
+void IoSetPlatformDispatch(IO_DRIVER_OBJECT *driver, uint32_t major_function,
+                           IO_PLATFORM_DISPATCH dispatch) {
+    if (!driver || major_function >= IO_MAX_MAJOR_FUNCTION) return;
+    driver->platform_dispatch[major_function] = dispatch;
+}
+
 void IoDeleteDriver(IO_DRIVER_OBJECT *driver) {
     if (!driver || driver->type != IO_TYPE_DRIVER) return;
     if (current_driver == driver) current_driver = 0;
@@ -132,6 +138,11 @@ int IoCallDriver(IO_DEVICE_OBJECT *device, IO_REQUEST *request) {
         return IO_STATUS_INVALID_PARAMETER;
 
     dispatch = device->driver->major_function[request->major_function];
+    if (!dispatch && device->driver->platform_dispatch[request->major_function]) {
+        status = device->driver->platform_dispatch[request->major_function](device, request);
+        request->io_status.status = status;
+        return status;
+    }
     if (!dispatch) {
         request->io_status.status = IO_STATUS_NOT_SUPPORTED;
         request->io_status.information = 0;

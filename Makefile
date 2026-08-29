@@ -42,6 +42,8 @@ CPPFLAGS := \
 	-Iwin32/smss \
 	-Iwin32/csrss
 
+WDF_PLATFORM_CPPFLAGS := -Icompat/wdf/platform/include
+
 CFLAGS := \
 	-ffreestanding \
 	-nostdlib \
@@ -75,6 +77,8 @@ KERNEL_CORE_SRCS := \
 	kernel/core/subsystem.c \
 	kernel/core/nativecmd.c \
 	kernel/core/bugcheck.c \
+	compat/wdf/platform/src/wdf_platform.c \
+	compat/wdf/platform/src/wdf_core.c \
 	kernel/arch/x86/idt.c \
 	kernel/arch/x86/isr.c \
 	drivers/fat32/fat32.c \
@@ -208,7 +212,7 @@ $(BOOT_OBJ): boot/boot.asm
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(WDF_PLATFORM_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BOOT_SERIAL_OBJ): drivers/serial/serial.c
 	@mkdir -p $(@D)

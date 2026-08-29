@@ -20,6 +20,8 @@
 #include "fat32.h"
 #include "core/setup.h"
 
+extern void WdfPlatformInitialize(void);
+
 static int BootOptionRequested(void *mb_info_ptr, const char *option) {
     MULTIBOOT_INFO *mbi = (MULTIBOOT_INFO*)mb_info_ptr;
     const char *cmdline;
@@ -155,6 +157,7 @@ void kmain(uint32_t magic, void *mb_info_ptr) {
     ObInit();
     IoInit();
     KeInit();
+    WdfPlatformInitialize();
     KeAttachCurrentThread("KernelMain");
     if (IdeBootInitialize() && !setup_mode) Fat32Initialize("Harddisk0");
     if (!Fat32IsMounted() && AhciBootInitialize() && !setup_mode)

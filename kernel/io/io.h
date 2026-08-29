@@ -32,6 +32,7 @@ typedef struct _IO_REQUEST IO_REQUEST;
 
 typedef int (*IO_DISPATCH_ROUTINE)(IO_DEVICE_OBJECT *device, IO_REQUEST *request);
 typedef void (*IO_DRIVER_UNLOAD)(IO_DRIVER_OBJECT *driver);
+typedef int (*IO_PLATFORM_DISPATCH)(void *device, void *request);
 
 typedef struct _IO_STATUS_BLOCK {
     int status;
@@ -59,6 +60,7 @@ struct _IO_DRIVER_OBJECT {
     void *image;
     void *context;
     IO_DISPATCH_ROUTINE major_function[IO_MAX_MAJOR_FUNCTION];
+    IO_PLATFORM_DISPATCH platform_dispatch[IO_MAX_MAJOR_FUNCTION];
     IO_DRIVER_UNLOAD unload;
     IO_DEVICE_OBJECT *device_list;
     HANDLE handle;
@@ -79,6 +81,8 @@ IO_DRIVER_OBJECT *IoCreateDriver(const char *name, void *image, void *context);
 void IoDeleteDriver(IO_DRIVER_OBJECT *driver);
 IO_DRIVER_OBJECT *IoGetCurrentDriver(void);
 void IoSetCurrentDriver(IO_DRIVER_OBJECT *driver);
+void IoSetPlatformDispatch(IO_DRIVER_OBJECT *driver, uint32_t major_function,
+                           IO_PLATFORM_DISPATCH dispatch);
 IO_DEVICE_OBJECT *IoCreateDevice(IO_DRIVER_OBJECT *driver, const char *name,
                                  uint32_t extension_size);
 IO_DEVICE_OBJECT *IoGetDevice(const char *name);

@@ -346,7 +346,7 @@ HANDLE KeCreateEvent(uint32_t manual_reset) {
     return ObCreateObject(event_object_type, "Event", event, sizeof(EVENT));
 }
 
-void KeSetEvent(HANDLE event_handle) {
+void KeSetEventHandle(HANDLE event_handle) {
     EVENT *event = (EVENT*)ObReferenceObject(event_handle);
     if (event) {
         event->signaled = 1;
@@ -354,7 +354,7 @@ void KeSetEvent(HANDLE event_handle) {
     }
 }
 
-void KeResetEvent(HANDLE event_handle) {
+void KeResetEventHandle(HANDLE event_handle) {
     EVENT *event = (EVENT*)ObReferenceObject(event_handle);
     if (event) {
         event->signaled = 0;

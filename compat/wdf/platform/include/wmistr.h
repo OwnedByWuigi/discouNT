@@ -1,0 +1,6 @@
+#ifndef DISCOUNT_WDF_WMISTR_H
+#define DISCOUNT_WDF_WMISTR_H
+#include <ntddk.h>
+typedef ULONG WMIDPREQUESTCODE;
+typedef NTSTATUS (*WMILIBRARYPROC)(PVOID, PVOID);
+#endif
