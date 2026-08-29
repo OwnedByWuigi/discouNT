@@ -22,6 +22,7 @@
 #include "core/bugcheck.h"
 #include "audio/audio_service.h"
 #include "wdf_transport.h"
+#include "../../compat/jpeg/jpeg_image.h"
 
 extern void CsrssGinaShowLogon(void);
 extern int CsrssExecuteImage(const char *path);
@@ -247,18 +248,26 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"WudfTransportPoll", WudfTransportPoll},
     {"WudfTransportComplete", WudfTransportComplete},
     {"WudfTransportGetCompletion", WudfTransportGetCompletion},
+    {"JpegDecodeImage", JpegDecodeImage},
+    {"JpegFreeImage", JpegFreeImage},
 };
+
+void *KernelResolveExport(const char *name) {
+    if (!name || !*name) return 0;
+    for (uint32_t i = 0; i < (sizeof(kernel_exports) / sizeof(kernel_exports[0])); i++) {
+        if (strcmp(kernel_exports[i].name, name) == 0)
+            return kernel_exports[i].addr;
+    }
+    return 0;
+}
 
 void *KernelResolveSymbol(const char *name) {
     void *resolved;
 
     if (!name || !*name) return 0;
 
-    for (uint32_t i = 0; i < (sizeof(kernel_exports) / sizeof(kernel_exports[0])); i++) {
-        if (strcmp(kernel_exports[i].name, name) == 0) {
-            return kernel_exports[i].addr;
-        }
-    }
+    resolved = KernelResolveExport(name);
+    if (resolved) return resolved;
 
     resolved = PeResolveExternalSymbol(name);
     if (resolved) return resolved;

@@ -20,7 +20,7 @@ CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
  -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
-SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/io/service.c kernel/io/wudf_transport.c kernel/core/ke.c \
+SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/io/service.c kernel/io/wudf_transport.c compat/jpeg/picojpeg.c compat/jpeg/jpeg_image.c kernel/core/ke.c \
  kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/audio/audio_service.c kernel/core/setup.c \
  kernel/core/subsystem.c kernel/core/nativecmd.c kernel/core/bugcheck.c compat/wdf/platform/src/wdf_platform.c compat/wdf/platform/src/wdf_core.c kernel/arch/x86/idt.c \
  kernel/arch/x86/isr.c drivers/fat32/fat32.c drivers/fb/storage.c drivers/input/input.c drivers/ide/ide.c drivers/ahci/ahci.c drivers/usb/usb.c drivers/usb/usb_msc.c \
@@ -101,11 +101,11 @@ usb-image: iso
 # the tested x86 binaries with incompatible 64-bit objects.
 $(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic,--export-dynamic -o $@ $^
 
 $(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main.c dlls/dxdiagn/provider.c include/win32/wine/fil_data.h
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $^
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic,--export-dynamic -o $@ $^
 
 $(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c kernel/core/util.c kernel/core/version.h
 	@mkdir -p $(@D)
@@ -209,7 +209,7 @@ $(BUILD_DIR)/dlls/msgina.dll: dlls/msgina/msgina.c dlls/msgina/gui.c \
 
 $(BUILD_DIR)/win32/w32k/win32k.dll: win32/w32k/w32k.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic -o $@ $<
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic,--export-dynamic -o $@ $<
 
 $(BUILD_DIR)/drivers/serial.sys: drivers/serial/serial.c drivers/module_entry.c
 	@mkdir -p $(@D)

@@ -69,6 +69,8 @@ KERNEL_CORE_SRCS := \
 	kernel/io/io.c \
 	kernel/io/service.c \
 	kernel/io/wudf_transport.c \
+	compat/jpeg/picojpeg.c \
+	compat/jpeg/jpeg_image.c \
 	kernel/core/ke.c \
 	kernel/loader/peloader.c \
 	kernel/core/kexports.c \

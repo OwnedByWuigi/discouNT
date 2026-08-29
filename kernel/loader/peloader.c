@@ -5,11 +5,15 @@
 #include "serial.h"
 #include "cdfs.h"
 #include "core/kexports.h"
+#include "io/driver.h"
 
 // DLL list
 static LOADED_DLL *dll_list = 0;
 static char pe_last_error[256];
 static const char *pe_current_loading_dll = 0;
+static char pe_loading_stack[16][128];
+static uint32_t pe_loading_depth = 0;
+static int pe_loading_driver = 0;
 
 static void *PeGetELFProcAddress(void *elf_base, const char *func_name);
 static void *PeGetELF64ProcAddress(void *elf_base, const char *func_name);
@@ -420,7 +424,7 @@ static void *PeLoadELF64(void *image_data, uint32_t size) {
                         if (syms[si].value >= base) sym = (uintptr_t)image_base + (syms[si].value - base);
                         else sym = (uintptr_t)image_base + syms[si].value;
                     } else if (si < symcount && syms[si].name) {
-                        void *resolved = KernelResolveSymbol(strtab + syms[si].name);
+                        void *resolved = PeResolveExternalSymbol(strtab + syms[si].name);
                         if (!resolved) {
                             SerialPutString("[ELF64] Unresolved external symbol: ");
                             SerialPutString(strtab + syms[si].name);
@@ -629,7 +633,10 @@ static void *PeLoadELF(void *image_data, uint32_t size) {
 
                     if (sym->value == 0 && strtab && sym->name != 0) {
                         const char *sym_name = strtab + sym->name;
-                        void *resolved = KernelResolveSymbol(sym_name);
+                        /* Native ELF imports do not carry a provider DLL.
+                           Resolve kernel exports first, then the canonical
+                           user DLL set (USER32, GDI32, etc.). */
+                        void *resolved = PeResolveExternalSymbol(sym_name);
                         if (resolved) {
                             sym_value = (uint32_t)resolved;
                         } else {
@@ -1064,23 +1071,51 @@ void *PeResolveExternalSymbol(const char *func_name) {
 
     if (!func_name || !*func_name) return 0;
 
+    /* Kernel drivers are not user DLLs.  Their undefined symbols are the
+       kernel/driver ABI and must not trigger recursive loading of Win32 DLLs. */
+    if (pe_loading_driver) {
+        addr = KernelResolveExport(func_name);
+        if (addr) return addr;
+        return DriverResolveSymbol(func_name);
+    }
+
+    /* Keep kernel/private platform exports available to native ELF images;
+       public Win32 imports are handled by the DLL search below. */
+    addr = KernelResolveExport(func_name);
+    if (addr) return addr;
+
     /* ELF imports lack PE's provider DLL field.  Prefer the canonical system
        DLL set so private compatibility exports in MSGINA (or any later DLL)
        cannot override User32/Kernel32 APIs merely because of load order. */
     addr = PeFindCoreDllSymbol(func_name, core_dlls, core_dll_count);
     if (addr) return addr;
+    addr = DriverResolveSymbol(func_name);
+    if (addr) return addr;
 
-    if (pe_current_loading_dll) {
-        return PeFindLoadedDllSymbol(func_name);
-    }
-
-    for (uint32_t i = 0; i < core_dll_count; i++) {
-        PeLoadDll(core_dlls[i]);
+    /* ELF imports do not identify their provider.  A DLL can therefore be
+       resolving an import while its provider has not been loaded yet.  Load
+       the canonical providers on demand, but do not recursively load the DLL
+       currently being constructed.  PeLoadDll temporarily changes this
+       global while loading a dependency, so preserve the outer context. */
+    {
+        const char *outer_loading_dll = pe_current_loading_dll;
+        for (uint32_t i = 0; i < core_dll_count; i++) {
+            if (outer_loading_dll && pe_name_equals_ignore_case(outer_loading_dll, core_dlls[i]))
+                continue;
+            PeLoadDll(core_dlls[i]);
+            pe_current_loading_dll = outer_loading_dll;
+        }
     }
 
     addr = PeFindCoreDllSymbol(func_name, core_dlls, core_dll_count);
     if (addr) return addr;
+    addr = DriverResolveSymbol(func_name);
+    if (addr) return addr;
     return PeFindLoadedDllSymbol(func_name);
+}
+
+void PeSetLoadingDriver(int loading) {
+    pe_loading_driver = loading ? 1 : 0;
 }
 
 const char *PeGetLastError(void) {
@@ -1313,6 +1348,9 @@ static void *PeGetELF64ProcAddress(void *elf_base, const char *func_name) {
     ELF64_SYM *symtab = 0;
     const char *strtab = 0;
     uint32_t count = 0;
+    ELF64_SYM *static_symtab = 0;
+    const char *static_strtab = 0;
+    uint32_t static_count = 0;
     uint16_t i;
     if (!elf || elf->shoff + (uint64_t)elf->shnum * elf->shentsize > (runtime ? runtime->source_size : 0xFFFFFFFFU)) return 0;
     sh = (ELF64_SHDR*)(file + elf->shoff);
@@ -1325,7 +1363,17 @@ static void *PeGetELF64ProcAddress(void *elf_base, const char *func_name) {
             count = (uint32_t)(sh[i].size / sizeof(ELF64_SYM));
         } else if (strcmp(name, ".dynstr") == 0) {
             strtab = (const char*)(file + sh[i].offset);
+        } else if (strcmp(name, ".symtab") == 0) {
+            static_symtab = (ELF64_SYM*)(file + sh[i].offset);
+            static_count = (uint32_t)(sh[i].size / sizeof(ELF64_SYM));
+        } else if (strcmp(name, ".strtab") == 0) {
+            static_strtab = (const char*)(file + sh[i].offset);
         }
+    }
+    if (!symtab || !strtab) {
+        symtab = static_symtab;
+        strtab = static_strtab;
+        count = static_count;
     }
     if (!symtab || !strtab) return 0;
     for (i = 0; i < count; i++) {
@@ -1353,6 +1401,19 @@ void *PeLoadDll(const char *dll_name) {
             return dll->image_base;
         }
         dll = dll->next;
+    }
+
+    /* A native ELF import has no provider name, so dependency discovery may
+       walk back into a DLL that is still being relocated.  Reject only that
+       in-progress cycle; already loaded modules continue to use the fast path
+       above. */
+    for (uint32_t loading = 0; loading < pe_loading_depth; loading++) {
+        if (pe_name_equals_ignore_case(pe_loading_stack[loading], dll_name)) {
+            SerialPutString("[PE] Dependency cycle avoided: ");
+            SerialPutString(dll_name);
+            SerialPutString("\r\n");
+            return 0;
+        }
     }
     
     // Build uppercase path
@@ -1407,9 +1468,17 @@ void *PeLoadDll(const char *dll_name) {
     SerialPutString(" bytes\r\n");
     
     // Load the DLL
+    if (pe_loading_depth >= 16) {
+        kfree(file_buf);
+        SerialPutString("[PE] Dependency nesting limit reached\r\n");
+        return 0;
+    }
+    strcpy(pe_loading_stack[pe_loading_depth++], dll_name);
+    const char *previous_loading_dll = pe_current_loading_dll;
     pe_current_loading_dll = dll_name;
     void *image = PeLoadImage(file_buf, file_size);
-    pe_current_loading_dll = 0;
+    pe_current_loading_dll = previous_loading_dll;
+    pe_loading_depth--;
     kfree(file_buf);
     
     if (!image) {

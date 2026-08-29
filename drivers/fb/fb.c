@@ -8,6 +8,7 @@
 #include "core/util.h"
 #include "cdfs.h"
 #include "ttf.h"
+#include "../../compat/jpeg/jpeg_image.h"
 
 #define BGA_IOPORT_INDEX      0x01CE
 #define BGA_IOPORT_DATA       0x01CF
@@ -54,7 +55,18 @@ int FbPaintWallpaper(int x, int y, int w, int h, const char *path) {
     int iw, ih, bpp, sx0, sy0, sw, sh, dx, dy;
     if (!path || w <= 0 || h <= 0) return 0;
     if (!wallpaper.pixels || strcmp(wallpaper.path, path) != 0) {
-        if (!CdfsReadFile(path, &data, &size) || size < 54 || data[0] != 'B' || data[1] != 'M') return 0;
+        if (!CdfsReadFile(path, &data, &size)) return 0;
+        if (size >= 2 && data[0] == 0xFF && data[1] == 0xD8) {
+            JPEG_IMAGE image;
+            if (!JpegDecodeImage(data, size, &image)) { kfree(data); return 0; }
+            if (wallpaper.pixels) kfree(wallpaper.pixels);
+            if (wallpaper_screen) { kfree(wallpaper_screen); wallpaper_screen = 0; }
+            wallpaper.pixels = image.pixels;
+            wallpaper.width = image.width; wallpaper.height = image.height;
+            { int i = 0; while (path[i] && i < (int)sizeof(wallpaper.path) - 1) { wallpaper.path[i] = path[i]; i++; } wallpaper.path[i] = 0; }
+            kfree(data);
+        } else {
+        if (size < 54 || data[0] != 'B' || data[1] != 'M') { kfree(data); return 0; }
         off = *(uint32_t *)(data + 10);
         iw = *(int32_t *)(data + 18); ih = *(int32_t *)(data + 22);
         bpp = *(uint16_t *)(data + 28);
@@ -78,6 +90,7 @@ int FbPaintWallpaper(int x, int y, int w, int h, const char *path) {
         wallpaper.width = iw; wallpaper.height = ih;
         { int i = 0; while (path[i] && i < (int)sizeof(wallpaper.path) - 1) { wallpaper.path[i] = path[i]; i++; } wallpaper.path[i] = 0; }
         kfree(data);
+        }
     }
     /* Render the filled image once at the screen size.  Redraws and window
      * drags then copy this cache instead of decoding/scaling every pixel. */

@@ -70,7 +70,9 @@ static int driver_load_one(const SERVICE_DESCRIPTOR *service, void *context) {
         return 0;
     }
 
+    PeSetLoadingDriver(1);
     image = PeLoadImage(file_buf, file_size);
+    PeSetLoadingDriver(0);
     kfree(file_buf);
     if (!image) {
         SerialPutString("[DRV] Load failed ");

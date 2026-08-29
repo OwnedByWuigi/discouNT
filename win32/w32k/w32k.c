@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "w32k.h"
+#include "../../compat/jpeg/jpeg_image.h"
 #include "fb.h"
 #include "mm/mm.h"
 #include "core/util.h"
@@ -109,7 +110,7 @@ static HANDLE find_window_at(int x, int y);
 static void set_window_active(HANDLE hwnd);
 
 static void paint_desktop_area(int x, int y, int w, int h) {
-    if (!FbPaintWallpaper(x, y, w, h, "WEB/IMG0.BMP")) FbFillRect(x, y, w, h, DESKTOP_COLOR);
+    if (!FbPaintWallpaper(x, y, w, h, "WEB/IMG0.JPG")) FbFillRect(x, y, w, h, DESKTOP_COLOR);
 }
 
 static void raise_owned_windows(HANDLE owner) {

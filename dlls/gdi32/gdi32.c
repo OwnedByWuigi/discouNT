@@ -2,6 +2,7 @@
 #include <string.h>
 #include "windows.h"
 #include "icon.h"
+#include "../../compat/jpeg/jpeg_image.h"
 
 extern void *kmalloc(uint32_t size);
 extern void kfree(void *ptr);
@@ -143,26 +144,40 @@ HBITMAP GdiCreateBitmapFromBmp(const void *data, uint32_t size) {
     return (HBITMAP)bmp;
 }
 
+static HBITMAP GdiCreateBitmapFromJpeg(const void *data, uint32_t size) {
+    JPEG_IMAGE image;
+    GDIBITMAP *bitmap;
+    if (!JpegDecodeImage(data, size, &image)) return 0;
+    bitmap = (GDIBITMAP *)kmalloc(sizeof(*bitmap));
+    if (!bitmap) { JpegFreeImage(&image); return 0; }
+    bitmap->hdr.kind = GDI_OBJ_BITMAP;
+    bitmap->width = image.width; bitmap->height = image.height;
+    bitmap->pixels = image.pixels;
+    /* GDI stores COLORREF as 0x00BBGGRR; the shared JPEG/framebuffer API
+       returns 0x00RRGGBB. */
+    for (uint32_t i = 0; i < (uint32_t)image.width * (uint32_t)image.height; i++) {
+        uint32_t rgb = bitmap->pixels[i];
+        bitmap->pixels[i] = ((rgb & 0x0000FFU) << 16) |
+                            (rgb & 0x00FF00U) |
+                            ((rgb & 0xFF0000U) >> 16);
+    }
+    return (HBITMAP)bitmap;
+}
+
 BOOL GdiPaintWallpaper(HDC hdc, const char *path) {
     static char loaded_path[128];
     static GDIBITMAP *wallpaper;
-    char decode_path[128];
     GDIDC *dc = (GDIDC *)hdc;
     uint8_t *data = 0;
     uint32_t size = 0;
     int x, y, out_w, out_h;
     if (!dc || !path) return FALSE;
     if (!wallpaper || strcmp(loaded_path, path) != 0) {
-        int i = 0;
-        while (path[i] && i < (int)sizeof(decode_path) - 1) { decode_path[i] = path[i]; i++; }
-        decode_path[i] = 0;
-        /* JPEG/PNG files are retained in Web/, but their BMP companion is
-         * what the small native renderer can decode. */
-        if (i >= 4 && decode_path[i - 4] == '.') {
-            decode_path[i - 3] = 'B'; decode_path[i - 2] = 'M'; decode_path[i - 1] = 'P';
-        }
-        if (!CdfsReadFile(decode_path, &data, &size)) return FALSE;
-        wallpaper = (GDIBITMAP *)GdiCreateBitmapFromBmp(data, size);
+        if (!CdfsReadFile(path, &data, &size)) return FALSE;
+        if (size >= 2 && data[0] == 0xFF && data[1] == 0xD8)
+            wallpaper = (GDIBITMAP *)GdiCreateBitmapFromJpeg(data, size);
+        else
+            wallpaper = (GDIBITMAP *)GdiCreateBitmapFromBmp(data, size);
         kfree(data);
         if (!wallpaper) return FALSE;
         { int i = 0; while (path[i] && i < (int)sizeof(loaded_path) - 1) { loaded_path[i] = path[i]; i++; } loaded_path[i] = 0; }

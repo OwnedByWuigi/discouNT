@@ -2,7 +2,6 @@
 import os
 import shutil
 import sys
-from PIL import Image
 
 out_dir = sys.argv[1]
 for source in sys.argv[2:]:
@@ -10,11 +9,12 @@ for source in sys.argv[2:]:
         continue
     name = os.path.basename(source)
     shutil.copyfile(source, os.path.join(out_dir, name))
+    # Keep the source image intact.  The framebuffer/GDI wallpaper loaders
+    # decode JPEG directly at runtime; no generated BMP companion is needed.
     root, ext = os.path.splitext(name)
-    if ext.lower() in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-        try:
-            Image.open(source).convert("RGB").save(os.path.join(out_dir, root + ".bmp"), "BMP")
-        except Exception as error:
-            print("warning: could not convert wallpaper %s: %s" % (source, error), file=sys.stderr)
+    if ext.lower() in (".jpg", ".jpeg"):
+        stale_bmp = os.path.join(out_dir, root + ".bmp")
+        if os.path.exists(stale_bmp):
+            os.remove(stale_bmp)
 with open(os.path.join(out_dir, ".stamp"), "w"):
     pass
