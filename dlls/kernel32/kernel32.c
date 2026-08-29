@@ -40,9 +40,39 @@ BOOL WINAPI GlobalMemoryStatusEx(void *status) {
     return TRUE;
 }
 int WINAPI GetLocaleInfoW(LCID locale,DWORD type,LPWSTR b,int n) { static const WCHAR s[] = L"English"; int i=0; (void)locale;(void)type; if(!b||n<=0)return 0; while(i+1<n&&s[i]){b[i]=s[i];i++;}b[i]=0;return i+1; }
-BOOL WINAPI EnumProcesses(DWORD *p,DWORD bytes,DWORD *needed) { (void)p;(void)bytes; if(needed)*needed=0; return TRUE; }
-BOOL WINAPI EnumProcessModules(HANDLE p,HMODULE *m,DWORD bytes,DWORD *needed) { (void)p;if(needed)*needed=0;if(m&&bytes>=sizeof(HMODULE)){*m=GetModuleHandleW(NULL);if(needed)*needed=sizeof(HMODULE);return TRUE;}return FALSE; }
-DWORD WINAPI GetModuleBaseNameW(HANDLE p,HMODULE m,LPWSTR b,DWORD n) { (void)p;(void)m;if(!b||!n)return 0;b[0]=L'K';if(n>1)b[1]=0;return 1; }
+static const DWORD k32_process_ids[] = {0, 2, 3};
+static DWORD k32_copy_process_name(LPWSTR dst, DWORD capacity, DWORD pid) {
+    const char *name;
+    DWORD i = 0;
+    if (!dst || !capacity) return 0;
+    if (pid == 0) name = "System";
+    else if (pid == 2) name = "CMD.EXE";
+    else if (pid == 3) name = "TASKMGR.EXE";
+    else return 0;
+    while (name[i] && i + 1 < capacity) { dst[i] = (WCHAR)name[i]; i++; }
+    dst[i] = 0;
+    return i;
+}
+BOOL WINAPI EnumProcesses(DWORD *p,DWORD bytes,DWORD *needed) {
+    DWORD count = sizeof(k32_process_ids) / sizeof(k32_process_ids[0]);
+    DWORD copy = bytes / sizeof(DWORD), i;
+    if (needed) *needed = count * sizeof(DWORD);
+    if (!p && bytes) return FALSE;
+    if (copy > count) copy = count;
+    for (i = 0; i < copy; i++) p[i] = k32_process_ids[i];
+    return TRUE;
+}
+BOOL WINAPI EnumProcessModules(HANDLE p,HMODULE *m,DWORD bytes,DWORD *needed) {
+    DWORD pid = (DWORD)(uintptr_t)p;
+    if (needed) *needed = sizeof(HMODULE);
+    if (!m || bytes < sizeof(HMODULE) || (pid != 0 && pid != 2 && pid != 3)) return FALSE;
+    m[0] = (HMODULE)(uintptr_t)0x00400000;
+    return TRUE;
+}
+DWORD WINAPI GetModuleBaseNameW(HANDLE p,HMODULE m,LPWSTR b,DWORD n) {
+    (void)m;
+    return k32_copy_process_name(b, n, (DWORD)(uintptr_t)p);
+}
 DWORD WINAPI GetFileVersionInfoSizeW(LPCWSTR file, DWORD *handle) { (void)file; if(handle)*handle=0; return 0; }
 BOOL WINAPI GetFileVersionInfoW(LPCWSTR file,DWORD handle,DWORD len,LPVOID data) { (void)file;(void)handle;(void)len;(void)data; return FALSE; }
 BOOL WINAPI VerQueryValueW(LPCVOID block,LPCWSTR sub,LPVOID *value,UINT *len) { (void)block;(void)sub;if(value)*value=0;if(len)*len=0;return FALSE; }
@@ -595,7 +625,7 @@ BOOL CloseHandle(HANDLE hObject) {
 }
 
 DWORD GetCurrentProcessId(void) {
-    return 1;
+    return 3;
 }
 
 DWORD GetCurrentThreadId(void) { return 1; }
@@ -608,7 +638,9 @@ HANDLE GetCurrentProcess(void) {
 HANDLE OpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId) {
     (void)dwDesiredAccess;
     (void)bInheritHandle;
-    return (HANDLE)(uintptr_t)(dwProcessId ? dwProcessId : 1);
+    if (dwProcessId == 0 || dwProcessId == 2 || dwProcessId == 3)
+        return (HANDLE)(uintptr_t)dwProcessId;
+    return NULL;
 }
 
 BOOL TerminateProcess(HANDLE hProcess, UINT uExitCode) {

@@ -52,7 +52,7 @@ static const uint8_t *u32_get_embedded_blob(HINSTANCE hInstance, const char *sec
 #define MAX_U32_ICONS 64
 #define MAX_U32_QUIT_STATES 32
 #define MAX_LV_COLUMNS 32
-#define MAX_LV_ITEMS 256
+#define MAX_LV_ITEMS 64
 #define MAX_TAB_ITEMS 16
 #define U32_FRAME_THICKNESS 2
 #define U32_EDGE_THICKNESS 1
@@ -117,6 +117,7 @@ typedef struct _U32_WINDOW {
     HMENU menu;
     HMENU popup_menu;
     HWND header_hwnd;
+    HWND header_owner;
     HWND menu_owner;
     int active_menu_index;
     int hot_index;
@@ -325,6 +326,7 @@ static void u32_scroll_command(U32_WINDOW *win, int bar, int code) {
 
 typedef struct _U32_LISTVIEW_DATA {
     WCHAR columns[MAX_LV_COLUMNS][64];
+    int column_widths[MAX_LV_COLUMNS];
     WCHAR items[MAX_LV_ITEMS][MAX_LV_COLUMNS][64];
 } U32_LISTVIEW_DATA;
 
@@ -446,12 +448,37 @@ static UINT u32_resource_id(LPCWSTR ptr);
 #ifndef SIZE_RESTORED
 #define SIZE_RESTORED      0
 #endif
+#ifndef HDM_INSERTITEMW
+#define HDM_INSERTITEMW     (HDM_FIRST + 10)
+#endif
 
 static int u32_wstrlen(LPCWSTR s) {
     int n = 0;
     if (!s) return 0;
     while (s[n]) n++;
     return n;
+}
+
+/* Keep tab hit-testing and painting in sync while allowing longer labels
+ * (for example Task Manager's "Applications") to remain readable. */
+static int u32_tab_width(const U32_WINDOW *win, int index) {
+    int width;
+    if (!win || index < 0 || index >= win->tab_count) return 76;
+    width = 12 + (u32_wstrlen(win->tab_text[index]) * 8);
+    if (width < 76) width = 76;
+    if (width > 140) width = 140;
+    return width;
+}
+
+static int u32_tab_at(const U32_WINDOW *win, int x) {
+    int i, tx = 6;
+    if (!win || x < tx) return -1;
+    for (i = 0; i < win->tab_count; i++) {
+        int width = u32_tab_width(win, i);
+        if (x < tx + width) return i;
+        tx += width;
+    }
+    return -1;
 }
 
 static void u32_wstrcpy(WCHAR *dst, LPCWSTR src, int max_chars) {
@@ -1835,42 +1862,42 @@ static const U32_TEMPLATE_CONTROL u32_dlg_133_controls[] = {
 };
 
 static const U32_TEMPLATE_CONTROL u32_dlg_134_controls[] = {
-    {L"Button", L"CPU usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | WS_TABSTOP, 0, 1043, 5, 5, 60, 54},
-    {L"Button", L"Mem usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1044, 5, 63, 60, 54},
-    {L"Button", L"Totals", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1037, 5, 122, 111, 39},
-    {L"Button", L"Commit charge (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1038, 5, 166, 111, 39},
-    {L"Button", L"Physical memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1040, 126, 122, 116, 39},
-    {L"Button", L"Kernel memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1039, 126, 166, 116, 39},
-    {L"Static", L"Handles", WS_CHILD | WS_VISIBLE, 0, 1060, 12, 131, 43, 8},
-    {L"Static", L"Threads", WS_CHILD | WS_VISIBLE, 0, 1061, 12, 140, 43, 8},
-    {L"Static", L"Processes", WS_CHILD | WS_VISIBLE, 0, 1062, 12, 149, 43, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 65, 130, 45, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 65, 140, 45, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 65, 150, 45, 10},
-    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1063, 12, 175, 43, 8},
-    {L"Static", L"Limit", WS_CHILD | WS_VISIBLE, 0, 1064, 12, 184, 43, 8},
-    {L"Static", L"Peak", WS_CHILD | WS_VISIBLE, 0, 1065, 12, 193, 43, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 65, 173, 45, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 65, 184, 45, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 65, 195, 45, 10},
-    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1066, 132, 131, 53, 8},
-    {L"Static", L"Available", WS_CHILD | WS_VISIBLE, 0, 1067, 132, 140, 53, 8},
-    {L"Static", L"System Cache", WS_CHILD | WS_VISIBLE, 0, 1068, 132, 149, 53, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 185, 130, 48, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 185, 140, 48, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 185, 150, 48, 10},
-    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1069, 132, 174, 53, 8},
-    {L"Static", L"Paged", WS_CHILD | WS_VISIBLE, 0, 1070, 132, 184, 53, 8},
-    {L"Static", L"Nonpaged", WS_CHILD | WS_VISIBLE, 0, 1071, 132, 193, 53, 8},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 185, 173, 48, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 185, 184, 48, 10},
-    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 185, 195, 48, 10},
-    {L"Button", L"CPU usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1045, 74, 5, 168, 54},
-    {L"Button", L"Memory usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1046, 74, 63, 168, 54},
-    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1047, 12, 17, 47, 37},
-    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1048, 12, 75, 47, 37},
-    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1050, 81, 17, 153, 37},
-    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1049, 81, 75, 153, 37},
+    {L"Button", L"CPU usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | WS_TABSTOP, 0, 1043, 5, 5, 100, 70},
+    {L"Button", L"Mem usage", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1044, 5, 80, 100, 70},
+    {L"Button", L"Totals", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1037, 5, 160, 235, 78},
+    {L"Button", L"Commit charge (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1038, 5, 245, 235, 78},
+    {L"Button", L"Physical memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1040, 250, 160, 240, 78},
+    {L"Button", L"Kernel memory (K)", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1039, 250, 245, 240, 78},
+    {L"Static", L"Handles", WS_CHILD | WS_VISIBLE, 0, 1060, 12, 177, 80, 10},
+    {L"Static", L"Threads", WS_CHILD | WS_VISIBLE, 0, 1061, 12, 195, 80, 10},
+    {L"Static", L"Processes", WS_CHILD | WS_VISIBLE, 0, 1062, 12, 213, 80, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1024, 100, 174, 120, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1026, 100, 192, 120, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1027, 100, 210, 120, 14},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1063, 12, 262, 80, 10},
+    {L"Static", L"Limit", WS_CHILD | WS_VISIBLE, 0, 1064, 12, 280, 80, 10},
+    {L"Static", L"Peak", WS_CHILD | WS_VISIBLE, 0, 1065, 12, 298, 80, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1028, 100, 259, 120, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1029, 100, 277, 120, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1030, 100, 295, 120, 14},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1066, 257, 177, 100, 10},
+    {L"Static", L"Available", WS_CHILD | WS_VISIBLE, 0, 1067, 257, 195, 100, 10},
+    {L"Static", L"System Cache", WS_CHILD | WS_VISIBLE, 0, 1068, 257, 213, 100, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1031, 365, 174, 115, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1032, 365, 192, 115, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1033, 365, 210, 115, 14},
+    {L"Static", L"Total", WS_CHILD | WS_VISIBLE, 0, 1069, 257, 262, 100, 10},
+    {L"Static", L"Paged", WS_CHILD | WS_VISIBLE, 0, 1070, 257, 280, 100, 10},
+    {L"Static", L"Nonpaged", WS_CHILD | WS_VISIBLE, 0, 1071, 257, 298, 100, 10},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1034, 365, 259, 115, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1035, 365, 277, 115, 14},
+    {L"Edit", L"", WS_CHILD | WS_VISIBLE, 0, 1036, 365, 295, 115, 14},
+    {L"Button", L"CPU usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1045, 115, 5, 375, 70},
+    {L"Button", L"Memory usage history", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 1046, 115, 80, 375, 70},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1047, 12, 17, 86, 52},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1048, 12, 92, 86, 52},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1050, 122, 17, 361, 52},
+    {L"Button", L"", WS_CHILD | WS_VISIBLE, 0, 1049, 122, 92, 361, 52},
 };
 
 static const U32_DIALOG_TEMPLATE_DEF u32_builtin_dialogs[] = {
@@ -2374,8 +2401,8 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         case U32_CTRL_TAB:
             SerialPutString("[USER32] tab down\r\n");
             if (y >= 0 && y < 28) {
-                int index = (x - 6) / 76;
-                if (x >= 6 && index >= 0 && index < win->tab_count) {
+                int index = u32_tab_at(win, x);
+                if (index >= 0) {
                     SerialPutString("[USER32] tab setcurfocus\r\n");
                     /* A mouse click changes the selected page.  CURFOCUS is
                      * only the keyboard-focus operation; using it here made
@@ -2468,8 +2495,8 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
          * a committed selection on release as well, so selection cannot be
          * lost merely because the down event was consumed by the parent. */
         if (win->ctrl_type == U32_CTRL_TAB && y >= 0 && y < 40) {
-            int index = (x - 6) / 76;
-            if (x >= 6 && index >= 0 && index < win->tab_count) {
+            int index = u32_tab_at(win, x);
+            if (index >= 0) {
                 SendMessageW(hWnd, TCM_SETCURSEL, (WPARAM)index, 0);
                 return 0;
             }
@@ -2571,16 +2598,18 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             Rectangle(hdc, 0, 18, rc.right, rc.bottom);
             if (win->tab_count > 0) {
                 int i;
+                int tx = 6;
                 for (i = 0; i < win->tab_count; i++) {
-                    int tx = 6 + (i * 76);
+                    int tab_width = u32_tab_width(win, i);
                     RECT tab_rc;
                     tab_rc.left = tx + 1;
                     tab_rc.top = 1;
-                    tab_rc.right = tx + 71;
+                    tab_rc.right = tx + tab_width - 1;
                     tab_rc.bottom = (i == win->tab_cur_sel) ? 19 : 17;
                     FillRect(hdc, &tab_rc, (HBRUSH)GetStockObject(0));
-                    Rectangle(hdc, tx, 0, tx + 72, (i == win->tab_cur_sel) ? 20 : 18);
+                    Rectangle(hdc, tx, 0, tx + tab_width, (i == win->tab_cur_sel) ? 20 : 18);
                     if (win->tab_text[i][0]) TextOutW(hdc, tx + 6, 5, win->tab_text[i], -1);
+                    tx += tab_width;
                 }
             }
             break;
@@ -2593,7 +2622,8 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 int row_top = 16;
                 int row_height = 14;
                 for (i = 0; i < win->header_count; i++) {
-                    int colw = rc.right / (win->header_count ? win->header_count : 1);
+                    int colw = data && data->column_widths[i] > 0 ? data->column_widths[i] :
+                               rc.right / (win->header_count ? win->header_count : 1);
                     if (colw < 40) colw = 40;
                     Rectangle(hdc, x, 0, x + colw, 16);
                     if (data) TextOutW(hdc, x + 2, 3, data->columns[i], -1);
@@ -2602,15 +2632,34 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 }
                 if (data) {
                     int row;
-                    for (row = 0; row < win->listview_item_count && row < 10; row++) {
+                    for (row = 0; row < win->listview_item_count && row < MAX_LV_ITEMS; row++) {
                         int col_x = 0;
                         int y = row_top + (row * row_height);
                         if (y + row_height > rc.bottom) break;
                         for (i = 0; i < win->header_count; i++) {
-                            int colw = rc.right / (win->header_count ? win->header_count : 1);
+                            int colw = data->column_widths[i] > 0 ? data->column_widths[i] :
+                                       rc.right / (win->header_count ? win->header_count : 1);
                             if (colw < 40) colw = 40;
+                            WCHAR owner_text[128];
+                            const WCHAR *cell_text = data->items[row][i];
+                            if ((win->style & LVS_OWNERDATA) && win->parent) {
+                                NMLVDISPINFOW display;
+                                memset(&display, 0, sizeof(display));
+                                display.hdr.hwndFrom = hWnd;
+                                display.hdr.idFrom = (UINT_PTR)win->id;
+                                display.hdr.code = LVN_GETDISPINFOW;
+                                display.item.mask = LVIF_TEXT;
+                                display.item.iItem = row;
+                                display.item.iSubItem = i;
+                                display.item.pszText = owner_text;
+                                display.item.cchTextMax = sizeof(owner_text) / sizeof(owner_text[0]);
+                                owner_text[0] = 0;
+                                SendMessageW(win->parent, WM_NOTIFY, (WPARAM)win->id,
+                                              (LPARAM)&display);
+                                cell_text = owner_text;
+                            }
                             Rectangle(hdc, col_x, y, col_x + colw, y + row_height);
-                            if (data->items[row][i][0]) TextOutW(hdc, col_x + 2, y + 3, data->items[row][i], -1);
+                            if (cell_text[0]) TextOutW(hdc, col_x + 2, y + 3, cell_text, -1);
                             col_x += colw;
                             if (col_x >= rc.right) break;
                         }
@@ -2672,31 +2721,14 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             Rectangle(hdc, 0, 0, rc.right, rc.bottom);
             if (win->edit_text) {
-                int i, line = 0, col = 0, first_line = win->scroll_pos[1] / 10;
-                int first_col = win->scroll_pos[0] / 8;
-                WCHAR text_line[128];
-                for (i = 0; i <= win->edit_len; i++) {
-                    WCHAR ch = (i < win->edit_len) ? win->edit_text[i] : 0;
-                    if (ch == L'\n' || ch == 0) {
-                        if (line >= first_line && line * 10 - win->scroll_pos[1] < rc.bottom) {
-                            if (first_col < col || col == 0) {
-                                int k = 0, p = 0;
-                                while (p < col && k < 127) {
-                                    if (p++ >= first_col) text_line[k++] = win->edit_text[i - col + p - 1];
-                                }
-                                text_line[k] = 0;
-                                /* Leave one pixel for the edit border.  The
-                                 * old y=0 placement put the 8px glyph row
-                                 * exactly under the border on small native
-                                 * controls, making valid values invisible. */
-                                TextOutW(hdc, 2, 1 + line * 10 - win->scroll_pos[1], text_line, -1);
-                            }
-                        }
-                        line++; col = 0;
-                    } else {
-                        col++;
-                    }
-                }
+                /* Most system edit controls used by the built-in dialogs
+                 * are single-line read-only value fields.  Drawing the
+                 * synchronized title directly avoids the old line-builder
+                 * dropping short values when the control is only a few
+                 * pixels high. */
+                SetTextColor(hdc, RGB(0, 0, 0));
+                SetBkMode(hdc, 1 /* TRANSPARENT */);
+                if (win->edit_len > 0) TextOutW(hdc, 3, 2, win->edit_text, -1);
             } else if (win->title[0]) TextOutW(hdc, 2, 0, win->title, -1);
             break;
         case U32_CTRL_COMBO:
@@ -3513,6 +3545,23 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 hdr.code = TCN_SELCHANGE;
                 SerialPutString("[USER32] send WM_NOTIFY TCN_SELCHANGE\r\n");
                 SendMessageW(win->parent, WM_NOTIFY, (WPARAM)win->id, (LPARAM)&hdr);
+                /* Page dialogs are sibling children of the tab control and
+                 * share one framebuffer. Repaint the complete dialog after
+                 * a selection change so pixels from the hidden page cannot
+                 * remain behind the newly selected page. */
+                /* One root repaint is sufficient: it clears the old page
+                 * and recursively paints the currently visible page. Marking
+                 * every descendant here caused repeated full redraws and
+                 * exposed intermediate framebuffer states. */
+                {
+                    HWND root = u32_get_root_window(win->parent);
+                    u32_mark_invalid(root);
+                    /* Queue the repaint until the native mouse callback has
+                     * returned. Painting synchronously here is reentrant
+                     * with USER32's paint guard and can leave the new page
+                     * marked clean without ever reaching the framebuffer. */
+                    PostMessageW(root, WM_PAINT, 0, 0);
+                }
             }
             u32_mark_invalid(hWnd);
         }
@@ -3557,7 +3606,10 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             win->header_hwnd = u32_create_placeholder_child(hWnd, 0xF001);
             {
                 U32_WINDOW *hdr = u32_lookup_window(win->header_hwnd);
-                if (hdr) hdr->ctrl_type = U32_CTRL_LISTVIEW;
+                if (hdr) {
+                    hdr->ctrl_type = U32_CTRL_LISTVIEW;
+                    hdr->header_owner = hWnd;
+                }
             }
         }
         return (LRESULT)win->header_hwnd;
@@ -3587,6 +3639,7 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         if (win->header_count < MAX_LV_COLUMNS) {
             const LVCOLUMNW *col = (const LVCOLUMNW*)lParam;
             if (col && col->pszText) u32_lv_copy_out(lv->columns[win->header_count], 64, col->pszText);
+            lv->column_widths[win->header_count] = col && col->cx > 0 ? col->cx : 80;
             win->header_count++;
             u32_mark_invalid(hWnd);
             return win->header_count - 1;
@@ -3604,6 +3657,14 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (win->listview_selected_count == 0) win->listview_selected_count = 1;
             u32_mark_invalid(hWnd);
             return index;
+        }
+        return -1;
+    case HDM_INSERTITEMW:
+        /* Task Manager inserts report columns into the header returned by
+         * LVM_GETHEADER. Keep the column data on the owning ListView. */
+        if (win->header_owner) {
+            return SendMessageW(win->header_owner, LVM_INSERTCOLUMNW,
+                                wParam, lParam);
         }
         return -1;
     case LVM_SETITEMW:
@@ -3705,7 +3766,7 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             int index = (int)wParam;
             lv = (U32_LISTVIEW_DATA*)win->listview_data;
             if (item && index >= 0 && index < win->header_count) {
-                item->cxy = 80;
+                item->cxy = lv ? lv->column_widths[index] : 80;
                 if (item->pszText) {
                     if (lv) u32_lv_copy_out(item->pszText, item->cchTextMax > 0 ? item->cchTextMax : 64,
                                             lv->columns[index]);
