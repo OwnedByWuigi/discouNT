@@ -109,10 +109,11 @@ BOOT_CDFS_OBJ := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 ISR_STUBS_OBJ := $(BUILD_DIR)/kernel/isr_stubs.o
 KERNEL_EXTRA_OBJS := $(BOOT_SERIAL_OBJ) $(BOOT_CDFS_OBJ) $(ISR_STUBS_OBJ)
 
-DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine dlls/msgina
+DLL_EXCLUDE_DIRS := dlls/user32wine dlls/gdi32wine dlls/msgina dlls/wininet
 DLL_DIRS := $(sort $(foreach d,$(wildcard dlls/*),$(if $(filter $(d),$(DLL_EXCLUDE_DIRS)),,$(if $(wildcard $(d)/*.c),$(d),))))
 DLL_NAMES := $(notdir $(DLL_DIRS))
 DLL_OUTPUTS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(DLL_NAMES)))
+WININET_DLL := $(BUILD_DIR)/dlls/wininet.dll
 MSGINA_DLL := $(BUILD_DIR)/dlls/msgina.dll
 MSGINA_LOGO_OBJ := $(BUILD_DIR)/dlls/msgina/reactos_logo.bmp.o
 MSGINA_BAR_OBJ := $(BUILD_DIR)/dlls/msgina/line.bmp.o
@@ -194,7 +195,7 @@ all: $(ISO_NAME)
 
 kernel: $(KERNEL_ELF)
 
-dlls: $(DLL_OUTPUTS) $(MSGINA_DLL) $(WIN32K_DLL)
+dlls: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(WIN32K_DLL)
 
 apps: $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
@@ -252,6 +253,11 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 endef
 
 $(foreach name,$(DLL_NAMES),$(eval $(call BUILD_DLL_template,$(name))))
+
+$(WININET_DLL): dlls/wininet/wininet_native.c include/win32/wininet.h $(KERNEL_ELF)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
+		-fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -o $@ $<
 
 # These files are included by user32.c rather than compiled as independent
 # translation units.  Keep the DLL target aware of them so menu/control
@@ -487,7 +493,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
@@ -499,7 +505,7 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHO
 	@rm -rf $(ISO_DIR)/APPS
 	@rm -f "$(DRIVERS_DIR)/WIN32K.SYS"
 	@cp "$(KERNEL_ELF)" "$(KERNEL_ISO_PATH)"
-	@for dll in $(DLL_OUTPUTS); do \
+	@for dll in $(DLL_OUTPUTS) $(WININET_DLL); do \
 		cp "$$dll" "$(SYSTEM32_DIR)/$$(basename "$$dll" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@cp "$(MSGINA_DLL)" "$(SYSTEM32_DIR)/MSGINA.DLL"

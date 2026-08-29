@@ -33,7 +33,7 @@ BOOT_SERIAL := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 
 .PHONY: all iso usb-image userspace clean
-NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox wudfrd
+NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox wudfrd wininet
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/umdfhost.exe \
@@ -106,6 +106,10 @@ $(BUILD_DIR)/dlls/%.dll: dlls/%/*.c
 $(BUILD_DIR)/dlls/dxdiagn.dll: dlls/dxdiagn/container.c dlls/dxdiagn/dxdiag_main.c dlls/dxdiagn/provider.c include/win32/wine/fil_data.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic,--export-dynamic -o $@ $^
+
+$(BUILD_DIR)/dlls/wininet.dll: dlls/wininet/wininet_native.c include/win32/wininet.h
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(USER_CFLAGS) -shared -Wl,-Bsymbolic,--export-dynamic -o $@ $<
 
 $(BUILD_DIR)/apps/cmd/cmd.exe: apps/cmd/cmd.c kernel/core/util.c kernel/core/version.h
 	@mkdir -p $(@D)
