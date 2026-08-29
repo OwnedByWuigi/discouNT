@@ -41,6 +41,17 @@ static int usb_read_iso_sector(uint32_t lba, uint8_t *buffer) {
     return IoCallDriver(usb_iso_device, &request) == IO_STATUS_SUCCESS;
 }
 
+static int usb_read_iso_sectors(uint32_t lba, uint8_t sectors, uint8_t *buffer) {
+    IO_REQUEST request;
+    if (!usb_iso_device) return 0;
+    memset(&request, 0, sizeof(request));
+    request.major_function = IO_MJ_READ;
+    request.buffer = buffer;
+    request.length = (uint32_t)sectors * CDFS_SECTOR_SIZE;
+    request.parameters.read_write.offset = (uint64_t)lba * CDFS_SECTOR_SIZE;
+    return IoCallDriver(usb_iso_device, &request) == IO_STATUS_SUCCESS;
+}
+
 static void ata_delay(void) {
     CpuRelax();
 }
@@ -484,22 +495,34 @@ int CdfsReadFile(const char *path, uint8_t **out_buffer, uint32_t *out_size) {
         SerialPutString("[CDFS] Out of memory!\r\n");
         return 0;
     }
-    memset(buffer, 0, alloc_size);
-    
     SerialPutString("[CDFS] Reading ");
     SerialPrintDec(size);
     SerialPutString(" bytes from LBA ");
     SerialPrintDec(lba);
     SerialPutString("...\r\n");
     
-    for (uint32_t i = 0; i < sectors; i++) {
-        if (!CdfsReadSector(lba + i, buffer + i * 2048)) {
+    /* Whole-file reads are common for executables, fonts, and audio. Send
+     * large contiguous transfers instead of repeatedly entering the
+     * one-sector/cache path. ATAPI READ(12) carries the transfer count in a
+     * byte, so split at 255 sectors. */
+    uint32_t done = 0;
+    while (done < sectors) {
+        uint32_t remaining = sectors - done;
+        uint8_t batch = remaining > 255 ? 255 : (uint8_t)remaining;
+        int ok;
+        if (usb_iso_device)
+            ok = usb_read_iso_sectors(lba + done, batch, buffer + done * CDFS_SECTOR_SIZE);
+        else
+            ok = atapi_read_sectors_internal(ide_base, ide_slave, lba + done,
+                                              buffer + done * CDFS_SECTOR_SIZE, batch);
+        if (!ok) {
             SerialPutString("[CDFS] Read error at sector ");
-            SerialPrintDec(lba + i);
+            SerialPrintDec(lba + done);
             SerialPutString("\r\n");
             kfree(buffer);
             return 0;
         }
+        done += batch;
     }
     
     *out_buffer = buffer;
