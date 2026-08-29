@@ -43,6 +43,7 @@ CPPFLAGS := \
 	-Iwin32/csrss
 
 WDF_PLATFORM_CPPFLAGS := -Icompat/wdf/platform/include
+UMDFHOST_APP := $(BUILD_DIR)/apps/umdfhost.exe
 
 CFLAGS := \
 	-ffreestanding \
@@ -67,6 +68,7 @@ KERNEL_CORE_SRCS := \
 	kernel/ob/object.c \
 	kernel/io/io.c \
 	kernel/io/service.c \
+	kernel/io/wudf_transport.c \
 	kernel/core/ke.c \
 	kernel/loader/peloader.c \
 	kernel/core/kexports.c \
@@ -292,6 +294,10 @@ $(BUILD_DIR)/apps/%.exe: apps/%.c
 		-o $@ \
 		$< kernel/core/util.c
 
+$(UMDFHOST_APP): apps/umdfhost.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,main -o $@ $<
+
 $(CMD_APP): apps/cmd/cmd.c kernel/core/version.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
@@ -479,7 +485,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
@@ -509,6 +515,7 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(MSGINA_DLL) $(BUILT_APP_FILES) $(WAVPLA
 		cp "$(CMD_APP)" "$(SYSTEM32_DIR)/CMD.EXE"; \
 	fi
 	@if [ -f "$(WAVPLAY_APP)" ]; then cp "$(WAVPLAY_APP)" "$(SYSTEM32_DIR)/WAVPLAY.EXE"; fi
+	@if [ -f "$(UMDFHOST_APP)" ]; then cp "$(UMDFHOST_APP)" "$(SYSTEM32_DIR)/UMDFHOST.EXE"; fi
 	@mkdir -p "$(MEDIA_DIR)"
 	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
 	@if [ -f "$(CONTROL_APP)" ]; then \

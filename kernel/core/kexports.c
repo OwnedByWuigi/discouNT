@@ -21,6 +21,7 @@
 #include "loader/peloader.h"
 #include "core/bugcheck.h"
 #include "audio/audio_service.h"
+#include "wdf_transport.h"
 
 extern void CsrssGinaShowLogon(void);
 extern int CsrssExecuteImage(const char *path);
@@ -240,6 +241,12 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"CsrssGinaShowLogon", CsrssGinaShowLogon},
     {"CsrssExecuteImage", CsrssExecuteImage},
     {"CsrssShutdownSystem", CsrssShutdownSystem},
+    {"WudfTransportRegisterEndpoint", WudfTransportRegisterEndpoint},
+    {"WudfTransportUnregisterEndpoint", WudfTransportUnregisterEndpoint},
+    {"WudfTransportSubmit", WudfTransportSubmit},
+    {"WudfTransportPoll", WudfTransportPoll},
+    {"WudfTransportComplete", WudfTransportComplete},
+    {"WudfTransportGetCompletion", WudfTransportGetCompletion},
 };
 
 void *KernelResolveSymbol(const char *name) {
