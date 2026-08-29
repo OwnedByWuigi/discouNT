@@ -14,6 +14,7 @@ extern void IoSetPlatformDispatch(void *driver, uint32_t major_function,
 
 #define WDF_OBJECT_MAGIC 0x5744464Fu
 #define WDF_FUNCTION_COUNT 512u
+#define WDF_OBJECT_DESTROYING 0x0001u
 
 enum wdf_object_type {
     WdfObjectDriver = 1,
@@ -51,6 +52,7 @@ struct wdf_driver {
     void *driver_unload;
     void *io_driver;
     BOOLEAN owns_wdm_driver;
+    BOOLEAN unload_called;
     WDF_DRIVER_GLOBALS globals;
 };
 
@@ -135,6 +137,7 @@ static wdf_device *wdf_devices;
 static uint32_t wdf_device_number;
 static int wdf_io_dispatch(void *io_device, void *io_request);
 static NTSTATUS NTAPI wdf_wdm_dispatch(PDEVICE_OBJECT device_object, PIRP irp);
+static void NTAPI wdf_wdm_unload(PDRIVER_OBJECT driver_object);
 
 static void wdf_link_child(wdf_object *parent, wdf_object *child)
 {
@@ -211,6 +214,17 @@ static void wdf_destroy_object(wdf_object *object)
     wdf_object *child;
     if (object == NULL) {
         return;
+    }
+    if ((object->flags & WDF_OBJECT_DESTROYING) != 0) {
+        return;
+    }
+    object->flags |= WDF_OBJECT_DESTROYING;
+    if (object->type == WdfObjectDriver) {
+        wdf_driver *driver = (wdf_driver *)object;
+        if (!driver->unload_called && driver->driver_unload != NULL) {
+            driver->unload_called = TRUE;
+            ((void (*)(WDFCORE_HANDLE))driver->driver_unload)(driver);
+        }
     }
     while ((child = object->first_child) != NULL) {
         wdf_destroy_object(child);
@@ -298,6 +312,8 @@ static NTSTATUS NTAPI wdf_driver_create(PWDF_DRIVER_GLOBALS globals,
     }
     {
         uint32_t major;
+        driver->wdm_driver->DriverStart = driver;
+        driver->wdm_driver->DriverUnload = wdf_wdm_unload;
         for (major = 0; major < 28; ++major) {
             driver->wdm_driver->MajorFunction[major] = wdf_wdm_dispatch;
         }
@@ -660,6 +676,16 @@ static NTSTATUS NTAPI wdf_wdm_dispatch(PDEVICE_OBJECT device_object, PIRP irp)
     }
     status = wdf_dispatch_wdm(device, irp, input);
     return status == 0 ? STATUS_SUCCESS : irp->IoStatus.Status;
+}
+
+static void NTAPI wdf_wdm_unload(PDRIVER_OBJECT driver_object)
+{
+    wdf_driver *driver;
+    if (driver_object == NULL || driver_object->DriverStart == NULL) return;
+    driver = (wdf_driver *)driver_object->DriverStart;
+    if (wdf_from_handle(driver) == &driver->object) {
+        wdf_destroy_object(&driver->object);
+    }
 }
 
 static int wdf_io_dispatch(void *io_device, void *io_request)
