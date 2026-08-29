@@ -50,6 +50,7 @@ struct wdf_driver {
     void *device_add;
     void *driver_unload;
     void *io_driver;
+    BOOLEAN owns_wdm_driver;
     WDF_DRIVER_GLOBALS globals;
 };
 
@@ -77,6 +78,7 @@ typedef struct {
     void *io_target;
     NTSTATUS status;
     void *io_request;
+    PIRP wdm_irp;
 } wdf_request;
 
 typedef struct {
@@ -132,6 +134,7 @@ typedef struct {
 static wdf_device *wdf_devices;
 static uint32_t wdf_device_number;
 static int wdf_io_dispatch(void *io_device, void *io_request);
+static NTSTATUS NTAPI wdf_wdm_dispatch(PDEVICE_OBJECT device_object, PIRP irp);
 
 static void wdf_link_child(wdf_object *parent, wdf_object *child)
 {
@@ -230,9 +233,18 @@ static void wdf_destroy_object(wdf_object *object)
         while (*link != NULL && *link != device) link = &(*link)->next_global;
         if (*link == device) *link = device->next_global;
         if (device->io_device != NULL) IoDeleteDevice(device->io_device);
+        if (device->driver != NULL && device->driver->wdm_driver != NULL) {
+            PDEVICE_OBJECT *wdm_link = &device->driver->wdm_driver->DeviceObject;
+            while (*wdm_link != NULL && *wdm_link != device->wdm_device) {
+                wdm_link = &(*wdm_link)->NextDevice;
+            }
+            if (*wdm_link == device->wdm_device) *wdm_link = device->wdm_device->NextDevice;
+        }
+        if (device->wdm_device != NULL) kfree(device->wdm_device);
     } else if (object->type == WdfObjectDriver) {
         wdf_driver *driver = (wdf_driver *)object;
         if (driver->io_driver != NULL) IoDeleteDriver(driver->io_driver);
+        if (driver->owns_wdm_driver && driver->wdm_driver != NULL) kfree(driver->wdm_driver);
     }
     wdf_unlink_child(object);
     if (object->context != NULL) {
@@ -266,7 +278,7 @@ static NTSTATUS NTAPI wdf_driver_create(PWDF_DRIVER_GLOBALS globals,
                                         WDFCORE_HANDLE *driver_handle)
 {
     wdf_driver *driver;
-    if (driver_object == NULL || config == NULL || driver_handle == NULL) {
+    if (config == NULL || driver_handle == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
     driver = (wdf_driver *)wdf_new_object(WdfObjectDriver, sizeof(*driver), attributes);
@@ -274,6 +286,22 @@ static NTSTATUS NTAPI wdf_driver_create(PWDF_DRIVER_GLOBALS globals,
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     driver->wdm_driver = driver_object;
+    if (driver->wdm_driver == NULL) {
+        driver->wdm_driver = (PDRIVER_OBJECT)kmalloc(sizeof(DRIVER_OBJECT));
+        if (driver->wdm_driver == NULL) {
+            wdf_destroy_object(&driver->object);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(driver->wdm_driver, sizeof(DRIVER_OBJECT));
+        driver->wdm_driver->Size = (SHORT)sizeof(DRIVER_OBJECT);
+        driver->owns_wdm_driver = TRUE;
+    }
+    {
+        uint32_t major;
+        for (major = 0; major < 28; ++major) {
+            driver->wdm_driver->MajorFunction[major] = wdf_wdm_dispatch;
+        }
+    }
     driver->registry_path = (PUNICODE_STRING)registry_path;
     driver->device_add = config->EvtDriverDeviceAdd;
     driver->driver_unload = config->EvtDriverUnload;
@@ -316,12 +344,27 @@ static NTSTATUS NTAPI wdf_device_create(PWDF_DRIVER_GLOBALS globals,
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     device->driver = driver;
+    device->wdm_device = (PDEVICE_OBJECT)kmalloc(sizeof(DEVICE_OBJECT));
+    if (device->wdm_device == NULL) {
+        wdf_destroy_object(&device->object);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(device->wdm_device, sizeof(DEVICE_OBJECT));
+    device->wdm_device->Size = (USHORT)sizeof(DEVICE_OBJECT);
+    device->wdm_device->DriverObject = driver != NULL ? driver->wdm_driver : NULL;
+    device->wdm_device->DeviceExtension = device;
+    if (driver != NULL && driver->wdm_driver != NULL) {
+        device->wdm_device->NextDevice = driver->wdm_driver->DeviceObject;
+        driver->wdm_driver->DeviceObject = device->wdm_device;
+    }
     name[0] = 'W'; name[1] = 'd'; name[2] = 'f'; name[3] = 'D';
     name[4] = 'e'; name[5] = 'v'; name[6] = 'i'; name[7] = 'c';
     name[8] = 'e'; name[9] = '0'; name[10] = 0;
     name[9] = (char)('0' + (wdf_device_number++ % 10));
     device->io_device = IoCreateDevice(driver != NULL ? driver->io_driver : NULL, name, 0);
     if (device->io_device == NULL) {
+        kfree(device->wdm_device);
+        device->wdm_device = NULL;
         wdf_destroy_object(&device->object);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -549,19 +592,17 @@ static void NTAPI wdf_request_complete(PWDF_DRIVER_GLOBALS globals,
     }
 }
 
-static int wdf_io_dispatch(void *io_device, void *io_request)
+static int wdf_dispatch_wdm(wdf_device *device, PIRP irp, wdf_io_request *input)
 {
-    wdf_device *device = wdf_devices;
     wdf_queue *queue;
     wdf_request *request;
-    wdf_io_request *input = (wdf_io_request *)io_request;
 
-    while (device != NULL && device->io_device != io_device) device = device->next_global;
     queue = device != NULL ? device->default_queue : NULL;
     if (queue == NULL || input == NULL) return -3;
     request = (wdf_request *)wdf_new_object(WdfObjectRequest, sizeof(*request), NULL);
     if (request == NULL) return -4;
     request->io_request = input;
+    request->wdm_irp = irp;
     request->status = STATUS_SUCCESS;
     if (input->major_function == 2 && queue->evt_read != NULL) {
         ((void (*)(void *, void *, size_t))queue->evt_read)(queue, request, input->length);
@@ -576,9 +617,92 @@ static int wdf_io_dispatch(void *io_device, void *io_request)
     } else {
         request->status = STATUS_INVALID_DEVICE_REQUEST;
     }
+    if (irp != NULL) {
+        irp->IoStatus.Status = request->status;
+        irp->IoStatus.Information = input->io_status.information;
+    }
     input->io_status.status = request->status == STATUS_SUCCESS ? 0 : -3;
-    input->io_status.information = 0;
     wdf_destroy_object(&request->object);
+    return input->io_status.status;
+}
+
+static NTSTATUS NTAPI wdf_wdm_dispatch(PDEVICE_OBJECT device_object, PIRP irp)
+{
+    wdf_device *device = wdf_devices;
+    wdf_io_request local_input;
+    wdf_io_request *input;
+    IO_STACK_LOCATION *stack;
+    int status;
+
+    while (device != NULL && device->wdm_device != device_object) device = device->next_global;
+    if (device == NULL || irp == NULL || irp->CurrentStackLocation == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    input = (wdf_io_request *)irp->Tail;
+    if (input == NULL) {
+        stack = irp->CurrentStackLocation;
+        RtlZeroMemory(&local_input, sizeof(local_input));
+        local_input.buffer = irp->AssociatedIrp.UserBuffer;
+        local_input.length = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL
+            ? stack->Parameters.DeviceIoControl.OutputBufferLength
+            : (stack->MajorFunction == IRP_MJ_READ ? stack->Parameters.Read.Length : stack->Parameters.Write.Length);
+        if (stack->MajorFunction == IRP_MJ_READ) local_input.major_function = 2;
+        else if (stack->MajorFunction == IRP_MJ_WRITE) local_input.major_function = 3;
+        else if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
+            local_input.major_function = 4;
+            local_input.parameters.device_control.code = stack->Parameters.DeviceIoControl.IoControlCode;
+            local_input.parameters.device_control.input_buffer = stack->Parameters.DeviceIoControl.Type3InputBuffer;
+            local_input.parameters.device_control.input_length = stack->Parameters.DeviceIoControl.InputBufferLength;
+        } else {
+            local_input.major_function = stack->MajorFunction == IRP_MJ_CLOSE ? 1 : 0;
+        }
+        input = &local_input;
+    }
+    status = wdf_dispatch_wdm(device, irp, input);
+    return status == 0 ? STATUS_SUCCESS : irp->IoStatus.Status;
+}
+
+static int wdf_io_dispatch(void *io_device, void *io_request)
+{
+    wdf_device *device = wdf_devices;
+    wdf_io_request *input = (wdf_io_request *)io_request;
+    IRP irp;
+    IO_STACK_LOCATION stack;
+    UCHAR major;
+    NTSTATUS status;
+
+    while (device != NULL && device->io_device != io_device) device = device->next_global;
+    if (device == NULL || input == NULL || device->wdm_device == NULL) return -3;
+    RtlZeroMemory(&irp, sizeof(irp));
+    RtlZeroMemory(&stack, sizeof(stack));
+    irp.Type = (CSHORT)0x0006;
+    irp.Size = (USHORT)sizeof(irp);
+    irp.AssociatedIrp.UserBuffer = input->buffer;
+    irp.Tail = input;
+    irp.CurrentStackLocation = &stack;
+    stack.DeviceObject = device->wdm_device;
+    if (input->major_function == 2) major = IRP_MJ_READ;
+    else if (input->major_function == 3) major = IRP_MJ_WRITE;
+    else if (input->major_function == 4) major = IRP_MJ_DEVICE_CONTROL;
+    else if (input->major_function == 1) major = IRP_MJ_CLOSE;
+    else major = IRP_MJ_CREATE;
+    stack.MajorFunction = major;
+    if (major == IRP_MJ_READ) {
+        stack.Parameters.Read.Length = input->length;
+        stack.Parameters.Read.ByteOffset.QuadPart = input->parameters.read_write.offset;
+    } else if (major == IRP_MJ_WRITE) {
+        stack.Parameters.Write.Length = input->length;
+        stack.Parameters.Write.ByteOffset.QuadPart = input->parameters.read_write.offset;
+    } else if (major == IRP_MJ_DEVICE_CONTROL) {
+        stack.Parameters.DeviceIoControl.IoControlCode = input->parameters.device_control.code;
+        stack.Parameters.DeviceIoControl.Type3InputBuffer = (PVOID)input->parameters.device_control.input_buffer;
+        stack.Parameters.DeviceIoControl.InputBufferLength = input->parameters.device_control.input_length;
+        stack.Parameters.DeviceIoControl.OutputBufferLength = input->length;
+    }
+    irp.IoStatus.Status = STATUS_SUCCESS;
+    status = device->wdm_device->DriverObject->MajorFunction[major](device->wdm_device, &irp);
+    input->io_status.status = status == STATUS_SUCCESS ? 0 : -3;
+    input->io_status.information = (uint32_t)irp.IoStatus.Information;
     return input->io_status.status;
 }
 
