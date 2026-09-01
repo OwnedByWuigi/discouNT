@@ -169,6 +169,7 @@ FONT_DIR := $(SYSTEM32_DIR)/FONTS
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 MEDIA_FILES := $(wildcard media/audio/*)
 MEDIA_DIR := $(DISCOUNT_DIR)/Media
+REGISTRY_HIVES := $(wildcard system/registry/*)
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 IDE_SYS := $(BUILD_DIR)/drivers/ide/ide.sys
 AHCI_SYS := $(BUILD_DIR)/drivers/ahci/ahci.sys
@@ -495,12 +496,14 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(REGISTRY_HIVES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
 	@cp "$(PROGMAN_INI)" "$(SYSTEM32_DIR)/progman.ini"
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)
+	@mkdir -p $(SYSTEM32_DIR)/CONFIG
+	@for hive in $(REGISTRY_HIVES); do cp "$$hive" "$(SYSTEM32_DIR)/CONFIG/$$(basename "$$hive" | tr '[:lower:]' '[:upper:]')"; done
 	@for font in $(FONT_SOURCES); do cp "$$font" "$(FONT_DIR)/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; done
 	@rm -rf $(ISO_DIR)/APPS
 	@rm -f "$(DRIVERS_DIR)/WIN32K.SYS"

@@ -8,6 +8,7 @@ DISCOUNT_DIR := $(ISO_DIR)/DISCOUNT
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 MEDIA_FILES := $(wildcard media/audio/*)
 MEDIA_DIR := $(DISCOUNT_DIR)/Media
+REGISTRY_HIVES := $(wildcard system/registry/*)
 WALLPAPER_FILES := $(wildcard media/wallpaper/*)
 WEB_DIR := $(DISCOUNT_DIR)/Web
 WALLPAPER_STAMP := $(WEB_DIR)/.stamp
@@ -70,6 +71,7 @@ iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES) $(WALLPAPER_STAMP)
 	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
 	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/DRIVERS
 	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/FONTS
+	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/CONFIG
 	@mkdir -p $(MEDIA_DIR)
 	@mkdir -p $(WEB_DIR)
 	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
@@ -84,6 +86,9 @@ iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES) $(WALLPAPER_STAMP)
 	done
 	@for font in $(FONT_SOURCES); do \
 		cp "$$font" "$(DISCOUNT_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
+	done
+	@for hive in $(REGISTRY_HIVES); do \
+		cp "$$hive" "$(DISCOUNT_DIR)/SYSTEM32/CONFIG/$$(basename "$$hive" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	@rm -rf $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/Media $(ISO_DIR)/Web $(ISO_DIR)/APPS $(ISO_DIR)/Main.grp $(ISO_DIR)/progman.ini
