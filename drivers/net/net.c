@@ -645,7 +645,11 @@ static void send_udp_ipv4(const uint8_t src_ip[4], const uint8_t dst_ip[4], cons
     ip->checksum = 0;
     memcpy(ip->src, src_ip, 4);
     memcpy(ip->dst, dst_ip, 4);
-    ip->checksum = net_checksum(ip, sizeof(IPV4_HDR));
+    /* net_checksum() sums network-order words and returns the checksum in
+       network byte order.  Store it explicitly as wire order; assigning the
+       returned uint16_t directly would byte-swap it on our little-endian
+       targets. */
+    ip->checksum = bswap16(net_checksum(ip, sizeof(IPV4_HDR)));
     udp->src_port = bswap16(src_port);
     udp->dst_port = bswap16(dst_port);
     udp->length = bswap16(sizeof(UDP_HDR) + payload_len);
@@ -693,14 +697,14 @@ static void send_icmp_echo(const uint8_t target_ip[4], const uint8_t dst_mac[6],
     ip->checksum = 0;
     memcpy(ip->src, nic_ip, 4);
     memcpy(ip->dst, target_ip, 4);
-    ip->checksum = net_checksum(ip, sizeof(IPV4_HDR));
+    ip->checksum = bswap16(net_checksum(ip, sizeof(IPV4_HDR)));
     icmp->type = 8;
     icmp->code = 0;
     icmp->checksum = 0;
     icmp->identifier = bswap16(ping_identifier);
     icmp->sequence = bswap16(seq);
     for (int i = 0; i < (int)sizeof(icmp->payload); i++) icmp->payload[i] = (uint8_t)('A' + (i % 26));
-    icmp->checksum = net_checksum(icmp, sizeof(ICMP_ECHO_PKT));
+    icmp->checksum = bswap16(net_checksum(icmp, sizeof(ICMP_ECHO_PKT)));
     nic_send_raw(frame, frame_len < 60 ? 60 : frame_len);
 }
 
@@ -734,6 +738,8 @@ static void send_dhcp_packet(uint8_t msg_type, const uint8_t requested_ip[4], co
     if (requested_ip) { *opt++ = 50; *opt++ = 4; memcpy(opt, requested_ip, 4); opt += 4; }
     if (server_ip)    { *opt++ = 54; *opt++ = 4; memcpy(opt, server_ip, 4); opt += 4; }
     *opt++ = 255;
+    SerialPutString("[NET] DHCP send ");
+    SerialPutString(msg_type == 1 ? "DISCOVER\r\n" : "REQUEST\r\n");
     send_udp_ipv4(zero_ip, broadcast_ip, broadcast_mac, 68, 67, &pkt, sizeof(pkt), 64, (uint16_t)dhcp_xid);
 }
 
@@ -796,8 +802,15 @@ static void handle_ipv4(const uint8_t *frame, int len) {
             else if (code == 54 && olen >= 4) memcpy(dhcp_server_ip, opt, 4);
             opt += olen;
         }
-        if (msg_type == 2) { memcpy(dhcp_offer_ip, dhcp->yiaddr, 4); dhcp_offer_valid = 1; }
-        else if (msg_type == 5) { memcpy(dhcp_offer_ip, dhcp->yiaddr, 4); dhcp_ack_valid = 1; }
+        if (msg_type == 2) {
+            memcpy(dhcp_offer_ip, dhcp->yiaddr, 4);
+            dhcp_offer_valid = 1;
+            SerialPutString("[NET] DHCP OFFER received\r\n");
+        } else if (msg_type == 5) {
+            memcpy(dhcp_offer_ip, dhcp->yiaddr, 4);
+            dhcp_ack_valid = 1;
+            SerialPutString("[NET] DHCP ACK received\r\n");
+        }
     }
 }
 
@@ -859,17 +872,24 @@ void NetInit(void) {
     }
 
     dhcp_reset_offer_state();
-    send_dhcp_packet(1, 0, 0);
-    /* DHCP must not hold the boot/session-manager path hostage.  A failed
-       lease is already handled by the static fallback below. */
-    for (volatile int i = 0; i < 2000000 && !dhcp_offer_valid; i++) {
-        if ((i & 0x7FF) == 0) NetPoll();
-    }
-    if (dhcp_offer_valid) {
-        send_dhcp_packet(3, dhcp_offer_ip, dhcp_server_ip);
-        for (volatile int i = 0; i < 2000000 && !dhcp_ack_valid; i++) {
+    /* The first packet can be sent before QEMU's user-mode DHCP endpoint has
+       finished attaching the virtual NIC. Retry the complete exchange a few
+       times, but keep boot bounded if no DHCP server is present. */
+    for (int attempt = 0; attempt < 3 && !dhcp_ack_valid; attempt++) {
+        dhcp_offer_valid = 0;
+        send_dhcp_packet(1, 0, 0);
+        for (volatile int i = 0; i < 6000000 && !dhcp_offer_valid; i++) {
             if ((i & 0x7FF) == 0) NetPoll();
         }
+        if (!dhcp_offer_valid) {
+            SerialPutString("[NET] DHCP offer timeout\r\n");
+            continue;
+        }
+        send_dhcp_packet(3, dhcp_offer_ip, dhcp_server_ip);
+        for (volatile int i = 0; i < 6000000 && !dhcp_ack_valid; i++) {
+            if ((i & 0x7FF) == 0) NetPoll();
+        }
+        if (!dhcp_ack_valid) SerialPutString("[NET] DHCP ACK timeout\r\n");
     }
     if (dhcp_ack_valid) {
         ip_copy(nic_ip, dhcp_offer_ip);
