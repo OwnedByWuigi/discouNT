@@ -1,0 +1,3 @@
+/* Build-only resource view. The menu definitions remain in Regedit's source. */
+#include "../apps/regedit/resource.h"
+#include "../apps/regedit/lang/en-US.rc"

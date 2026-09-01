@@ -51,7 +51,10 @@ NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/rundll32/rundll32.exe \
  $(BUILD_DIR)/apps/sc/sc.exe \
  $(BUILD_DIR)/apps/progman/progman.exe
+NATIVE_APPS += $(BUILD_DIR)/apps/regedit/regedit.exe
 PROGMAN_SRCS := $(filter %.c,$(wildcard apps/progman/*.c))
+REGEDIT_SRCS := $(wildcard apps/regedit/*.c)
+REGEDIT_MENU_RES := $(BUILD_DIR)/apps/regedit/regedit.menu.bin
 PROGMAN_MENU_RES := $(BUILD_DIR)/apps/progman/progman.menu.bin
 MAIN_GRP := $(BUILD_DIR)/Main.grp
 PROGMAN_INI := apps/progman/progman.ini
@@ -172,6 +175,15 @@ $(BUILD_DIR)/apps/progman/progman.exe: $(PROGMAN_SRCS) apps/progman/progman.h ap
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Iapps/progman $(USER_CFLAGS) -include string.h -include stdio.h -Wl,-e,WinMain -shared -Wl,-Bsymbolic -o $@ $(PROGMAN_SRCS)
 	@objcopy --add-section .disres=$(PROGMAN_MENU_RES) --set-section-flags .disres=readonly,data $@
+
+$(BUILD_DIR)/apps/regedit/regedit.exe: $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc resources/regedit_resources.rc include/win32/regedit_api.h $(REGEDIT_MENU_RES)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Iapps/regedit -include regedit_api.h -include string.h -include stdio.h -include stdlib.h $(USER_CFLAGS) -fshort-wchar -Wl,-e,wWinMain -shared -Wl,-Bsymbolic -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -o $@ $(REGEDIT_SRCS)
+	@objcopy --add-section .disres=$(REGEDIT_MENU_RES) --set-section-flags .disres=readonly,data $@
+
+$(REGEDIT_MENU_RES): resources/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
 
 $(PROGMAN_MENU_RES): apps/progman/progman.rc apps/progman/progman.h tools/rc_menu_gen.py
 	@mkdir -p $(@D)

@@ -33,8 +33,18 @@ def parse_defines(path: str, seen=None):
     return out
 
 
-def normalize_lines(path: str):
-    data = strip_comments(open(path, "r", encoding="utf-8", errors="ignore").read())
+def normalize_lines(path: str, seen=None):
+    if seen is None:
+        seen = set()
+    path = os.path.normpath(path)
+    if path in seen or not os.path.exists(path):
+        return []
+    seen.add(path)
+    raw = open(path, "r", encoding="utf-8", errors="ignore").read()
+    raw = re.sub(r'^\s*#include\s+"([^"]+)"\s*$',
+                 lambda m: "\n".join(normalize_lines(os.path.join(os.path.dirname(path), m.group(1)), seen)),
+                 raw, flags=re.M)
+    data = strip_comments(raw)
     lines = []
     buf = ""
     for raw in data.splitlines():
@@ -96,6 +106,55 @@ def emit_menu(out, key: str, items):
         elif kind == "sep":
             out.append(f'SEP {entry["flags"]}')
     out.append("ENDMENU")
+
+
+def parse_strings(lines, defines):
+    """Extract the source string tables without inventing resource text."""
+    strings = []
+    in_table = False
+    in_body = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.upper() == "STRINGTABLE":
+            in_table = True
+            in_body = False
+            i += 1
+            continue
+        if not in_table:
+            i += 1
+            continue
+        if line in ("BEGIN", "{"):
+            in_body = True
+            i += 1
+            continue
+        if line in ("END", "}"):
+            in_table = False
+            in_body = False
+            i += 1
+            continue
+        if not in_body:
+            i += 1
+            continue
+        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*|0x[0-9A-Fa-f]+|\d+)\s+(.*)$', line)
+        if not m or '"' not in m.group(2):
+            i += 1
+            continue
+        key, rest = m.group(1), m.group(2)
+        # RC permits adjacent C string literals split over backslash lines.
+        while rest.rstrip().endswith('\\') and i + 1 < len(lines):
+            rest = rest.rstrip()[:-1] + lines[i + 1].lstrip()
+            i += 1
+        literals = re.findall(r'"((?:[^"\\]|\\.)*)"', rest)
+        if literals:
+            try:
+                ident = resolve_id(key, defines)
+            except (KeyError, ValueError):
+                i += 1
+                continue
+            strings.append((ident, ''.join(decode_string('"' + x + '"') for x in literals)))
+        i += 1
+    return strings
 
 
 def emit_items(out, items):
@@ -166,16 +225,18 @@ def parse_rc(path: str):
             key = str(defines[key])
         menus.append((key, items))
         i += 1
-    return menus
+    return menus, parse_strings(lines, defines)
 
 
 def main():
     if len(sys.argv) != 3:
         print("usage: rc_menu_gen.py input.rc output.mnu", file=sys.stderr)
         return 1
-    menus = parse_rc(sys.argv[1])
+    menus, strings = parse_rc(sys.argv[1])
     with open(sys.argv[2], "w", encoding="utf-8") as f:
         out = []
+        for key, value in strings:
+            out.append(f'STRING {key} "{esc(value)}"')
         for key, items in menus:
             emit_menu(out, key, items)
         f.write("\n".join(out))

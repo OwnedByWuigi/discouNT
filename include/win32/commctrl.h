@@ -3,6 +3,66 @@
 
 #include "winuser.h"
 
+typedef HANDLE HTREEITEM;
+typedef struct _TVITEMW { UINT mask; HTREEITEM hItem; UINT state, stateMask; LPWSTR pszText; int cchTextMax; int iImage, iSelectedImage; int cChildren; LPARAM lParam; } TVITEMW, TVITEM;
+typedef TVITEMW TVITEMEXW;
+typedef struct _TVINSERTSTRUCTW { HTREEITEM hParent, hInsertAfter; TVITEMW item; } TVINSERTSTRUCTW, TVINSERTSTRUCT;
+typedef struct _NMTREEVIEWW { NMHDR hdr; UINT action; TVITEMW itemOld, itemNew; POINT ptDrag; } NMTREEVIEWW, NMTREEVIEW;
+#define TVIF_TEXT 0x0001
+#define TVIF_IMAGE 0x0002
+#define TVIF_PARAM 0x0004
+#define TVIF_STATE 0x0008
+#define TVIF_HANDLE 0x0010
+#define TVIF_SELECTEDIMAGE 0x0020
+#define TVIF_CHILDREN 0x0040
+#define TVIS_EXPANDED 0x0020
+#define TVE_EXPAND 0x0002
+#define TVE_COLLAPSE 0x0001
+#define TVGN_CARET 0x0009
+#define TVN_ITEMEXPANDING ((UINT)-405)
+#define TVN_SELCHANGED ((UINT)-402)
+#define TVN_BEGINLABELEDIT ((UINT)-410)
+#define TVN_ENDLABELEDIT ((UINT)-411)
+#define TVI_FIRST ((HTREEITEM)(ULONG_PTR)-0xFFFF)
+#define TVI_ROOT  ((HTREEITEM)(ULONG_PTR)-0x10000)
+#define TVI_LAST  ((HTREEITEM)(ULONG_PTR)-0xFFFE)
+#define TVGN_ROOT       0x0000
+#define TVGN_NEXT       0x0001
+#define TVGN_PREVIOUS   0x0002
+#define TVGN_PARENT     0x0003
+#define TVGN_CHILD      0x0004
+#define TVGN_FIRSTVISIBLE 0x0005
+#define TVGN_NEXTVISIBLE  0x0006
+#define TVGN_PREVIOUSVISIBLE 0x0007
+#define TVGN_DROPHILITE 0x0008
+#define TVM_INSERTITEMW  (TV_FIRST + 50)
+#define TVM_DELETEITEM   (TV_FIRST + 1)
+#define TVM_EXPAND       (TV_FIRST + 2)
+#define TVM_GETITEMRECT  (TV_FIRST + 4)
+#define TVM_GETCOUNT     (TV_FIRST + 5)
+#define TVM_GETNEXTITEM  (TV_FIRST + 10)
+#define TVM_SELECTITEM   (TV_FIRST + 11)
+#define TVM_GETITEMW     (TV_FIRST + 62)
+#define TVM_SETITEMW     (TV_FIRST + 63)
+#define TVM_EDITLABELW   (TV_FIRST + 65)
+#define TVM_GETEDITCONTROL (TV_FIRST + 15)
+#define TVM_GETIMAGELIST (TV_FIRST + 8)
+#define TVM_SETIMAGELIST (TV_FIRST + 9)
+#define TVM_GETITEMSTATE (TV_FIRST + 39)
+#define TVM_ENSUREVISIBLE (TV_FIRST + 20)
+#define TVM_HITTEST      (TV_FIRST + 17)
+#define TV_FIRST         0x1100
+#define TVSIL_NORMAL     0
+#define TVSIL_STATE      2
+#define TVN_FIRST        ((UINT)-400)
+#define TVN_SELCHANGING  (TVN_FIRST - 1)
+#define TVN_ITEMEXPANDED (TVN_FIRST - 6)
+#define TVIF_DI_SETITEM  0x1000
+#define TVIS_EXPANDEDONCE 0x0040
+#define TVHT_ONITEM      0x0046
+typedef struct _TVHITTESTINFO { POINT pt; UINT flags; HTREEITEM hItem; } TVHITTESTINFO;
+
+
 typedef HANDLE HPROPSHEETPAGE;
 typedef struct _PROPSHEETPAGEA {
     DWORD dwSize, dwFlags;
@@ -58,6 +118,7 @@ typedef struct tagLVCOLUMNW {
     int iImage;
     int iOrder;
 } LVCOLUMNW, *LPLVCOLUMNW;
+typedef LVCOLUMNW LVCOLUMN;
 
 typedef struct tagLVITEMW {
     UINT mask;
@@ -277,6 +338,13 @@ BOOL WINAPI ImageList_Draw(HIMAGELIST image_list,int image,HDC dc,int x,int y,UI
 #define LVM_SETCOLUMNORDERARRAY (LVM_FIRST + 58)
 #define LVM_SUBITEMHITTEST    (LVM_FIRST + 57)
 #define LVM_GETITEMRECT       (LVM_FIRST + 14)
+#define LVM_GETCOLUMNWIDTH    (LVM_FIRST + 29)
+#define LVM_SETCOLUMNWIDTH    (LVM_FIRST + 30)
+#define LVM_GETNEXTITEM       (LVM_FIRST + 12)
+#define LVM_ENSUREVISIBLE     (LVM_FIRST + 19)
+#define LVM_EDITLABELW        (LVM_FIRST + 118)
+#define LVM_SETITEMSTATE      (LVM_FIRST + 43)
+#define LVM_FINDITEMW         (LVM_FIRST + 83)
 
 #define HDM_FIRST             0x1200
 #define HDM_GETITEMCOUNT      (HDM_FIRST + 0)

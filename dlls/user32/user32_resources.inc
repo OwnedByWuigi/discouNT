@@ -101,11 +101,54 @@ HANDLE LoadImageW(HINSTANCE hinst, LPCWSTR name, UINT type, int cx, int cy, UINT
     return (HANDLE)u32_alloc_icon(0, width, height);
 }
 
+static int u32_load_embedded_string(HINSTANCE hInstance, UINT id, LPWSTR buffer, int capacity) {
+    uint32_t size = 0;
+    const uint8_t *blob = u32_get_embedded_blob(hInstance, ".disres", &size);
+    uint32_t pos = 0;
+    if (!blob || !buffer || capacity <= 0) return 0;
+    while (pos < size) {
+        uint32_t start = pos;
+        uint32_t value = 0;
+        int quoted = 0;
+        int out = 0;
+        if (size - pos >= 7 && blob[pos] == 'S' && blob[pos + 1] == 'T' &&
+            blob[pos + 2] == 'R' && blob[pos + 3] == 'I' && blob[pos + 4] == 'N' &&
+            blob[pos + 5] == 'G' && blob[pos + 6] == ' ') {
+            pos += 7;
+            while (pos < size && blob[pos] >= '0' && blob[pos] <= '9')
+                value = value * 10 + (blob[pos++] - '0');
+            while (pos < size && blob[pos] != '\n' && blob[pos] != '"') pos++;
+            if (pos < size && blob[pos] == '"') {
+                quoted = 1;
+                pos++;
+                while (pos < size && blob[pos] != '\n') {
+                    uint8_t ch = blob[pos++];
+                    if (ch == '"') break;
+                    if (ch == '\\' && pos < size) {
+                        ch = blob[pos++];
+                        if (ch == 'n') ch = '\n';
+                        else if (ch == 't') ch = '\t';
+                    }
+                    if (value == id && out < capacity - 1) buffer[out++] = (WCHAR)ch;
+                }
+                if (value == id && quoted) {
+                    buffer[out] = 0;
+                    return out;
+                }
+            }
+        }
+        while (pos < size && blob[pos++] != '\n') {}
+        if (pos == start) pos++;
+    }
+    return 0;
+}
+
 int LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax) {
     LPCWSTR text;
     int len;
-    (void)hInstance;
     if (!lpBuffer || cchBufferMax <= 0) return 0;
+    len = u32_load_embedded_string(hInstance, uID, lpBuffer, cchBufferMax);
+    if (len) return len;
     text = u32_string_for_id(uID);
     len = u32_wstrlen(text);
     if (len >= cchBufferMax) len = cchBufferMax - 1;

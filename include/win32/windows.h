@@ -303,6 +303,24 @@ int WINAPI CompareStringW(LCID locale,DWORD flags,LPCWSTR first,int first_count,
 
 #define HKEY_CURRENT_USER        ((HKEY)(ULONG_PTR)0x80000001)
 #define HKEY_LOCAL_MACHINE       ((HKEY)(ULONG_PTR)0x80000002)
+#define HKEY_CLASSES_ROOT        ((HKEY)(ULONG_PTR)0x80000000)
+#define HKEY_USERS               ((HKEY)(ULONG_PTR)0x80000003)
+#define HKEY_CURRENT_CONFIG      ((HKEY)(ULONG_PTR)0x80000005)
+#define HKEY_DYN_DATA            ((HKEY)(ULONG_PTR)0x80000006)
+#define REG_NONE                 0
+#define REG_MULTI_SZ             7
+#define REG_QWORD                11
+#define REG_RESOURCE_LIST        8
+#define REG_FULL_RESOURCE_DESCRIPTOR 9
+#define REG_RESOURCE_REQUIREMENTS_LIST 10
+#define ERROR_NO_WORK_DONE       0x006D
+#define ERROR_MORE_DATA          234
+#ifndef WINAPIV
+#define WINAPIV __attribute__((cdecl))
+#endif
+#ifndef STDMETHODCALLTYPE
+#define STDMETHODCALLTYPE __attribute__((stdcall))
+#endif
 
 #define VER_PLATFORM_WIN32_NT    2
 #define LOCALE_USER_DEFAULT      0x0400

@@ -149,3 +149,8 @@ __attribute__((stdcall)) int PathRemoveBackslashW(uint16_t *path) {
 __attribute__((stdcall)) int PathIsDirectoryW(const uint16_t *path) {
     return path&&path[0];
 }
+
+__attribute__((stdcall)) int StrCmpLogicalW(const uint16_t *a, const uint16_t *b) {
+    while (a && b && *a && *b) { uint16_t ca=*a++, cb=*b++; if (ca>='A'&&ca<='Z')ca+=32; if(cb>='A'&&cb<='Z')cb+=32; if(ca!=cb)return ca<cb?-1:1; }
+    return (!a||!b) ? (a==b?0:(a?1:-1)) : (*a==*b?0:(*a?1:-1));
+}

@@ -15,6 +15,7 @@ typedef int16_t SHORT;
 typedef uint8_t BOOLEAN;
 typedef uint32_t DWORD;
 typedef uint32_t ULONG;
+typedef uint8_t UCHAR;
 typedef int32_t LONG;
 typedef int INT;
 typedef INT *LPINT;

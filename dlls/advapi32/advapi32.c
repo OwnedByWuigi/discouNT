@@ -154,6 +154,7 @@ int DllMain(void *hModule, uint32_t reason, void *lpReserved) {
 #define ERROR_FILE_NOT_FOUND 2
 #define ERROR_INVALID_HANDLE 6
 #define ERROR_MORE_DATA      234
+#define ERROR_NO_MORE_ITEMS  259
 #define ERROR_OUTOFMEMORY    14
 #define ERROR_INVALID_PARAMETER 87
 #define REG_CREATED_NEW_KEY 1
@@ -416,6 +417,96 @@ int RegGetValueW(void *key, const uint16_t *subkey, const uint16_t *value,
 }
 
 int RegCloseKey(void *hKey) { (void)hKey; return ERROR_SUCCESS; }
+
+static uint32_t reg_ascii_to_wide(const char *src, uint16_t *dst, uint32_t limit) {
+    uint32_t i = 0;
+    if (!dst || !limit) return 0;
+    while (src && src[i] && i + 1 < limit) { dst[i] = (uint8_t)src[i]; i++; }
+    dst[i] = 0;
+    return i;
+}
+
+static int reg_prefix_equal(const char *a, const char *b, uint32_t count) {
+    uint32_t i; for (i = 0; i < count; i++) if (a[i] != b[i]) return 0; return 1;
+}
+static int reg_has_separator_after(const char *text) {
+    while (text && *text) { if (*text == '\\') return 1; text++; } return 0;
+}
+
+int RegCreateKeyW(void *key, const uint16_t *name, void **result) {
+    return RegCreateKeyExW(key, name, 0, 0, 0, 0, 0, result, 0);
+}
+
+int RegDeleteValueW(void *hKey, const uint16_t *valueName) {
+    char name[REG_MAX_NAME];
+    REG_VALUE *value;
+    if (!hKey || !reg_wide_to_ascii(valueName, name, sizeof(name))) return ERROR_INVALID_PARAMETER;
+    value = reg_find_value((REG_KEY*)hKey, name);
+    if (!value) return ERROR_FILE_NOT_FOUND;
+    value->used = 0;
+    return ERROR_SUCCESS;
+}
+
+int RegFlushKey(void *hKey) { (void)hKey; registry_init(); return ERROR_SUCCESS; }
+
+int RegQueryInfoKeyW(void *hKey, uint16_t *className, uint32_t *classLen,
+                     uint32_t *reserved, uint32_t *subKeys, uint32_t *maxSubKeyLen,
+                     uint32_t *maxClassLen, uint32_t *values, uint32_t *maxValueNameLen,
+                     uint32_t *maxValueLen, uint32_t *securityLen, void *lastWrite) {
+    REG_KEY *key = (REG_KEY*)hKey; int i, count = 0, valueCount = 0; uint32_t maxName = 0, maxValue = 0;
+    (void)className; (void)classLen; (void)reserved; (void)maxClassLen; (void)securityLen; (void)lastWrite;
+    if (!key || !key->used) return ERROR_INVALID_HANDLE;
+    for (i = 0; i < REG_MAX_KEYS; i++) if (registry_keys[i].used && registry_keys[i].root == key->root) {
+        const char *p = registry_keys[i].path; uint32_t n = strlen(key->path);
+        if (reg_prefix_equal(p, key->path, n) && p[n] == '\\' && !reg_has_separator_after(p + n + 1)) count++;
+    }
+    for (i = 0; i < REG_MAX_VALUES; i++) if (registry_values[i].used && registry_values[i].key == key) {
+        uint32_t n = strlen(registry_values[i].name); if (n > maxName) maxName = n; if (registry_values[i].size > maxValue) maxValue = registry_values[i].size; valueCount++;
+    }
+    if (subKeys) *subKeys = count; if (maxSubKeyLen) *maxSubKeyLen = 0;
+    if (values) *values = valueCount; if (maxValueNameLen) *maxValueNameLen = maxName; if (maxValueLen) *maxValueLen = maxValue;
+    return ERROR_SUCCESS;
+}
+
+int RegEnumValueW(void *hKey, uint32_t index, uint16_t *name, uint32_t *nameLen,
+                 uint32_t *reserved, uint32_t *type, uint8_t *data, uint32_t *dataLen) {
+    REG_KEY *key = (REG_KEY*)hKey; int i; uint32_t seen = 0, needed;
+    (void)reserved;
+    if (!key || !key->used || !nameLen) return ERROR_INVALID_PARAMETER;
+    for (i = 0; i < REG_MAX_VALUES; i++) if (registry_values[i].used && registry_values[i].key == key) {
+        if (seen++ != index) continue;
+        needed = strlen(registry_values[i].name);
+        if (*nameLen <= needed) { *nameLen = needed; return ERROR_MORE_DATA; }
+        reg_ascii_to_wide(registry_values[i].name, name, *nameLen);
+        *nameLen = needed;
+        if (type) *type = registry_values[i].type;
+        if (dataLen) { if (!data || *dataLen < registry_values[i].size) { *dataLen = registry_values[i].size; return data ? ERROR_MORE_DATA : ERROR_SUCCESS; } memcpy(data, registry_values[i].data, registry_values[i].size); *dataLen = registry_values[i].size; }
+        return ERROR_SUCCESS;
+    }
+    return ERROR_NO_MORE_ITEMS;
+}
+
+int RegEnumKeyExW(void *hKey, uint32_t index, uint16_t *name, uint32_t *nameLen,
+                  uint32_t *reserved, uint16_t *className, uint32_t *classLen, void *lastWrite) {
+    REG_KEY *key = (REG_KEY*)hKey; int i; uint32_t seen = 0, n, prefix;
+    (void)reserved; (void)className; (void)classLen; (void)lastWrite;
+    if (!key || !key->used || !name || !nameLen) return ERROR_INVALID_PARAMETER;
+    prefix = strlen(key->path);
+    for (i = 0; i < REG_MAX_KEYS; i++) if (registry_keys[i].used && registry_keys[i].root == key->root && reg_prefix_equal(registry_keys[i].path, key->path, prefix) && registry_keys[i].path[prefix] == '\\') {
+        const char *child = registry_keys[i].path + prefix + 1;
+        if (reg_has_separator_after(child)) continue;
+        if (seen++ != index) continue;
+        n = strlen(child); if (*nameLen <= n) { *nameLen = n; return ERROR_MORE_DATA; }
+        reg_ascii_to_wide(child, name, *nameLen); *nameLen = n; return ERROR_SUCCESS;
+    }
+    return ERROR_NO_MORE_ITEMS;
+}
+
+int RegDeleteTreeW(void *hKey, const uint16_t *subKey) { (void)hKey; (void)subKey; return ERROR_SUCCESS; }
+int RegLoadKeyW(void *hKey, const uint16_t *subKey, const uint16_t *file) { (void)hKey; (void)subKey; (void)file; return ERROR_SUCCESS; }
+int RegRestoreKey(void *hKey, const uint16_t *file, uint32_t flags) { (void)hKey; (void)file; (void)flags; return ERROR_SUCCESS; }
+int RegSaveKeyW(void *hKey, const uint16_t *file, void *security) { (void)hKey; (void)file; (void)security; return ERROR_SUCCESS; }
+int RegUnLoadKeyW(void *hKey, const uint16_t *subKey) { (void)hKey; (void)subKey; return ERROR_SUCCESS; }
 
 int OpenProcessToken(void *ProcessHandle, uint32_t DesiredAccess, void **TokenHandle) {
     (void)ProcessHandle; (void)DesiredAccess;

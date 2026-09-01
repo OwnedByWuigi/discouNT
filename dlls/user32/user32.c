@@ -143,6 +143,10 @@ typedef struct _U32_WINDOW {
     int status_part_right[8];
     WCHAR status_text[8][64];
     void *listview_data;
+    HTREEITEM tree_root;
+    HTREEITEM tree_selection;
+    HIMAGELIST tree_image_list;
+    HWND tree_edit;
     WCHAR *edit_text;
     HFONT hFont;
     HICON hIcon;
@@ -328,7 +332,24 @@ typedef struct _U32_LISTVIEW_DATA {
     WCHAR columns[MAX_LV_COLUMNS][64];
     int column_widths[MAX_LV_COLUMNS];
     WCHAR items[MAX_LV_ITEMS][MAX_LV_COLUMNS][64];
+    UINT item_state[MAX_LV_ITEMS];
+    LPARAM item_param[MAX_LV_ITEMS];
 } U32_LISTVIEW_DATA;
+
+#define MAX_U32_TREE_ITEMS 512
+typedef struct _U32_TREE_ITEM {
+    int used;
+    HTREEITEM handle;
+    HTREEITEM parent;
+    HTREEITEM first_child;
+    HTREEITEM next_sibling;
+    WCHAR text[128];
+    UINT state;
+    int image;
+    int selected_image;
+    int children;
+    LPARAM param;
+} U32_TREE_ITEM;
 
 typedef struct _U32_TIMER {
     int used;
@@ -388,6 +409,7 @@ static U32_TIMER g_timers[MAX_U32_TIMERS];
 static U32_MENU g_menus[MAX_U32_MENUS];
 static U32_MESSAGE g_messages[MAX_U32_MESSAGES];
 static U32_ICON g_icons[MAX_U32_ICONS];
+static U32_TREE_ITEM g_tree_items[MAX_U32_TREE_ITEMS];
 static U32_QUIT_STATE g_quit_states[MAX_U32_QUIT_STATES];
 static U32_DIALOG_TEMPLATE_DEF g_registered_dialog;
 static int g_registered_dialog_used;
@@ -429,6 +451,7 @@ static UINT u32_resource_id(LPCWSTR ptr);
 #define U32_CTRL_STATUS    8
 #define U32_CTRL_MENUPOPUP 9
 #define U32_CTRL_COMBO     10
+#define U32_CTRL_TREEVIEW  11
 
 #ifndef BS_GROUPBOX
 #define BS_GROUPBOX        0x00000007L
@@ -629,6 +652,12 @@ static void u32_update_scroll_content(U32_WINDOW *win) {
         win->scroll_max[1] = 18 + win->listview_item_count * 14;
         win->scroll_page[1] = rc.bottom > 0 ? (UINT)rc.bottom : 1;
         u32_scroll_clamp(win, SB_VERT);
+    } else if (win->ctrl_type == U32_CTRL_TREEVIEW) {
+        int count = 0, i;
+        for (i = 0; i < MAX_U32_TREE_ITEMS; i++) if (g_tree_items[i].used) count++;
+        win->scroll_max[1] = count * 16;
+        win->scroll_page[1] = rc.bottom > 0 ? (UINT)rc.bottom : 1;
+        u32_scroll_clamp(win, SB_VERT);
     }
 }
 
@@ -819,6 +848,122 @@ static U32_LISTVIEW_DATA *u32_ensure_listview(U32_WINDOW *win) {
     memset(data, 0, sizeof(*data));
     win->listview_data = data;
     return data;
+}
+
+static U32_TREE_ITEM *u32_tree_item(HTREEITEM handle) {
+    int i;
+    if (!handle) return NULL;
+    for (i = 0; i < MAX_U32_TREE_ITEMS; i++)
+        if (g_tree_items[i].used && g_tree_items[i].handle == handle) return &g_tree_items[i];
+    return NULL;
+}
+
+static U32_TREE_ITEM *u32_tree_alloc(void) {
+    int i;
+    for (i = 0; i < MAX_U32_TREE_ITEMS; i++) {
+        if (!g_tree_items[i].used) {
+            memset(&g_tree_items[i], 0, sizeof(g_tree_items[i]));
+            g_tree_items[i].used = 1;
+            g_tree_items[i].handle = (HTREEITEM)&g_tree_items[i];
+            return &g_tree_items[i];
+        }
+    }
+    return NULL;
+}
+
+static void u32_tree_unlink(U32_TREE_ITEM *item) {
+    U32_TREE_ITEM *parent, *cur;
+    if (!item) return;
+    parent = u32_tree_item(item->parent);
+    if (!parent) return;
+    if (parent->first_child == item->handle) parent->first_child = item->next_sibling;
+    else {
+        cur = u32_tree_item(parent->first_child);
+        while (cur && cur->next_sibling != item->handle) cur = u32_tree_item(cur->next_sibling);
+        if (cur) cur->next_sibling = item->next_sibling;
+    }
+}
+
+static void u32_tree_free(HTREEITEM handle) {
+    U32_TREE_ITEM *item = u32_tree_item(handle);
+    HTREEITEM child, next;
+    if (!item) return;
+    child = item->first_child;
+    while (child) {
+        U32_TREE_ITEM *node = u32_tree_item(child);
+        next = node ? node->next_sibling : NULL;
+        u32_tree_free(child);
+        child = next;
+    }
+    memset(item, 0, sizeof(*item));
+}
+
+static HTREEITEM u32_tree_child(U32_TREE_ITEM *item) { return item ? item->first_child : NULL; }
+
+static HTREEITEM u32_tree_next_visible(U32_TREE_ITEM *item) {
+    if (!item) return NULL;
+    if (item->state & TVIS_EXPANDED) return item->first_child;
+    while (item) {
+        if (item->next_sibling) return item->next_sibling;
+        item = u32_tree_item(item->parent);
+    }
+    return NULL;
+}
+
+static int u32_tree_visible_info(U32_WINDOW *win, HTREEITEM target, int *out_y, int *out_depth) {
+    HTREEITEM item;
+    int y = 0, depth = 0;
+    if (!win) return 0;
+    item = win->tree_root;
+    while (item) {
+        U32_TREE_ITEM *node = u32_tree_item(item);
+        if (!node) break;
+        if (item == target) { if (out_y) *out_y = y; if (out_depth) *out_depth = depth; return 1; }
+        y += 16;
+        item = u32_tree_next_visible(node);
+        if (item) {
+            depth = 0;
+            { U32_TREE_ITEM *p = u32_tree_item(item)->parent; while (p) { depth++; p = u32_tree_item(p->parent); } }
+        }
+    }
+    return 0;
+}
+
+static HTREEITEM u32_tree_hit(U32_WINDOW *win, int y) {
+    HTREEITEM item;
+    int row = y + win->scroll_pos[1], current = 0;
+    if (row < 0) return NULL;
+    item = win->tree_root;
+    while (item) {
+        U32_TREE_ITEM *node = u32_tree_item(item);
+        if (!node) break;
+        if (current <= row && row < current + 16) return item;
+        current += 16;
+        item = u32_tree_next_visible(node);
+    }
+    return NULL;
+}
+
+static void u32_tree_draw_items(HDC hdc, U32_WINDOW *win, HTREEITEM item, int depth, int *y) {
+    while (item) {
+        U32_TREE_ITEM *node = u32_tree_item(item);
+        int draw_y;
+        if (!node) return;
+        draw_y = *y - win->scroll_pos[1];
+        if (draw_y >= -16 && draw_y < 4096) {
+            int x = 4 + depth * 16;
+            WCHAR marker[2] = { (node->first_child ? ((node->state & TVIS_EXPANDED) ? L'-' : L'+') : L' '), 0 };
+            if (item == win->tree_selection) {
+                RECT selected = { x + 12, draw_y, 4090, draw_y + 16 };
+                FillRect(hdc, &selected, (HBRUSH)GetStockObject(1));
+            }
+            if (node->first_child) TextOutW(hdc, x, draw_y + 2, marker, 1);
+            TextOutW(hdc, x + 12, draw_y + 2, node->text, -1);
+        }
+        *y += 16;
+        if (node->state & TVIS_EXPANDED) u32_tree_draw_items(hdc, win, node->first_child, depth + 1, y);
+        item = node->next_sibling;
+    }
 }
 
 static U32_MENU *u32_lookup_menu(HMENU hmenu) {
@@ -1132,6 +1277,7 @@ static int u32_pick_ctrl_type(LPCWSTR class_name, DWORD style) {
         if (u32_wstrcmp(class_name, L"#32770") == 0) return U32_CTRL_DIALOG;
         if (u32_wstrcmp(class_name, L"SysTabControl32") == 0) return U32_CTRL_TAB;
         if (u32_wstrcmp(class_name, L"SysListView32") == 0) return U32_CTRL_LISTVIEW;
+        if (u32_wstrcmp(class_name, L"SysTreeView32") == 0) return U32_CTRL_TREEVIEW;
         if (u32_wstrcmp(class_name, L"Button") == 0) {
             if ((style & BS_GROUPBOX) == BS_GROUPBOX) return U32_CTRL_GROUPBOX;
             return U32_CTRL_BUTTON;
@@ -2413,6 +2559,17 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 }
             }
             break;
+        case U32_CTRL_TREEVIEW:
+            {
+                HTREEITEM item = u32_tree_hit(win, y);
+                if (item) {
+                    SendMessageW(hWnd, TVM_SELECTITEM, TVGN_CARET, (LPARAM)item);
+                    if (x >= 4 + 16 && (u32_tree_item(item)->first_child))
+                        SendMessageW(hWnd, TVM_EXPAND, (u32_tree_item(item)->state & TVIS_EXPANDED) ? TVE_COLLAPSE : TVE_EXPAND, (LPARAM)item);
+                    return 0;
+                }
+            }
+            break;
         case U32_CTRL_MENUPOPUP:
             {
                 U32_MENU *menu = u32_lookup_menu(win->menu);
@@ -2530,6 +2687,20 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 u32_mark_invalid(hWnd);
             }
             return 0;
+        case U32_CTRL_LISTVIEW:
+            if (y >= 16) {
+                int row = (y - 16 + win->scroll_pos[1]) / 14;
+                U32_LISTVIEW_DATA *data = u32_ensure_listview(win);
+                if (data && row >= 0 && row < win->listview_item_count && row < MAX_LV_ITEMS) {
+                    int i;
+                    for (i = 0; i < win->listview_item_count && i < MAX_LV_ITEMS; i++) data->item_state[i] &= ~LVIS_SELECTED;
+                    data->item_state[row] |= LVIS_SELECTED;
+                    win->listview_selected_count = 1;
+                    u32_mark_invalid(hWnd);
+                    return 0;
+                }
+            }
+            return 0;
         case U32_CTRL_MENUPOPUP:
             {
                 U32_MENU *menu = u32_lookup_menu(win->menu);
@@ -2613,6 +2784,14 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 }
             }
             break;
+        case U32_CTRL_TREEVIEW:
+            FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
+            Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+            {
+                int y = 0;
+                u32_tree_draw_items(hdc, win, win->tree_root, 0, &y);
+            }
+            break;
         case U32_CTRL_LISTVIEW:
             FillRect(hdc, &rc, (HBRUSH)GetStockObject(0));
             Rectangle(hdc, 0, 0, rc.right, rc.bottom);
@@ -2636,6 +2815,10 @@ LRESULT DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                         int col_x = 0;
                         int y = row_top + (row * row_height);
                         if (y + row_height > rc.bottom) break;
+                        if (data->item_state[row] & LVIS_SELECTED) {
+                            RECT selected = { 0, y, rc.right, y + row_height };
+                            FillRect(hdc, &selected, (HBRUSH)GetStockObject(1));
+                        }
                         for (i = 0; i < win->header_count; i++) {
                             int colw = data->column_widths[i] > 0 ? data->column_widths[i] :
                                        rc.right / (win->header_count ? win->header_count : 1);
@@ -3509,6 +3692,141 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         SendMessageW(hWnd, WM_LBUTTONDOWN, 0, MAKELPARAM(1, 1));
         SendMessageW(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(1, 1));
         return 0;
+    case TVM_INSERTITEMW:
+        {
+            const TVINSERTSTRUCTW *insert = (const TVINSERTSTRUCTW*)lParam;
+            U32_TREE_ITEM *node, *parent, *cur;
+            HTREEITEM *head;
+            if (win->ctrl_type != U32_CTRL_TREEVIEW || !insert) return 0;
+            node = u32_tree_alloc();
+            if (!node) return 0;
+            if (insert->item.pszText) u32_wstrcpy(node->text, insert->item.pszText, 128);
+            node->state = insert->item.state & insert->item.stateMask;
+            node->image = insert->item.iImage;
+            node->selected_image = insert->item.iSelectedImage;
+            node->children = insert->item.cChildren;
+            node->param = insert->item.lParam;
+            parent = (insert->hParent == TVI_ROOT || insert->hParent == TVI_FIRST) ? NULL : u32_tree_item(insert->hParent);
+            node->parent = parent ? parent->handle : NULL;
+            head = parent ? &parent->first_child : &win->tree_root;
+            if (insert->hInsertAfter == TVI_FIRST || !*head) {
+                node->next_sibling = *head;
+                *head = node->handle;
+            } else {
+                cur = u32_tree_item(*head);
+                while (cur && cur->next_sibling) cur = u32_tree_item(cur->next_sibling);
+                if (cur) cur->next_sibling = node->handle;
+                else *head = node->handle;
+            }
+            u32_mark_invalid(hWnd);
+            return (LRESULT)node->handle;
+        }
+    case TVM_DELETEITEM:
+        {
+            HTREEITEM handle = (HTREEITEM)lParam;
+            U32_TREE_ITEM *node;
+            if (handle == TVI_ROOT) handle = win->tree_root;
+            node = u32_tree_item(handle);
+            if (!node) return FALSE;
+            u32_tree_unlink(node);
+            if (win->tree_selection == handle) win->tree_selection = NULL;
+            if (win->tree_root == handle) win->tree_root = node->next_sibling;
+            u32_tree_free(handle);
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case TVM_GETNEXTITEM:
+        {
+            U32_TREE_ITEM *node = u32_tree_item((HTREEITEM)lParam);
+            if (wParam == TVGN_ROOT) return (LRESULT)win->tree_root;
+            if (wParam == TVGN_CARET) return (LRESULT)win->tree_selection;
+            if (wParam == TVGN_CHILD) return (LRESULT)(node ? node->first_child : win->tree_root);
+            if (!node) return 0;
+            if (wParam == TVGN_PARENT) return (LRESULT)node->parent;
+            if (wParam == TVGN_NEXT) return (LRESULT)node->next_sibling;
+            if (wParam == TVGN_PREVIOUS) {
+                U32_TREE_ITEM *parent = u32_tree_item(node->parent), *cur = parent ? u32_tree_item(parent->first_child) : u32_tree_item(win->tree_root);
+                U32_TREE_ITEM *previous = NULL;
+                while (cur && cur->handle != node->handle) { previous = cur; cur = u32_tree_item(cur->next_sibling); }
+                return (LRESULT)(previous ? previous->handle : NULL);
+            }
+            return 0;
+        }
+    case TVM_GETCOUNT:
+        {
+            int count = 0, i;
+            for (i = 0; i < MAX_U32_TREE_ITEMS; i++) if (g_tree_items[i].used) count++;
+            return count;
+        }
+    case TVM_GETITEMW:
+        {
+            const TVITEMW *src = (const TVITEMW*)lParam;
+            U32_TREE_ITEM *node = src ? u32_tree_item(src->hItem) : NULL;
+            TVITEMW *item = (TVITEMW*)lParam;
+            if (!node || !item) return FALSE;
+            if ((item->mask & TVIF_TEXT) && item->pszText && item->cchTextMax > 0) u32_wstrcpy(item->pszText, node->text, item->cchTextMax);
+            if (item->mask & TVIF_PARAM) item->lParam = node->param;
+            if (item->mask & TVIF_STATE) item->state = node->state;
+            if (item->mask & TVIF_IMAGE) item->iImage = node->image;
+            if (item->mask & TVIF_SELECTEDIMAGE) item->iSelectedImage = node->selected_image;
+            if (item->mask & TVIF_CHILDREN) item->cChildren = node->first_child ? 1 : node->children;
+            return TRUE;
+        }
+    case TVM_SETITEMW:
+        {
+            const TVITEMW *item = (const TVITEMW*)lParam;
+            U32_TREE_ITEM *node = item ? u32_tree_item(item->hItem) : NULL;
+            if (!node || !item) return FALSE;
+            if ((item->mask & TVIF_TEXT) && item->pszText) u32_wstrcpy(node->text, item->pszText, 128);
+            if (item->mask & TVIF_PARAM) node->param = item->lParam;
+            if (item->mask & TVIF_STATE) node->state = (node->state & ~item->stateMask) | (item->state & item->stateMask);
+            if (item->mask & TVIF_IMAGE) node->image = item->iImage;
+            if (item->mask & TVIF_SELECTEDIMAGE) node->selected_image = item->iSelectedImage;
+            if (item->mask & TVIF_CHILDREN) node->children = item->cChildren;
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case TVM_SELECTITEM:
+        if (wParam == TVGN_CARET || wParam == TVGN_DROPHILITE) {
+            HTREEITEM old = win->tree_selection;
+            win->tree_selection = (HTREEITEM)lParam;
+            if (win->parent && old != win->tree_selection) {
+                NMTREEVIEWW notify;
+                memset(&notify, 0, sizeof(notify));
+                notify.hdr.hwndFrom = hWnd; notify.hdr.idFrom = (UINT_PTR)win->id; notify.hdr.code = TVN_SELCHANGED;
+                notify.itemOld.hItem = old; notify.itemNew.hItem = win->tree_selection;
+                SendMessageW(win->parent, WM_NOTIFY, (WPARAM)win->id, (LPARAM)&notify);
+            }
+            u32_mark_invalid(hWnd);
+            return (LRESULT)win->tree_selection;
+        }
+        return 0;
+    case TVM_EXPAND:
+        {
+            U32_TREE_ITEM *node = u32_tree_item((HTREEITEM)lParam);
+            if (!node) return FALSE;
+            if (wParam == TVE_EXPAND) node->state |= TVIS_EXPANDED | TVIS_EXPANDEDONCE;
+            else if (wParam == TVE_COLLAPSE) node->state &= ~TVIS_EXPANDED;
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case TVM_GETITEMSTATE:
+        {
+            U32_TREE_ITEM *node = u32_tree_item((HTREEITEM)wParam);
+            return node ? (node->state & (UINT)lParam) : 0;
+        }
+    case TVM_SETIMAGELIST:
+        { HIMAGELIST old = win->tree_image_list; win->tree_image_list = (HIMAGELIST)lParam; return (LRESULT)old; }
+    case TVM_GETIMAGELIST:
+        return (LRESULT)win->tree_image_list;
+    case TVM_HITTEST:
+        {
+            TVHITTESTINFO *hit = (TVHITTESTINFO*)lParam;
+            if (!hit) return 0;
+            hit->hItem = u32_tree_hit(win, hit->pt.y);
+            hit->flags = hit->hItem ? TVHT_ONITEM : 0;
+            return (LRESULT)hit->hItem;
+        }
     case TCM_INSERTITEMW:
         if (win->tab_count < MAX_TAB_ITEMS) {
             const TCITEMW *item = (const TCITEMW*)lParam;
@@ -3626,11 +3944,26 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
         lv = (U32_LISTVIEW_DATA*)win->listview_data;
         win->listview_item_count = 0;
         win->listview_selected_count = 0;
-        if (lv) memset(lv->items, 0, sizeof(lv->items));
+        if (lv) {
+            memset(lv->items, 0, sizeof(lv->items));
+            memset(lv->item_state, 0, sizeof(lv->item_state));
+            memset(lv->item_param, 0, sizeof(lv->item_param));
+        }
         u32_mark_invalid(hWnd);
         return TRUE;
     case LVM_DELETEITEM:
-        if (win->listview_item_count > 0) win->listview_item_count--;
+        if (win->listview_item_count > 0) {
+            int index = (int)wParam, i;
+            lv = u32_ensure_listview(win);
+            if (index < 0 || index >= win->listview_item_count) return FALSE;
+            for (i = index; i + 1 < win->listview_item_count; i++) {
+                memcpy(lv->items[i], lv->items[i + 1], sizeof(lv->items[i]));
+                lv->item_state[i] = lv->item_state[i + 1];
+                lv->item_param[i] = lv->item_param[i + 1];
+            }
+            win->listview_item_count--;
+            if (win->listview_selected_count > win->listview_item_count) win->listview_selected_count = win->listview_item_count;
+        }
         u32_mark_invalid(hWnd);
         return TRUE;
     case LVM_INSERTCOLUMNW:
@@ -3654,7 +3987,10 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
             if (item && item->pszText && item->iSubItem < MAX_LV_COLUMNS) {
                 u32_lv_copy_out(lv->items[index][item->iSubItem], 64, item->pszText);
             }
-            if (win->listview_selected_count == 0) win->listview_selected_count = 1;
+            if (item) {
+                lv->item_state[index] = item->state;
+                lv->item_param[index] = item->lParam;
+            }
             u32_mark_invalid(hWnd);
             return index;
         }
@@ -3677,6 +4013,66 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
                 u32_lv_copy_out(lv->items[item->iItem][item->iSubItem], 64, item->pszText);
             }
             u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case LVM_GETITEMW:
+        {
+            const LVITEMW *request = (const LVITEMW*)lParam;
+            LVITEMW *item = (LVITEMW*)lParam;
+            lv = u32_ensure_listview(win);
+            if (!lv || !request || request->iItem < 0 || request->iItem >= win->listview_item_count ||
+                request->iItem >= MAX_LV_ITEMS) return FALSE;
+            if ((item->mask & LVIF_TEXT) && item->pszText && item->cchTextMax > 0 &&
+                item->iSubItem >= 0 && item->iSubItem < MAX_LV_COLUMNS)
+                u32_wstrcpy(item->pszText, lv->items[item->iItem][item->iSubItem], item->cchTextMax);
+            if (item->mask & LVIF_STATE) item->state = lv->item_state[item->iItem];
+            if (item->mask & LVIF_PARAM) item->lParam = lv->item_param[item->iItem];
+            return TRUE;
+        }
+    case LVM_GETNEXTITEM:
+        {
+            int start = (int)wParam + 1, i;
+            lv = u32_ensure_listview(win);
+            if (!lv) return -1;
+            for (i = start; i < win->listview_item_count && i < MAX_LV_ITEMS; i++)
+                if (((lParam & LVIS_SELECTED) && (lv->item_state[i] & LVIS_SELECTED)) ||
+                    (!(lParam & LVIS_SELECTED) && i >= 0)) return i;
+            return -1;
+        }
+    case LVM_SETITEMSTATE:
+        {
+            int index = (int)wParam;
+            const LVITEMW *item = (const LVITEMW*)lParam;
+            lv = u32_ensure_listview(win);
+            if (!lv || index < 0 || index >= win->listview_item_count || !item) return FALSE;
+            lv->item_state[index] = (lv->item_state[index] & ~item->stateMask) | (item->state & item->stateMask);
+            win->listview_selected_count = 0;
+            for (index = 0; index < win->listview_item_count && index < MAX_LV_ITEMS; index++)
+                if (lv->item_state[index] & LVIS_SELECTED) win->listview_selected_count++;
+            u32_mark_invalid(hWnd);
+            return TRUE;
+        }
+    case LVM_GETITEMSTATE:
+        {
+            lv = u32_ensure_listview(win);
+            return (lv && (int)wParam >= 0 && (int)wParam < win->listview_item_count) ? lv->item_state[wParam] & lParam : 0;
+        }
+    case LVM_GETCOLUMNWIDTH:
+        lv = u32_ensure_listview(win);
+        return (lv && (int)wParam >= 0 && (int)wParam < win->header_count) ? lv->column_widths[wParam] : 0;
+    case LVM_SETCOLUMNWIDTH:
+        lv = u32_ensure_listview(win);
+        if (!lv || (int)wParam < 0 || (int)wParam >= win->header_count) return FALSE;
+        lv->column_widths[wParam] = (int)lParam;
+        u32_mark_invalid(hWnd);
+        return TRUE;
+    case LVM_GETITEMRECT:
+        {
+            RECT *item_rect = (RECT*)lParam;
+            int row = (int)wParam;
+            if (!item_rect || row < 0 || row >= win->listview_item_count) return FALSE;
+            item_rect->left = 0; item_rect->top = 16 + row * 14 - win->scroll_pos[1];
+            item_rect->right = 0; item_rect->bottom = item_rect->top + 14;
             return TRUE;
         }
     case EM_GETSEL:
@@ -3739,25 +4135,6 @@ LRESULT SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     case EM_UNDO:
     case EM_EMPTYUNDOBUFFER:
         return FALSE;
-    case LVM_GETITEMW:
-        {
-            LVITEMW *item = (LVITEMW*)lParam;
-            if (!item) return FALSE;
-            if ((item->mask & LVIF_STATE) != 0) {
-                item->state = (item->iItem == 0 && win->listview_item_count > 0) ? LVIS_SELECTED : 0;
-            }
-            if ((item->mask & LVIF_TEXT) != 0 && item->pszText && item->iItem >= 0 && item->iItem < MAX_LV_ITEMS &&
-                item->iSubItem >= 0 && item->iSubItem < MAX_LV_COLUMNS) {
-                lv = (U32_LISTVIEW_DATA*)win->listview_data;
-                if (!lv) {
-                    item->pszText[0] = 0;
-                    return TRUE;
-                }
-                u32_lv_copy_out(item->pszText, item->cchTextMax > 0 ? item->cchTextMax : 64,
-                                lv->items[item->iItem][item->iSubItem]);
-            }
-            return TRUE;
-        }
     case HDM_GETITEMCOUNT:
         return (LRESULT)win->header_count;
     case HDM_GETITEMW:

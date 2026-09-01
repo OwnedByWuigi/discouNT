@@ -19,7 +19,7 @@ typedef uint32_t ACCESS_MASK;
 typedef ACCESS_MASK REGSAM;
 
 typedef struct _LARGE_INTEGER {
-    LONGLONG QuadPart;
+    union { struct { DWORD LowPart; LONG HighPart; } u; LONGLONG QuadPart; };
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
 typedef struct _ULARGE_INTEGER {

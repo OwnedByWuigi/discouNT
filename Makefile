@@ -139,6 +139,7 @@ EXPLORER_APP := $(BUILD_DIR)/apps/explorer/explorer.exe
 SC_APP := $(BUILD_DIR)/apps/sc/sc.exe
 RUNDLL32_APP := $(BUILD_DIR)/apps/rundll32/rundll32.exe
 PROGMAN_APP := $(BUILD_DIR)/apps/progman/progman.exe
+REGEDIT_APP := $(BUILD_DIR)/apps/regedit/regedit.exe
 PROGMAN_SRCS := $(filter %.c,$(wildcard apps/progman/*.c))
 PROGMAN_MENU_RES := $(BUILD_DIR)/apps/progman/progman.menu.bin
 FLEX ?= flex
@@ -199,7 +200,7 @@ kernel: $(KERNEL_ELF)
 
 dlls: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(WIN32K_DLL)
 
-apps: $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
+apps: $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(REGEDIT_APP) $(WINHLP32_APP) $(DRIVER_SYS_FILES) $(WIN32K_DLL)
 
 resources: $(RESOURCE_MENU_OUTPUTS)
 
@@ -385,6 +386,19 @@ $(PROGMAN_APP): $(PROGMAN_SRCS) apps/progman/progman.h apps/progman/progman.rc i
 	$(CC) $(CPPFLAGS) -Iapps/progman -include string.h -include stdio.h -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,WinMain -o $@ $(PROGMAN_SRCS)
 	@objcopy --add-section .disres=$(PROGMAN_MENU_RES) --set-section-flags .disres=readonly,data $@
 
+REGEDIT_SRCS := $(wildcard apps/regedit/*.c)
+REGEDIT_MENU_RES := $(BUILD_DIR)/apps/regedit/regedit.menu.bin
+$(REGEDIT_APP): $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc resources/regedit_resources.rc include/win32/regedit_api.h include/win32/objsel.h include/win32/ndk/cmtypes.h $(REGEDIT_MENU_RES)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Iapps/regedit -include regedit_api.h -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,wWinMain -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -o $@ $(REGEDIT_SRCS)
+	@objcopy --add-section .disres=$(REGEDIT_MENU_RES) --set-section-flags .disres=readonly,data $@
+
+$(REGEDIT_MENU_RES): resources/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
+	@mkdir -p $(@D)
+	python3 tools/rc_menu_gen.py $< $@
+
+
+
 $(SC_APP): apps/sc/sc.c include/win32/winsvc.h include/win32/windows.h dlls/kernel32/kernel32.c dlls/advapi32/advapi32.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -include stdio.h -include string.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
@@ -496,7 +510,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	@mkdir -p "$(WEB_DIR)"
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
-$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(REGISTRY_HIVES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
+$(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(REGEDIT_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(REGISTRY_HIVES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
 	@cp "$(PROGMAN_INI)" "$(SYSTEM32_DIR)/progman.ini"
@@ -563,6 +577,7 @@ $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_
 	@if [ -f "$(PROGMAN_APP)" ]; then \
 		cp "$(PROGMAN_APP)" "$(SYSTEM32_DIR)/PROGMAN.EXE"; \
 	fi
+	@if [ -f "$(REGEDIT_APP)" ]; then cp "$(REGEDIT_APP)" "$(SYSTEM32_DIR)/REGEDIT.EXE"; fi
 	@if [ -f "$(WINHLP32_APP)" ]; then \
 		cp "$(WINHLP32_APP)" "$(SYSTEM32_DIR)/WINHLP32.EXE"; \
 	fi
