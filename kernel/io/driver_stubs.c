@@ -97,6 +97,7 @@ static void (*pNetInit)(void) = 0;
 static void (*pNetPoll)(void) = 0;
 static int (*pNetIsReady)(void) = 0;
 static int (*pNetPing)(const char *ip_text, char *out_text, int out_text_len) = 0;
+static int (*pNetResolve)(const char *name, char *out_ip, int out_ip_len) = 0;
 
 static void (*pFbInit)(void *multiboot_info) = 0;
 static void (*pFbClearScreen)(uint8_t color) = 0;
@@ -241,6 +242,7 @@ void NetInit(void) { if (pNetInit) pNetInit(); }
 void NetPoll(void) { if (pNetPoll) pNetPoll(); }
 int NetIsReady(void) { return pNetIsReady ? pNetIsReady() : 0; }
 int NetPing(const char *ip_text, char *out_text, int out_text_len) { return pNetPing ? pNetPing(ip_text, out_text, out_text_len) : 0; }
+int NetResolve(const char *name, char *out_ip, int out_ip_len) { return pNetResolve ? pNetResolve(name, out_ip, out_ip_len) : -1; }
 
 void FbInit(void *multiboot_info) { if (pFbInit) pFbInit(multiboot_info); if (pFbGetWidth) fb_width = pFbGetWidth(); if (pFbGetHeight) fb_height = pFbGetHeight(); }
 void FbClearScreen(uint8_t color) { if (pFbClearScreen) pFbClearScreen(color); }
@@ -372,6 +374,7 @@ void DriverInstallNet(void *image) {
     RESOLVE(pNetPoll, image, "NetPoll");
     RESOLVE(pNetIsReady, image, "NetIsReady");
     RESOLVE(pNetPing, image, "NetPing");
+    RESOLVE(pNetResolve, image, "NetResolve");
 }
 
 void DriverInstallFb(void *image) {

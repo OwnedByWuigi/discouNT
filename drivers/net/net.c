@@ -109,6 +109,8 @@ static uint8_t nic_mac[6];
 static uint8_t nic_ip[4] = {10,0,2,15};
 static uint8_t nic_mask[4] = {255,255,255,0};
 static uint8_t nic_gateway[4] = {10,0,2,2};
+static uint8_t nic_dns[4];
+static int nic_dns_valid = 0;
 static int nic_ready = 0;
 static const NIC_OPS *nic_ops = 0;
 
@@ -126,6 +128,10 @@ static uint8_t dhcp_offer_ip[4];
 static uint8_t dhcp_server_ip[4];
 static uint8_t dhcp_offer_mask[4];
 static uint8_t dhcp_offer_gateway[4];
+static uint16_t dns_query_id = 0x4E54;
+static int dns_query_active = 0;
+static int dns_result_valid = 0;
+static uint8_t dns_result_ip[4];
 
 static uint16_t bswap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
 static uint32_t bswap32(uint32_t v) {
@@ -715,6 +721,8 @@ static void dhcp_reset_offer_state(void) {
     memset(dhcp_server_ip, 0, 4);
     memset(dhcp_offer_mask, 0, 4);
     memset(dhcp_offer_gateway, 0, 4);
+    memset(nic_dns, 0, 4);
+    nic_dns_valid = 0;
 }
 
 static void send_dhcp_packet(uint8_t msg_type, const uint8_t requested_ip[4], const uint8_t server_ip[4]) {
@@ -741,6 +749,168 @@ static void send_dhcp_packet(uint8_t msg_type, const uint8_t requested_ip[4], co
     SerialPutString("[NET] DHCP send ");
     SerialPutString(msg_type == 1 ? "DISCOVER\r\n" : "REQUEST\r\n");
     send_udp_ipv4(zero_ip, broadcast_ip, broadcast_mac, 68, 67, &pkt, sizeof(pkt), 64, (uint16_t)dhcp_xid);
+}
+
+static uint16_t dns_read16(const uint8_t *p) {
+    return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+/* Advance over a DNS name, including compressed names.  The returned offset
+   always points just after the name in the original message. */
+static int dns_skip_name(const uint8_t *msg, int len, int offset) {
+    int jumps = 0;
+    while (offset < len) {
+        uint8_t count = msg[offset++];
+        if (count == 0) return offset;
+        if ((count & 0xC0) == 0xC0) {
+            if (offset >= len) return -1;
+            return offset + 1;
+        }
+        if (count & 0xC0) return -1;
+        if (count > 63 || offset + count > len) return -1;
+        offset += count;
+        if (++jumps > 128) return -1;
+    }
+    return -1;
+}
+
+static void handle_dns_response(const uint8_t *payload, int len) {
+    int offset;
+    uint16_t questions, answers;
+    if (!dns_query_active || len < 12 || dns_read16(payload) != dns_query_id) return;
+    SerialPutString("[NET] DNS response id="); SerialPrintHex((uint8_t)(dns_read16(payload) >> 8));
+    SerialPrintHex((uint8_t)dns_read16(payload)); SerialPutString(" flags=");
+    SerialPrintHex((uint8_t)(dns_read16(payload + 2) >> 8)); SerialPrintHex((uint8_t)dns_read16(payload + 2));
+    SerialPutString(" answers="); SerialPrintDec(dns_read16(payload + 6)); SerialPutString("\r\n");
+    if (!(dns_read16(payload + 2) & 0x8000) || (dns_read16(payload + 2) & 0x000F)) return;
+    questions = dns_read16(payload + 4);
+    answers = dns_read16(payload + 6);
+    if (questions == 0 || answers == 0) return;
+    offset = 12;
+    for (uint16_t i = 0; i < questions; i++) {
+        offset = dns_skip_name(payload, len, offset);
+        if (offset < 0 || offset + 4 > len) return;
+        offset += 4;
+    }
+    for (uint16_t i = 0; i < answers; i++) {
+        uint16_t type, klass, rdlen;
+        offset = dns_skip_name(payload, len, offset);
+        if (offset < 0 || offset + 10 > len) return;
+        type = dns_read16(payload + offset);
+        klass = dns_read16(payload + offset + 2);
+        rdlen = dns_read16(payload + offset + 8);
+        offset += 10;
+        if (offset + rdlen > len) return;
+        if (type == 1 && klass == 1 && rdlen == 4) {
+            memcpy(dns_result_ip, payload + offset, 4);
+            dns_result_valid = 1;
+            dns_query_active = 0;
+            return;
+        }
+        offset += rdlen;
+    }
+}
+
+static int dns_encode_name(const char *name, uint8_t *out, int out_len) {
+    int start = 0, pos = 0, name_len = 0;
+    while (name[name_len]) name_len++;
+    if (!name_len || name[name_len - 1] == '.') return -1;
+    for (int i = 0; i <= name_len; i++) {
+        if (name[i] == '.' || name[i] == 0) {
+            int label_len = i - start;
+            if (label_len < 1 || label_len > 63 || pos + label_len + 2 > out_len) return -1;
+            out[pos++] = (uint8_t)label_len;
+            memcpy(out + pos, name + start, (uint32_t)label_len);
+            pos += label_len;
+            if (name[i] == 0) break;
+            start = i + 1;
+        }
+    }
+    out[pos++] = 0;
+    return pos;
+}
+
+int NetResolve(const char *name, char *out_ip, int out_ip_len) {
+    uint8_t literal[4], next_hop[4], dns_mac[6];
+    uint8_t query[512];
+    int name_end, query_len;
+    char ipbuf[32];
+    if (!name || !out_ip || out_ip_len < 16) return -1;
+    if (parse_ip(name, literal)) {
+        format_ip(literal, out_ip);
+        return 0;
+    }
+    if (!NetIsReady() || !nic_dns_valid) return -2;
+    if (ip_same_subnet(nic_ip, nic_dns)) ip_copy(next_hop, nic_dns);
+    else ip_copy(next_hop, nic_gateway);
+    dns_result_valid = 0;
+    arp_valid = 0;
+    send_arp_request(next_hop);
+    for (volatile int i = 0; i < 4000000 && !arp_valid; i++) {
+        if ((i & 0x7FF) == 0) NetPoll();
+    }
+    if (!arp_valid || !ip_equal(arp_ip, next_hop)) {
+        SerialPutString("[NET] DNS ARP timeout; trying fallback\r\n");
+    } else {
+        memcpy(dns_mac, arp_mac, 6);
+
+    memset(query, 0, sizeof(query));
+    dns_query_id++;
+    query[0] = (uint8_t)(dns_query_id >> 8); query[1] = (uint8_t)dns_query_id;
+    query[2] = 0x01; query[3] = 0x00; /* recursion desired */
+    query[5] = 1; /* one question */
+    name_end = dns_encode_name(name, query + 12, sizeof(query) - 12);
+    if (name_end < 0) return -4;
+    query_len = 12 + name_end;
+    query[query_len++] = 0; query[query_len++] = 1; /* A */
+    query[query_len++] = 0; query[query_len++] = 1; /* IN */
+        dns_result_valid = 0;
+        for (int attempt = 0; attempt < 2 && !dns_result_valid; attempt++) {
+            dns_query_id++;
+            query[0] = (uint8_t)(dns_query_id >> 8); query[1] = (uint8_t)dns_query_id;
+            dns_query_active = 1;
+            send_udp_ipv4(nic_ip, nic_dns, dns_mac, 53000, 53, query, query_len, 64, dns_query_id);
+            for (volatile int i = 0; i < 12000000 && !dns_result_valid; i++) {
+                if ((i & 0x7FF) == 0) NetPoll();
+            }
+        }
+        dns_query_active = 0;
+    }
+    /* A few NAT implementations advertise a guest DNS proxy in DHCP but do
+       not actually forward guest UDP/53 traffic to it.  Keep the lease DNS
+       as the primary choice, then use a bounded public-DNS fallback through
+       the configured gateway. */
+    if (!dns_result_valid &&
+        !(nic_dns[0] == 8 && nic_dns[1] == 8 && nic_dns[2] == 8 && nic_dns[3] == 8)) {
+        uint8_t fallback_dns[4] = {8, 8, 8, 8};
+        ip_copy(next_hop, nic_gateway);
+        arp_valid = 0;
+        send_arp_request(next_hop);
+        for (volatile int i = 0; i < 4000000 && !arp_valid; i++) {
+            if ((i & 0x7FF) == 0) NetPoll();
+        }
+        if (arp_valid && ip_equal(arp_ip, next_hop)) {
+            memcpy(dns_mac, arp_mac, 6);
+            SerialPutString("[NET] DNS retry via 8.8.8.8\r\n");
+            for (int attempt = 0; attempt < 2 && !dns_result_valid; attempt++) {
+                dns_query_id++;
+                query[0] = (uint8_t)(dns_query_id >> 8); query[1] = (uint8_t)dns_query_id;
+                dns_query_active = 1;
+                send_udp_ipv4(nic_ip, fallback_dns, dns_mac, 53000, 53, query, query_len, 64, dns_query_id);
+                for (volatile int i = 0; i < 12000000 && !dns_result_valid; i++) {
+                    if ((i & 0x7FF) == 0) NetPoll();
+                }
+            }
+            dns_query_active = 0;
+        }
+    }
+    if (!dns_result_valid) {
+        SerialPutString("[NET] DNS response timeout\r\n");
+        return -5;
+    }
+    format_ip(dns_result_ip, ipbuf);
+    strcpy(out_ip, ipbuf);
+    return 0;
 }
 
 static void handle_arp(const uint8_t *frame, int len) {
@@ -780,10 +950,22 @@ static void handle_ipv4(const uint8_t *frame, int len) {
         const uint8_t *opt;
         int udp_len;
         int msg_type = 0;
-        if (len < (int)(sizeof(ETH_HDR) + ihl + sizeof(UDP_HDR) + 240)) return;
+        if (len < (int)(sizeof(ETH_HDR) + ihl + sizeof(UDP_HDR))) return;
         udp = (const UDP_HDR*)(frame + sizeof(ETH_HDR) + ihl);
-        if (bswap16(udp->src_port) != 67 || bswap16(udp->dst_port) != 68) return;
         udp_len = bswap16(udp->length);
+        if (udp_len < (int)sizeof(UDP_HDR) ||
+            udp_len > len - (int)sizeof(ETH_HDR) - ihl) return;
+        /* Some virtual networking backends preserve the query port while
+           others normalize it during user-mode NAT.  While a query is
+           outstanding, accept DNS replies from port 53 and let the DNS
+           transaction ID provide the final association. */
+        if (dns_query_active && bswap16(udp->src_port) == 53) {
+            SerialPutString("[NET] DNS UDP response received len=");
+            SerialPrintDec(udp_len - sizeof(UDP_HDR)); SerialPutString("\r\n");
+            handle_dns_response((const uint8_t*)udp + sizeof(UDP_HDR), udp_len - sizeof(UDP_HDR));
+            return;
+        }
+        if (bswap16(udp->src_port) != 67 || bswap16(udp->dst_port) != 68) return;
         if (udp_len < (int)(sizeof(UDP_HDR) + 240)) return;
         dhcp = (const DHCP_PKT*)(frame + sizeof(ETH_HDR) + ihl + sizeof(UDP_HDR));
         if (dhcp->op != 2 || dhcp->htype != 1 || dhcp->hlen != 6) return;
@@ -800,6 +982,10 @@ static void handle_ipv4(const uint8_t *frame, int len) {
             else if (code == 1 && olen >= 4) memcpy(dhcp_offer_mask, opt, 4);
             else if (code == 3 && olen >= 4) memcpy(dhcp_offer_gateway, opt, 4);
             else if (code == 54 && olen >= 4) memcpy(dhcp_server_ip, opt, 4);
+            else if (code == 6 && olen >= 4) {
+                memcpy(nic_dns, opt, 4);
+                nic_dns_valid = 1;
+            }
             opt += olen;
         }
         if (msg_type == 2) {
@@ -903,6 +1089,10 @@ void NetInit(void) {
             SerialPutString(" GW=");
             format_ip(nic_gateway, ipbuf);
             SerialPutString(ipbuf);
+            SerialPutString(" DNS=");
+            if (nic_dns_valid) format_ip(nic_dns, ipbuf);
+            else strcpy(ipbuf, "none");
+            SerialPutString(ipbuf);
             SerialPutString("\r\n");
         }
     } else {
@@ -915,9 +1105,15 @@ int NetPing(const char *ip_text, char *out_text, int out_text_len) {
     uint8_t next_hop[4];
     uint8_t target_mac[6];
     char ipbuf[32];
-    (void)out_text_len;
+    int replies = 0;
+    char result[4];
     if (!NetIsReady()) { strcpy(out_text, "Network unavailable"); return -1; }
-    if (!parse_ip(ip_text, target_ip)) { strcpy(out_text, "Usage: PING a.b.c.d"); return -2; }
+    if (!parse_ip(ip_text, target_ip)) {
+        if (NetResolve(ip_text, ipbuf, sizeof(ipbuf)) != 0 || !parse_ip(ipbuf, target_ip)) {
+            strcpy(out_text, "Could not resolve host");
+            return -2;
+        }
+    }
     if (ip_same_subnet(nic_ip, target_ip)) ip_copy(next_hop, target_ip);
     else ip_copy(next_hop, nic_gateway);
     arp_valid = 0;
@@ -927,16 +1123,34 @@ int NetPing(const char *ip_text, char *out_text, int out_text_len) {
     }
     if (!arp_valid || !ip_equal(arp_ip, next_hop)) { strcpy(out_text, "ARP timeout"); return -3; }
     memcpy(target_mac, arp_mac, 6);
-    ping_got_reply = 0;
-    send_icmp_echo(target_ip, target_mac, ping_sequence);
-    for (volatile int i = 0; i < 12000000 && !ping_got_reply; i++) {
-        if ((i & 0x7FF) == 0) NetPoll();
+    for (int attempt = 0; attempt < 4; attempt++) {
+        ping_got_reply = 0;
+        send_icmp_echo(target_ip, target_mac, ping_sequence);
+        for (volatile int i = 0; i < 12000000 && !ping_got_reply; i++) {
+            if ((i & 0x7FF) == 0) NetPoll();
+        }
+        result[attempt] = ping_got_reply ? 1 : 0;
+        if (ping_got_reply) replies++;
+        ping_sequence++;
     }
-    if (!ping_got_reply) { strcpy(out_text, "Request timed out"); ping_sequence++; return -4; }
+    if (!replies) {
+        strcpy(out_text, "Request timed out: #1 timeout #2 timeout #3 timeout #4 timeout");
+        return -4;
+    }
     strcpy(out_text, "Reply from ");
     format_ip(ping_reply_ip, ipbuf);
     strcat(out_text, ipbuf);
-    strcat(out_text, ": bytes=32");
-    ping_sequence++;
+    strcat(out_text, ": ");
+    for (int attempt = 0; attempt < 4; attempt++) {
+        strcat(out_text, "#");
+        itoa(attempt + 1, ipbuf, 10);
+        strcat(out_text, ipbuf);
+        strcat(out_text, result[attempt] ? " reply" : " timeout");
+        if (attempt != 3) strcat(out_text, " ");
+    }
+    strcat(out_text, " (");
+    itoa(replies, ipbuf, 10);
+    strcat(out_text, ipbuf);
+    strcat(out_text, "/4 replies)");
     return 0;
 }

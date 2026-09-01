@@ -600,7 +600,7 @@ static void cmd_process_input(void) {
     } else if (strcmp(cmd, "PING") == 0) {
         char ping_out[CMD_COLS + 1];
         if (!args || !*skip_spaces(args)) {
-            cmd_append_line("Usage: PING a.b.c.d");
+            cmd_append_line("Usage: PING host-or-address");
         } else if (!g_api->Ping) {
             cmd_append_line("Ping unavailable");
         } else {

@@ -7,5 +7,6 @@ void NetInit(void);
 void NetPoll(void);
 int NetIsReady(void);
 int NetPing(const char *ip_text, char *out_text, int out_text_len);
+int NetResolve(const char *name, char *out_ip, int out_ip_len);
 
 #endif

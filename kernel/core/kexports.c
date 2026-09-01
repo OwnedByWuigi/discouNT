@@ -165,6 +165,7 @@ static KERNEL_EXPORT kernel_exports[] = {
     {"NetPoll", NetPoll},
     {"NetIsReady", NetIsReady},
     {"NetPing", NetPing},
+    {"NetResolve", NetResolve},
     {"VgaInit", VgaInit},
     {"VgaClearScreen", VgaClearScreen},
     {"VgaPutPixel", VgaPutPixel},
