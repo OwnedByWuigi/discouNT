@@ -768,7 +768,7 @@ __attribute__((visibility("default"))) int CmdAppInit(const GUI_APP_API *api) {
     cmd_scroll_drag = 0;
     strcpy(current_path, "/");
     CMD_LA_TRACE("[CMD] Current path initialized\r\n");
-    strcpy(exec_path, "/SYSTEM32");
+    strcpy(exec_path, "/DISCOUNT/SYSTEM32");
     CMD_LA_TRACE("[CMD] Executable path initialized\r\n");
     cmd_pid = (g_api && g_api->GetProcessId) ? g_api->GetProcessId() : 0;
     CMD_LA_TRACE("[CMD] Process id initialized\r\n");

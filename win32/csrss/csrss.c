@@ -1245,8 +1245,8 @@ void CsrssSessionRun(void *mb_info) {
     while (running) {
         UsbPoll();
         if (g_session_state == CSRSS_SESSION_LOGGED_ON && !g_shell_started) {
-            if (csrss_spawn_gui_instance("/SYSTEM32/PROGMAN.EXE", "") < 0) {
-                csrss_queue_launch_error("/SYSTEM32/PROGMAN.EXE", "The logon shell could not be started.");
+            if (csrss_spawn_gui_instance("/DISCOUNT/SYSTEM32/PROGMAN.EXE", "") < 0) {
+                csrss_queue_launch_error("/DISCOUNT/SYSTEM32/PROGMAN.EXE", "The logon shell could not be started.");
                 g_session_state = CSRSS_SESSION_LOGGING_OFF;
             } else {
                 g_shell_started = 1;
@@ -1513,7 +1513,7 @@ void CsrssSessionRun(void *mb_info) {
             if (remove) {
                 if (g_kernel32_set_console_sink &&
                     g_gui_apps[i].kind == GUI_APP_KIND_CUSTOM &&
-                    strcmp(g_gui_apps[i].path, "/SYSTEM32/CMD.EXE") == 0)
+                    strcmp(g_gui_apps[i].path, "/DISCOUNT/SYSTEM32/CMD.EXE") == 0)
                     g_kernel32_set_console_sink(0);
                 if (g_gui_apps[i].image) {
                     PeFreeImage(g_gui_apps[i].image);

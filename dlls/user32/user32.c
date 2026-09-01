@@ -4293,7 +4293,7 @@ HDESK GetThreadDesktop(DWORD thread){(void)thread;return (HDESK)(ULONG_PTR)1;}
 HDESK CreateDesktopW(LPCWSTR desktop,LPCWSTR device,DEVMODEW *mode,DWORD flags,DWORD access,void *attributes){(void)desktop;(void)device;(void)mode;(void)flags;(void)access;(void)attributes;return (HDESK)(ULONG_PTR)1;}
 BOOL GetUserObjectInformationW(HANDLE object,int index,PVOID info,DWORD length,DWORD *needed){(void)object;if(index==UOI_FLAGS){if(needed)*needed=sizeof(USEROBJECTFLAGS);if(info&&length>=sizeof(USEROBJECTFLAGS)){USEROBJECTFLAGS*f=info;f->fInherit=FALSE;f->fReserved=FALSE;f->dwFlags=WSF_VISIBLE;return TRUE;}}return FALSE;}
 BOOL SetShellWindow(HWND shell){(void)shell;return TRUE;}
-BOOL PaintDesktop(HDC dc){RECT r={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};extern BOOL GdiPaintWallpaper(HDC,const char*);if(GdiPaintWallpaper(dc,"WEB/IMG0.JPG"))return TRUE;HBRUSH b=CreateSolidBrush(RGB(0,0,128));BOOL ok=FillRect(dc,&r,b);if(b)DeleteObject(b);return ok;}
+BOOL PaintDesktop(HDC dc){RECT r={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};extern BOOL GdiPaintWallpaper(HDC,const char*);if(GdiPaintWallpaper(dc,"DISCOUNT/WEB/IMG0.JPG"))return TRUE;HBRUSH b=CreateSolidBrush(RGB(0,0,128));BOOL ok=FillRect(dc,&r,b);if(b)DeleteObject(b);return ok;}
 BOOL PeekMessageW(LPMSG msg,HWND hwnd,UINT min,UINT max,UINT remove){return u32_dequeue_message(msg,hwnd,min,max,(remove&PM_REMOVE)!=0);}
 DWORD MsgWaitForMultipleObjects(DWORD count,const HANDLE *handles,BOOL all,DWORD timeout,DWORD mask){(void)mask;return WaitForMultipleObjects(count,handles,all,timeout);}
 LONG ChangeDisplaySettingsExW(LPCWSTR device,DEVMODEW *mode,HWND hwnd,DWORD flags,LPVOID param){(void)device;(void)mode;(void)hwnd;(void)flags;(void)param;return 0;}

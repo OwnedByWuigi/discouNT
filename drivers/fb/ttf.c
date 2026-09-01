@@ -468,7 +468,7 @@ int FbTtfLoad(const char *path) {
     uint8_t *data = 0;
     uint32_t size = 0;
     (void)path;
-    if (ttf.ready || !CdfsReadFile("/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size))
+    if (ttf.ready || !CdfsReadFile("/DISCOUNT/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size))
         return ttf.ready;
 
     ttf.data = data;

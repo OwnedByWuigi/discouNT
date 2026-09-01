@@ -25,7 +25,7 @@ extern int CsrssExecuteImage(const char *path);
 extern HFILE _lopen(LPCSTR path, int read_write);
 extern uint32_t KeGetPhysicalMemoryPages(void);
 
-UINT WINAPI GetSystemDirectoryW(LPWSTR b, UINT n) { static const WCHAR s[] = L"/SYSTEM32"; UINT i=0; if(!b||!n)return 0; while(i+1<n&&s[i]){b[i]=s[i];i++;} b[i]=0; return i; }
+UINT WINAPI GetSystemDirectoryW(LPWSTR b, UINT n) { static const WCHAR s[] = L"/DISCOUNT/SYSTEM32"; UINT i=0; if(!b||!n)return 0; while(i+1<n&&s[i]){b[i]=s[i];i++;} b[i]=0; return i; }
 BOOL WINAPI GlobalMemoryStatusEx(void *status) {
     uint64_t total = (uint64_t)KeGetPhysicalMemoryPages() * 4096;
     uint64_t *values = (uint64_t *)((uint8_t *)status + 8);

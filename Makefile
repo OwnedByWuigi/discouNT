@@ -1,9 +1,10 @@
 BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
-SYSTEM32_DIR := $(ISO_DIR)/SYSTEM32
+DISCOUNT_DIR := $(ISO_DIR)/DISCOUNT
+SYSTEM32_DIR := $(DISCOUNT_DIR)/SYSTEM32
 GRUB_DIR := $(ISO_DIR)/boot/grub
 KERNEL_ISO_PATH := $(SYSTEM32_DIR)/NTOSKRNL.EXE
-WEB_DIR := $(ISO_DIR)/Web
+WEB_DIR := $(DISCOUNT_DIR)/Web
 WALLPAPER_FILES := $(wildcard media/wallpaper/*)
 WALLPAPER_STAMP := $(WEB_DIR)/.stamp
 
@@ -167,7 +168,7 @@ FB_SYS := $(BUILD_DIR)/drivers/fb/fb.sys
 FONT_DIR := $(SYSTEM32_DIR)/FONTS
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 MEDIA_FILES := $(wildcard media/audio/*)
-MEDIA_DIR := $(ISO_DIR)/Media
+MEDIA_DIR := $(DISCOUNT_DIR)/Media
 USB_SYS := $(BUILD_DIR)/drivers/usb/usb.sys
 IDE_SYS := $(BUILD_DIR)/drivers/ide/ide.sys
 AHCI_SYS := $(BUILD_DIR)/drivers/ahci/ahci.sys
@@ -202,6 +203,7 @@ apps: $(BUILT_APP_FILES) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(
 resources: $(RESOURCE_MENU_OUTPUTS)
 
 $(ISO_NAME): $(SYSTEM32_DIR)/.stamp $(GRUB_DIR)/grub.cfg
+	@rm -rf "$(ISO_DIR)/SYSTEM32" "$(ISO_DIR)/Media" "$(ISO_DIR)/Web" "$(ISO_DIR)/APPS" "$(ISO_DIR)/Main.grp" "$(ISO_DIR)/progman.ini"
 	$(GRUB_MKRESCUE) -o $@ $(ISO_DIR) -volid DISCOUNT
 
 $(KERNEL_ELF): $(BOOT_OBJ) $(KERNEL_OBJS) $(KERNEL_EXTRA_OBJS)
@@ -495,9 +497,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 
 $(SYSTEM32_DIR)/.stamp: $(DLL_OUTPUTS) $(WININET_DLL) $(MSGINA_DLL) $(BUILT_APP_FILES) $(UMDFHOST_APP) $(WAVPLAY_APP) $(CMD_APP) $(CONTROL_APP) $(SMSS_APP) $(CSRSS_APP) $(DESK_CPL) $(TASKMGR_APP) $(NOTEPAD_APP) $(WINVER_APP) $(DXDIAG_APP) $(WHOAMI_APP) $(EXPLORER_APP) $(SC_APP) $(RUNDLL32_APP) $(PROGMAN_APP) $(WINHLP32_APP) $(RESOURCE_MENU_OUTPUTS) $(DRIVER_SYS_FILES) $(WIN32K_DLL) $(KERNEL_ELF) $(FONT_SOURCES) $(MEDIA_FILES) $(MAIN_GRP) $(PROGMAN_INI) $(WALLPAPER_STAMP)
 	@mkdir -p $(SYSTEM32_DIR)
-	@cp "$(MAIN_GRP)" "$(ISO_DIR)/Main.grp"
 	@cp "$(MAIN_GRP)" "$(SYSTEM32_DIR)/Main.grp"
-	@cp "$(PROGMAN_INI)" "$(ISO_DIR)/progman.ini"
 	@cp "$(PROGMAN_INI)" "$(SYSTEM32_DIR)/progman.ini"
 	@mkdir -p $(DRIVERS_DIR)
 	@mkdir -p $(FONT_DIR)

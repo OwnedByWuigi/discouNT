@@ -18,7 +18,7 @@ void WINAPI RunFileDlg(HWND owner, HICON icon, const char *dir,
 {
     STARTUPINFOW startup;
     PROCESS_INFORMATION process;
-    WCHAR command[] = L"/SYSTEM32/CMD.EXE";
+    WCHAR command[] = L"/DISCOUNT/SYSTEM32/CMD.EXE";
     (void)icon;
     (void)dir;
     (void)title;

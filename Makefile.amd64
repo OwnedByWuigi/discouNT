@@ -4,11 +4,12 @@ LD := ld
 NASM := nasm
 ISO_NAME := ntos-amd64.iso
 ISO_DIR := $(BUILD_DIR)/iso
+DISCOUNT_DIR := $(ISO_DIR)/DISCOUNT
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 MEDIA_FILES := $(wildcard media/audio/*)
-MEDIA_DIR := $(ISO_DIR)/Media
+MEDIA_DIR := $(DISCOUNT_DIR)/Media
 WALLPAPER_FILES := $(wildcard media/wallpaper/*)
-WEB_DIR := $(ISO_DIR)/Web
+WEB_DIR := $(DISCOUNT_DIR)/Web
 WALLPAPER_STAMP := $(WEB_DIR)/.stamp
 
 CPPFLAGS := -Iinclude/win32 -Ikernel -Iwin32 -Idrivers/cdfs -Idrivers/fb \
@@ -65,28 +66,27 @@ all: iso
 userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
 
 iso: $(KERNEL) userspace $(MAIN_GRP) $(MEDIA_FILES) $(WALLPAPER_STAMP)
-	@rm -rf $(ISO_DIR)/SYSTEM32
-	@mkdir -p $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
-	@mkdir -p $(ISO_DIR)/SYSTEM32/DRIVERS
-	@mkdir -p $(ISO_DIR)/SYSTEM32/FONTS
+	@rm -rf $(DISCOUNT_DIR)
+	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32 $(ISO_DIR)/boot/grub
+	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/DRIVERS
+	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/FONTS
 	@mkdir -p $(MEDIA_DIR)
 	@mkdir -p $(WEB_DIR)
 	@for audio in $(MEDIA_FILES); do cp "$$audio" "$(MEDIA_DIR)/$$(basename "$$audio")"; done
-	cp $(MAIN_GRP) $(ISO_DIR)/Main.grp
-	cp $(PROGMAN_INI) $(ISO_DIR)/progman.ini
-	cp $(MAIN_GRP) $(ISO_DIR)/SYSTEM32/Main.grp
-	cp $(PROGMAN_INI) $(ISO_DIR)/SYSTEM32/progman.ini
-	cp $(KERNEL) $(ISO_DIR)/SYSTEM32/NTOSKRNL.EXE
+	cp $(MAIN_GRP) $(DISCOUNT_DIR)/SYSTEM32/Main.grp
+	cp $(PROGMAN_INI) $(DISCOUNT_DIR)/SYSTEM32/progman.ini
+	cp $(KERNEL) $(DISCOUNT_DIR)/SYSTEM32/NTOSKRNL.EXE
 	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
-		cp "$$image" "$(ISO_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$image" "$(DISCOUNT_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@for driver in $(NATIVE_DRIVERS); do \
-		cp "$$driver" "$(ISO_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$driver" "$(DISCOUNT_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@for font in $(FONT_SOURCES); do \
-		cp "$$font" "$(ISO_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$font" "$(DISCOUNT_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
+	@rm -rf $(ISO_DIR)/SYSTEM32 $(ISO_DIR)/Media $(ISO_DIR)/Web $(ISO_DIR)/APPS $(ISO_DIR)/Main.grp $(ISO_DIR)/progman.ini
 	grub-mkrescue -o $(ISO_NAME) $(ISO_DIR) -volid DISCOUNT
 
 $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py

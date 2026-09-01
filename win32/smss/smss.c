@@ -69,7 +69,7 @@ void SmssSessionRun(void *mb_info) {
     if (!SmssInitialize()) return;
 
     SerialPutString("[SMSS] Starting Session Manager Subsystem\r\n");
-    ret = smss_execute_bootstrap("/SYSTEM32/CSRSS.EXE");
+    ret = smss_execute_bootstrap("/DISCOUNT/SYSTEM32/CSRSS.EXE");
     if (ret != CSRSS_RETURN_MAGIC && ret != 0) {
         SerialPutString("[SMSS] CSRSS bootstrap failed, status=");
         SerialPrintHex((uint32_t)ret);

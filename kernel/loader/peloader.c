@@ -1433,8 +1433,8 @@ void *PeLoadDll(const char *dll_name) {
     SerialPutString(upper_name);
     SerialPutString("\r\n");
     
-    // Try /SYSTEM32/ first
-    strcpy(path, "SYSTEM32/");
+    // Try the DISCOUNT system directory first
+    strcpy(path, "DISCOUNT/SYSTEM32/");
     strcat(path, upper_name);
     
     SerialPutString("[PE] Trying path: ");
@@ -1448,7 +1448,7 @@ void *PeLoadDll(const char *dll_name) {
         SerialPutString("[PE] Not found in SYSTEM32, trying APPS...\r\n");
         
         // Try /APPS/
-        strcpy(path, "APPS/");
+        strcpy(path, "DISCOUNT/APPS/");
         strcat(path, upper_name);
         
         SerialPutString("[PE] Trying path: ");

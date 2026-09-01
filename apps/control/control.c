@@ -85,7 +85,8 @@ static int resolve_system32(uint32_t *out_lba, uint32_t *out_size) {
     if (!g_api || !g_api->ReadSector || !g_api->ReadSector(16, sector)) return 0;
     root_lba = *(uint32_t*)(sector + 156 + 2);
     root_size = *(uint32_t*)(sector + 156 + 10);
-    return sector_find_entry(root_lba, root_size, "SYSTEM32", out_lba, out_size, &is_dir) && is_dir;
+    if (!sector_find_entry(root_lba, root_size, "DISCOUNT", out_lba, out_size, &is_dir) || !is_dir) return 0;
+    return sector_find_entry(*out_lba, *out_size, "SYSTEM32", out_lba, out_size, &is_dir) && is_dir;
 }
 
 static void load_cpls(void) {
@@ -121,7 +122,7 @@ static void load_cpls(void) {
 
                 if (!(flags & 0x02) && ends_with_cpl(entry)) {
                     strcpy(g_items[g_item_count].name, entry);
-                    strcpy(g_items[g_item_count].path, "/SYSTEM32/");
+                    strcpy(g_items[g_item_count].path, "/DISCOUNT/SYSTEM32/");
                     strcat(g_items[g_item_count].path, entry);
                     g_item_count++;
                 }

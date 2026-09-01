@@ -26,6 +26,7 @@ USER_CFLAGS := --target=$(TARGET) -ffreestanding -fno-builtin \
 	-fno-stack-protector -fPIC -Wall -Wextra -O0
 IMAGE_BUILDER := sh tools/build_la64_image.sh
 SYSTEM_DIR := $(BUILD_DIR)/system
+DISCOUNT_DIR := $(SYSTEM_DIR)/DISCOUNT
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
 
 C_SRCS := kernel/arch/loongarch64/boot.c \
@@ -98,22 +99,20 @@ kernel: $(KERNEL) $(BOOT_ROM)
 userspace: $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT) $(NATIVE_DRIVERS)
 
 system: kernel userspace $(MAIN_GRP)
-	@mkdir -p $(SYSTEM_DIR)/SYSTEM32/DRIVERS $(SYSTEM_DIR)/SYSTEM32/FONTS
-	cp $(MAIN_GRP) $(SYSTEM_DIR)/Main.grp
-	cp $(PROGMAN_INI) $(SYSTEM_DIR)/progman.ini
-	cp $(MAIN_GRP) $(SYSTEM_DIR)/SYSTEM32/Main.grp
-	cp $(PROGMAN_INI) $(SYSTEM_DIR)/SYSTEM32/progman.ini
-	cp $(KERNEL) $(SYSTEM_DIR)/SYSTEM32/NTOSKRNL.EXE
+	@mkdir -p $(DISCOUNT_DIR)/SYSTEM32/DRIVERS $(DISCOUNT_DIR)/SYSTEM32/FONTS
+	cp $(MAIN_GRP) $(DISCOUNT_DIR)/SYSTEM32/Main.grp
+	cp $(PROGMAN_INI) $(DISCOUNT_DIR)/SYSTEM32/progman.ini
+	cp $(KERNEL) $(DISCOUNT_DIR)/SYSTEM32/NTOSKRNL.EXE
 	@for image in $(NATIVE_DLLS) $(NATIVE_APPS) $(NATIVE_BOOTSTRAP) $(NATIVE_SUPPORT); do \
-		cp "$$image" "$(SYSTEM_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$image" "$(DISCOUNT_DIR)/SYSTEM32/$$(basename "$$image" | tr '[:lower:]' '[:upper:]')"; \
 	done
 
 $(SYSTEM_ISO): system
 	@for driver in $(NATIVE_DRIVERS); do \
-		cp "$$driver" "$(SYSTEM_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$driver" "$(DISCOUNT_DIR)/SYSTEM32/DRIVERS/$$(basename "$$driver" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	@for font in $(FONT_SOURCES); do \
-		cp "$$font" "$(SYSTEM_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
+		cp "$$font" "$(DISCOUNT_DIR)/SYSTEM32/FONTS/$$(basename "$$font" | tr '[:lower:]' '[:upper:]')"; \
 	done
 	xorriso -as mkisofs -quiet -V DISCOUNT -o $@ $(SYSTEM_DIR)
 

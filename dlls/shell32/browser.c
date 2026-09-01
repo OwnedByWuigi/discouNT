@@ -43,10 +43,19 @@ static void browser_populate(BROWSER *b)
     if(b->current)SHGetPathFromIDListW(b->current,path);
     if(!path[0] || (path[0]=='/' && !path[1]))
     {
-        browser_add_item(b,L"SYSTEM32");
+        browser_add_item(b,L"DISCOUNT");
     }
     else if((path[0]=='/' || path[0]=='\\') &&
-            (path[1]=='S' || path[1]=='s'))
+            (path[1]=='D' || path[1]=='d') && path[2]==0)
+    {
+        browser_add_item(b,L"SYSTEM32");
+        browser_add_item(b,L"MEDIA");
+        browser_add_item(b,L"WEB");
+    }
+    else if((path[0]=='/' || path[0]=='\\') &&
+            (path[1]=='D' || path[1]=='d') &&
+            (path[2]=='/' || path[2]=='\\') &&
+            (path[3]=='S' || path[3]=='s'))
     {
         browser_add_item(b,L"CMD.EXE");
         browser_add_item(b,L"EXPLORER.EXE");

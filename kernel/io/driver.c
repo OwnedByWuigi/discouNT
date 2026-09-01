@@ -128,22 +128,22 @@ void DriverLoadAll(void *mb_info) {
     static const char *win32k_deps[] = {"Framebuffer", "Mouse"};
     static const SERVICE_DESCRIPTOR services[] = {
         {"Storage", 0, SERVICE_KERNEL_DRIVER, SERVICE_BOOT_START, "Boot Bus Extender", 0, 0},
-        {"Serial", "/SYSTEM32/DRIVERS/SERIAL.SYS", SERVICE_KERNEL_DRIVER, SERVICE_BOOT_START, "System Bus Extender", 0, 0},
+        {"Serial", "/DISCOUNT/SYSTEM32/DRIVERS/SERIAL.SYS", SERVICE_KERNEL_DRIVER, SERVICE_BOOT_START, "System Bus Extender", 0, 0},
         /* CDFS is initialized from the boot-linked copy before service
            startup.  Loading CDFS.SYS again would re-probe/reinitialize the
            optical drive and causes long idle gaps on VirtualBox media. */
         {"Cdfs", 0, SERVICE_FILE_SYSTEM_DRIVER, SERVICE_SYSTEM_START, "File System", cdfs_deps, 1},
-        {"Vga", "/SYSTEM32/DRIVERS/VGA.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},
-        {"Keyboard", "/SYSTEM32/DRIVERS/KEYBOARD.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Input", input_deps, 1},
-        {"Framebuffer", "/SYSTEM32/DRIVERS/FB.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},
-        {"Mouse", "/SYSTEM32/DRIVERS/MOUSE.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Input", mouse_deps, 2},
-        {"Net", "/SYSTEM32/DRIVERS/NET.SYS", SERVICE_KERNEL_DRIVER, SERVICE_AUTO_START, "Network", 0, 0},
-        {"HDA", "/SYSTEM32/DRIVERS/HDA.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
-        {"ES1371", "/SYSTEM32/DRIVERS/ES1371.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
-        {"AC97", "/SYSTEM32/DRIVERS/AC97.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
-        {"SB16", "/SYSTEM32/DRIVERS/SB16.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
+        {"Vga", "/DISCOUNT/SYSTEM32/DRIVERS/VGA.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},
+        {"Keyboard", "/DISCOUNT/SYSTEM32/DRIVERS/KEYBOARD.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Input", input_deps, 1},
+        {"Framebuffer", "/DISCOUNT/SYSTEM32/DRIVERS/FB.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Video", 0, 0},
+        {"Mouse", "/DISCOUNT/SYSTEM32/DRIVERS/MOUSE.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Input", mouse_deps, 2},
+        {"Net", "/DISCOUNT/SYSTEM32/DRIVERS/NET.SYS", SERVICE_KERNEL_DRIVER, SERVICE_AUTO_START, "Network", 0, 0},
+        {"HDA", "/DISCOUNT/SYSTEM32/DRIVERS/HDA.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
+        {"ES1371", "/DISCOUNT/SYSTEM32/DRIVERS/ES1371.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
+        {"AC97", "/DISCOUNT/SYSTEM32/DRIVERS/AC97.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
+        {"SB16", "/DISCOUNT/SYSTEM32/DRIVERS/SB16.SYS", SERVICE_KERNEL_DRIVER, SERVICE_SYSTEM_START, "Audio", 0, 0},
         {"AudioService", 0, SERVICE_KERNEL_DRIVER, SERVICE_AUTO_START, "Audio", 0, 0},
-        {"Win32k", "/SYSTEM32/WIN32K.DLL", SERVICE_WIN32_SUBSYSTEM, SERVICE_AUTO_START, "Win32", win32k_deps, 2}
+        {"Win32k", "/DISCOUNT/SYSTEM32/WIN32K.DLL", SERVICE_WIN32_SUBSYSTEM, SERVICE_AUTO_START, "Win32", win32k_deps, 2}
     };
     ServiceManagerInitialize();
     ServiceManagerStart(services, sizeof(services) / sizeof(services[0]), driver_load_one, mb_info);

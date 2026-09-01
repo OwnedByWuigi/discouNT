@@ -19,7 +19,7 @@ static int cmd_pos = 0;
 static uint32_t current_dir_lba = 0;
 static uint32_t current_dir_size = 0;
 static char current_path[256] = "/";
-static char exec_path[256] = "/SYSTEM32";
+static char exec_path[256] = "/DISCOUNT/SYSTEM32";
 
 #define SMSS_RETURN_MAGIC 0x534D5353
 
@@ -641,7 +641,7 @@ void NativeCmdInit(void) {
     cmd_pos = 0;
     cmd_buffer[0] = 0;
     init_current_dir();
-    strcpy(exec_path, "/SYSTEM32");
+    strcpy(exec_path, "/DISCOUNT/SYSTEM32");
     show_prompt();
 }
 

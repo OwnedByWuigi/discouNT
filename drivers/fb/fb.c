@@ -518,7 +518,7 @@ static void fb_load_ttf(void) {
     uint8_t *data = 0;
     uint32_t size = 0;
     int c;
-    if (fb_ttf.ready || !CdfsReadFile("/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size)) return;
+    if (fb_ttf.ready || !CdfsReadFile("/DISCOUNT/SYSTEM32/FONTS/TAHOMA.TTF", &data, &size)) return;
     if (size < 12 || !ttf_table(data, size, 0x68656164U) ||
         !ttf_table(data, size, 0x636D6170U) || !ttf_table(data, size, 0x676C7966U)) { kfree(data); return; }
     fb_ttf.data = data; fb_ttf.size = size;
@@ -945,7 +945,7 @@ void FbInit(void *mb_info_ptr) {
     if (fb_try_bga_mode(800, 600, 32) || fb_try_bga_mode(640, 480, 32) ||
         fb_try_vmware_mode(800, 600, 32) || fb_try_vmware_mode(640, 480, 32)) {
         SerialPutString("[FB] Native software compositor active\r\n");
-        FbTtfLoad("/SYSTEM32/FONTS/TAHOMA.TTF");
+        FbTtfLoad("/DISCOUNT/SYSTEM32/FONTS/TAHOMA.TTF");
         FbSwapBuffers();
         return;
     }
