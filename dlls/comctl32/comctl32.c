@@ -18,6 +18,15 @@ __attribute__((stdcall)) int DllMain(void *hModule, uint32_t reason, void *lpRes
 extern uint32_t SendMessageW(void *hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam);
 extern intptr_t DefWindowProcW(void *hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam);
 
+#define COMCTL_IMAGE_LISTS 16
+typedef struct {
+    int used;
+    int count;
+    int capacity;
+    void *handle;
+} COMCTL_IMAGE_LIST;
+static COMCTL_IMAGE_LIST g_image_lists[COMCTL_IMAGE_LISTS];
+
 __attribute__((stdcall)) void InitCommonControls(void) {
 }
 
@@ -40,13 +49,33 @@ __attribute__((stdcall)) void *CreateStatusWindowW(int32_t style, const uint16_t
 }
 
 __attribute__((stdcall)) void *ImageList_Create(int cx, int cy, uint32_t flags, int cInitial, int cGrow) {
-    (void)cx; (void)cy; (void)flags; (void)cInitial; (void)cGrow;
-    return (void*)0x300;
+    int i;
+    (void)cx; (void)cy; (void)flags;
+    for (i = 0; i < COMCTL_IMAGE_LISTS; i++) {
+        if (!g_image_lists[i].used) {
+            g_image_lists[i].used = 1;
+            g_image_lists[i].count = 0;
+            g_image_lists[i].capacity = cInitial > 0 ? cInitial : 1;
+            g_image_lists[i].handle = (void*)&g_image_lists[i];
+            (void)cGrow;
+            return g_image_lists[i].handle;
+        }
+    }
+    return 0;
+}
+
+static COMCTL_IMAGE_LIST *comctl_image_list(void *himl) {
+    int i;
+    for (i = 0; i < COMCTL_IMAGE_LISTS; i++)
+        if (g_image_lists[i].used && g_image_lists[i].handle == himl) return &g_image_lists[i];
+    return 0;
 }
 
 __attribute__((stdcall)) int ImageList_AddIcon(void *himl, void *hicon) {
-    (void)himl; (void)hicon;
-    return 0;
+    COMCTL_IMAGE_LIST *list = comctl_image_list(himl);
+    (void)hicon;
+    if (!list) return -1;
+    return list->count++;
 }
 
 __attribute__((stdcall)) int ImageList_ReplaceIcon(void *himl, int i, void *hicon) {
@@ -55,11 +84,21 @@ __attribute__((stdcall)) int ImageList_ReplaceIcon(void *himl, int i, void *hico
 }
 
 __attribute__((stdcall)) int ImageList_Remove(void *himl, int i) {
-    (void)himl; (void)i;
+    COMCTL_IMAGE_LIST *list = comctl_image_list(himl);
+    if (!list || i < 0 || i >= list->count) return 0;
+    list->count--;
     return 1;
 }
-__attribute__((stdcall)) int ImageList_Destroy(void *himl) { (void)himl; return 1; }
-__attribute__((stdcall)) int ImageList_GetImageCount(void *himl) { (void)himl; return 0; }
+__attribute__((stdcall)) int ImageList_Destroy(void *himl) {
+    COMCTL_IMAGE_LIST *list = comctl_image_list(himl);
+    if (!list) return 0;
+    list->used = 0;
+    return 1;
+}
+__attribute__((stdcall)) int ImageList_GetImageCount(void *himl) {
+    COMCTL_IMAGE_LIST *list = comctl_image_list(himl);
+    return list ? list->count : 0;
+}
 __attribute__((stdcall)) int TreeView_GetItemRect(void *hwnd, void *item, void *rect, int textOnly) { (void)hwnd;(void)item;(void)rect;(void)textOnly; return 0; }
 __attribute__((stdcall)) int ImageList_Draw(void *himl,int image,void *dc,int x,int y,uint32_t style){(void)himl;(void)image;(void)dc;(void)x;(void)y;(void)style;return 1;}
 

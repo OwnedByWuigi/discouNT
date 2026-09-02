@@ -20,7 +20,7 @@ CPPFLAGS += -Icompat/wdf/platform/include
 CFLAGS := -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
  -nostartfiles -m64 -mno-red-zone -fno-pic -O0
 USER_CFLAGS := -ffreestanding -nostdlib -nostartfiles -fno-builtin \
- -fno-stack-protector -fPIC -m64 -mno-red-zone -O0
+ -fno-stack-protector -fPIC -fshort-wchar -m64 -mno-red-zone -O0
 KERNEL := $(BUILD_DIR)/kernel.elf
 SRCS := kernel/core/util.c kernel/core/invoke.c kernel/rtl/rtlpath.c kernel/mm/mm.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/arch/x86/hal.c kernel/ob/object.c kernel/io/io.c kernel/io/service.c kernel/io/wudf_transport.c compat/jpeg/picojpeg.c compat/jpeg/jpeg_image.c kernel/core/ke.c \
  kernel/loader/peloader.c kernel/core/kexports.c kernel/io/driver.c kernel/io/driver_stubs.c kernel/audio/audio_service.c kernel/core/setup.c \
@@ -35,7 +35,7 @@ BOOT_SERIAL := $(BUILD_DIR)/bootdrivers/serial_boot.o
 BOOT_CDFS := $(BUILD_DIR)/bootdrivers/cdfs_boot.o
 
 .PHONY: all iso usb-image userspace clean
-NATIVE_DLL_NAMES := advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox wudfrd wininet
+NATIVE_DLL_NAMES := aclui advapi32 comctl32 comdlg32 d3d8 d3d9 ddraw dinput8 dsound dxdiagn dxguid gdi32 kernel32 ntdll ole32 oleaut32 rpcrt4 shell32 shlwapi user32 wbemprox wudfrd wininet
 NATIVE_DLLS := $(addprefix $(BUILD_DIR)/dlls/,$(addsuffix .dll,$(NATIVE_DLL_NAMES)))
 NATIVE_APPS := $(BUILD_DIR)/apps/cmd/cmd.exe \
  $(BUILD_DIR)/apps/umdfhost.exe \
@@ -176,12 +176,12 @@ $(BUILD_DIR)/apps/progman/progman.exe: $(PROGMAN_SRCS) apps/progman/progman.h ap
 	$(CC) $(CPPFLAGS) -Iapps/progman $(USER_CFLAGS) -include string.h -include stdio.h -Wl,-e,WinMain -shared -Wl,-Bsymbolic -o $@ $(PROGMAN_SRCS)
 	@objcopy --add-section .disres=$(PROGMAN_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(BUILD_DIR)/apps/regedit/regedit.exe: $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc resources/regedit_resources.rc include/win32/regedit_api.h $(REGEDIT_MENU_RES)
+$(BUILD_DIR)/apps/regedit/regedit.exe: $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc apps/regedit/regedit_resources.rc include/win32/regedit_api.h $(REGEDIT_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Iapps/regedit -include regedit_api.h -include string.h -include stdio.h -include stdlib.h $(USER_CFLAGS) -fshort-wchar -Wl,-e,wWinMain -shared -Wl,-Bsymbolic -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -o $@ $(REGEDIT_SRCS)
 	@objcopy --add-section .disres=$(REGEDIT_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(REGEDIT_MENU_RES): resources/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
+$(REGEDIT_MENU_RES): apps/regedit/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
 	@mkdir -p $(@D)
 	python3 tools/rc_menu_gen.py $< $@
 

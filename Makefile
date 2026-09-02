@@ -249,7 +249,7 @@ $(BUILD_DIR)/dlls/$(1).dll: $$(DLL_$(1)_SRCS) $(KERNEL_ELF)
 			-L$(BUILD_DIR) \
 			-l:kernel.elf; \
 	else \
-		$(CC) $(CPPFLAGS) -ffreestanding -nostdlib -fno-builtin -m32 -fPIC -shared -Wl,-Bsymbolic \
+		$(CC) $(CPPFLAGS) -fshort-wchar -ffreestanding -nostdlib -fno-builtin -m32 -fPIC -shared -Wl,-Bsymbolic \
 			-Wl,-e,DllMain \
 			-o $$@ \
 			$$(DLL_$(1)_SRCS); \
@@ -282,7 +282,7 @@ $(MSGINA_BAR_OBJ): dlls/msgina/resources/line.bmp
 
 $(MSGINA_DLL): dlls/msgina/msgina.c dlls/msgina/gui.c dlls/msgina/compat/reactos_port.c dlls/msgina/compat/ui_port.c include/win32/discount_dialog.h dlls/msgina/resources/reactos.bmp dlls/msgina/resources/line.bmp $(MSGINA_LOGO_OBJ) $(MSGINA_BAR_OBJ) $(KERNEL_ELF)
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -m32 -ffreestanding -nostdlib -nostartfiles \
+	$(CC) $(CPPFLAGS) -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles \
 		-Idlls/msgina/compat -Idlls/msgina \
 		-fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic \
 		-Wl,--export-dynamic -o $@ \
@@ -388,12 +388,12 @@ $(PROGMAN_APP): $(PROGMAN_SRCS) apps/progman/progman.h apps/progman/progman.rc i
 
 REGEDIT_SRCS := $(wildcard apps/regedit/*.c)
 REGEDIT_MENU_RES := $(BUILD_DIR)/apps/regedit/regedit.menu.bin
-$(REGEDIT_APP): $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc resources/regedit_resources.rc include/win32/regedit_api.h include/win32/objsel.h include/win32/ndk/cmtypes.h $(REGEDIT_MENU_RES)
+$(REGEDIT_APP): $(REGEDIT_SRCS) $(wildcard apps/regedit/*.h) apps/regedit/regedit.rc apps/regedit/regedit_resources.rc include/win32/regedit_api.h include/win32/objsel.h include/win32/ndk/cmtypes.h $(REGEDIT_MENU_RES)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Iapps/regedit -include regedit_api.h -include string.h -include stdio.h -include stdlib.h -fshort-wchar -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fPIC -shared -Wl,-Bsymbolic -Wl,-e,wWinMain -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -o $@ $(REGEDIT_SRCS)
 	@objcopy --add-section .disres=$(REGEDIT_MENU_RES) --set-section-flags .disres=readonly,data $@
 
-$(REGEDIT_MENU_RES): resources/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
+$(REGEDIT_MENU_RES): apps/regedit/regedit_resources.rc apps/regedit/resource.h apps/regedit/lang/en-US.rc tools/rc_menu_gen.py
 	@mkdir -p $(@D)
 	python3 tools/rc_menu_gen.py $< $@
 

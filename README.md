@@ -21,6 +21,6 @@ discouNT can theoretically be booted on real x86 and AMD64 hardware, though I do
 
 Microsoft - WDF source (/compat/wdf)
 
-ReactOS team - MSGINA source (/dlls/msgina)
+ReactOS team - MSGINA source (/dlls/msgina), winineet source (dlls/wininet)
 
 WINE team - Basically all of the user-mode apps (/apps)
