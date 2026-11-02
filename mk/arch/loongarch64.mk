@@ -1,7 +1,6 @@
-BUILD_DIR := build/loongarch64
 KERNEL := $(BUILD_DIR)/kernel.elf
 BOOT_ROM := $(BUILD_DIR)/boot.bin
-SYSTEM_ISO := $(BUILD_DIR)/discount-la64.iso
+SYSTEM_ISO := discount-loongarch64.iso
 CMD_APP := $(BUILD_DIR)/apps/cmd/cmd.exe
 CMD_OBJS := $(BUILD_DIR)/apps/cmd/cmd.o $(BUILD_DIR)/apps/cmd/util.o
 
@@ -267,5 +266,3 @@ run-uefi: check-tools $(KERNEL)
 		-bios $(FIRMWARE) -kernel $(KERNEL) \
 		-nographic -serial mon:stdio
 
-clean:
-	rm -rf $(BUILD_DIR)

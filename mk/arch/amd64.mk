@@ -1,8 +1,6 @@
-BUILD_DIR := build/amd64
-CC := gcc
+CC := clang
 LD := ld
 NASM := nasm
-ISO_NAME := ntos-amd64.iso
 ISO_DIR := $(BUILD_DIR)/iso
 DISCOUNT_DIR := $(ISO_DIR)/DISCOUNT
 FONT_SOURCES := $(wildcard media/fonts/*.ttf)
@@ -102,7 +100,7 @@ $(WALLPAPER_STAMP): $(WALLPAPER_FILES) tools/prepare_wallpapers.py
 	python3 tools/prepare_wallpapers.py "$(WEB_DIR)" $(WALLPAPER_FILES)
 
 usb-image: iso
-	sh tools/make_usb_image.sh $(ISO_DIR) $(ISO_DIR)/boot/grub/grub.cfg ntos-amd64-usb.img
+	sh tools/make_usb_image.sh $(ISO_DIR) $(ISO_DIR)/boot/grub/grub.cfg discount-amd64-usb.img
 
 # Native AMD64 userland is kept separate while the existing 32-bit image is
 # retained as the compatibility/WOW layer.  This avoids silently replacing
@@ -314,5 +312,3 @@ $(BOOT_CDFS): drivers/cdfs/cdfs.c
 $(KERNEL): $(BOOT) $(OBJS) $(ISR) $(BOOT_SERIAL) $(BOOT_CDFS)
 	$(LD) -m elf_x86_64 -T kernel/arch/x86/linker64.ld -nostdlib -no-pie $^ -o $@
 
-clean:
-	rm -rf $(BUILD_DIR)

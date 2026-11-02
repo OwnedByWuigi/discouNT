@@ -17,6 +17,16 @@ discouNT supports IDE and SATA CD and hard drives, with experimental support for
 
 discouNT can theoretically be booted on real x86 and AMD64 hardware, though I do not know if it is bootable on real LA64 hardware.
 
+### Building
+
+#### x86, AMD64 and LoongArch64
+
+You will need NASM, Flex and Clang.
+
+#### i960 (WIP)
+
+If you want to build for i960, install the i960 SDK from [Pyrite](https://j.nishi.boats/job/pyrite-dev/job/i960-sdk/job/master/lastSuccessfulBuild/)
+
 ### Credits
 
 Microsoft - WDF source (/compat/wdf)
